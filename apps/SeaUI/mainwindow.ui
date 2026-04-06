@@ -7,13 +7,200 @@
     <x>0</x>
     <y>0</y>
     <width>800</width>
-    <height>600</height>
+    <height>586</height>
    </rect>
   </property>
   <property name="windowTitle">
    <string>MainWindow</string>
   </property>
-  <widget class="QWidget" name="centralwidget"/>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="verticalLayout">
+    <item>
+     <layout class="QHBoxLayout" name="horizontalLayout">
+      <item>
+       <widget class="QGroupBox" name="groupBox">
+        <property name="title">
+         <string>Projects</string>
+        </property>
+        <layout class="QVBoxLayout" name="verticalLayout_3">
+         <item>
+          <widget class="QListView" name="projectListView"/>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item>
+       <widget class="QGroupBox" name="groupBox_2">
+        <property name="title">
+         <string>Services</string>
+        </property>
+        <layout class="QVBoxLayout" name="verticalLayout_4">
+         <item>
+          <widget class="QListView" name="serviceListView"/>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item>
+       <widget class="QGroupBox" name="groupBox_3">
+        <property name="title">
+         <string>Entities</string>
+        </property>
+        <layout class="QVBoxLayout" name="verticalLayout_5">
+         <item>
+          <widget class="QListView" name="entityListView"/>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item>
+       <widget class="QGroupBox" name="groupBox_4">
+        <property name="title">
+         <string>Entity Details</string>
+        </property>
+        <layout class="QVBoxLayout" name="verticalLayout_6">
+         <item>
+          <widget class="QGroupBox" name="groupBox_7">
+           <property name="title">
+            <string>Fields</string>
+           </property>
+           <layout class="QVBoxLayout" name="verticalLayout_7">
+            <item>
+             <widget class="QListView" name="fieldListView"/>
+            </item>
+            <item>
+             <widget class="QGroupBox" name="groupBox_8">
+              <property name="title">
+               <string>Routes</string>
+              </property>
+              <layout class="QVBoxLayout" name="verticalLayout_8">
+               <item>
+                <widget class="QListView" name="routeListView"/>
+               </item>
+              </layout>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="openEntityDataButton">
+           <property name="text">
+            <string>Open Data</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+     </layout>
+    </item>
+    <item>
+     <layout class="QHBoxLayout" name="horizontalLayout_2">
+      <item>
+       <widget class="QGroupBox" name="serviceStatusGroupBox">
+        <property name="title">
+         <string>Service Details</string>
+        </property>
+        <layout class="QVBoxLayout" name="verticalLayout_9">
+         <item>
+          <layout class="QHBoxLayout" name="horizontalLayout_6">
+           <item>
+            <widget class="QLabel" name="label_3">
+             <property name="text">
+              <string>DataBase Type</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="serviceDBTypeLabel">
+             <property name="text">
+              <string>null</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="horizontalLayout_5">
+           <item>
+            <widget class="QLabel" name="label_2">
+             <property name="text">
+              <string>Port</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="servicePortLabel">
+             <property name="text">
+              <string>null</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="horizontalLayout_4">
+           <item>
+            <widget class="QLabel" name="label">
+             <property name="text">
+              <string>Status</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="serviceStatusLabel">
+             <property name="text">
+              <string>null</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item>
+       <widget class="QGroupBox" name="serviceActionGroupBox">
+        <property name="title">
+         <string>Service Actions</string>
+        </property>
+        <layout class="QVBoxLayout" name="verticalLayout_10">
+         <item>
+          <widget class="QPushButton" name="startServiceButton">
+           <property name="text">
+            <string>start</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="restartServiceButton">
+           <property name="text">
+            <string>restart</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="stopServiceButton">
+           <property name="text">
+            <string>stop</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="logsServiceButton">
+           <property name="text">
+            <string>Logs</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+     </layout>
+    </item>
+   </layout>
+  </widget>
   <widget class="QMenuBar" name="menubar">
    <property name="geometry">
     <rect>
@@ -23,8 +210,128 @@
      <height>23</height>
     </rect>
    </property>
+   <widget class="QMenu" name="menufichiers">
+    <property name="title">
+     <string>fichiers</string>
+    </property>
+    <addaction name="actionAdd_New_Project"/>
+    <addaction name="actionAdd_New_Service"/>
+    <addaction name="actionAdd_New_Entity"/>
+    <addaction name="actionImport_Yaml"/>
+    <addaction name="actionExport_Yaml"/>
+   </widget>
+   <widget class="QMenu" name="menuAudits">
+    <property name="title">
+     <string>Audits</string>
+    </property>
+    <addaction name="actionShow_All_Services_Logs"/>
+    <addaction name="actionChoose_a_service_to_show_Logs"/>
+   </widget>
+   <widget class="QMenu" name="menuServcies_Actions">
+    <property name="title">
+     <string>Services Actions</string>
+    </property>
+    <addaction name="actionStop_All_Services"/>
+    <addaction name="actionRestart_All_Services"/>
+    <addaction name="actionStart_All_Services"/>
+    <addaction name="actionReload_All_Services"/>
+   </widget>
+   <widget class="QMenu" name="menuEdit">
+    <property name="title">
+     <string>Edit</string>
+    </property>
+    <addaction name="actionEdit_Project"/>
+    <addaction name="actionEdit_Service"/>
+    <addaction name="actionEdit_Entity"/>
+    <addaction name="actionEdit_Yaml"/>
+    <addaction name="actionPreferences"/>
+   </widget>
+   <addaction name="menufichiers"/>
+   <addaction name="menuEdit"/>
+   <addaction name="menuAudits"/>
+   <addaction name="menuServcies_Actions"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
+  <action name="actionAdd_New_Project">
+   <property name="text">
+    <string>Add New Project</string>
+   </property>
+  </action>
+  <action name="actionAdd_New_Service">
+   <property name="text">
+    <string>Add New Service</string>
+   </property>
+  </action>
+  <action name="actionAdd_New_Entity">
+   <property name="text">
+    <string>Add New Entity</string>
+   </property>
+  </action>
+  <action name="actionShow_All_Services_Logs">
+   <property name="text">
+    <string>Show All Services Logs</string>
+   </property>
+  </action>
+  <action name="actionChoose_a_service_to_show_Logs">
+   <property name="text">
+    <string>Choose a service to show Logs</string>
+   </property>
+  </action>
+  <action name="actionStop_All_Services">
+   <property name="text">
+    <string>Stop All Services</string>
+   </property>
+  </action>
+  <action name="actionRestart_All_Services">
+   <property name="text">
+    <string>Restart All Services</string>
+   </property>
+  </action>
+  <action name="actionStart_All_Services">
+   <property name="text">
+    <string>Start All Services</string>
+   </property>
+  </action>
+  <action name="actionReload_All_Services">
+   <property name="text">
+    <string>Reload All Services</string>
+   </property>
+  </action>
+  <action name="actionImport_Yaml">
+   <property name="text">
+    <string>Import Yaml</string>
+   </property>
+  </action>
+  <action name="actionExport_Yaml">
+   <property name="text">
+    <string>Export Yaml</string>
+   </property>
+  </action>
+  <action name="actionEdit_Project">
+   <property name="text">
+    <string>Edit Project</string>
+   </property>
+  </action>
+  <action name="actionEdit_Service">
+   <property name="text">
+    <string>Edit Service</string>
+   </property>
+  </action>
+  <action name="actionEdit_Entity">
+   <property name="text">
+    <string>Edit Entity</string>
+   </property>
+  </action>
+  <action name="actionEdit_Yaml">
+   <property name="text">
+    <string>Edit Yaml</string>
+   </property>
+  </action>
+  <action name="actionPreferences">
+   <property name="text">
+    <string>Preferences</string>
+   </property>
+  </action>
  </widget>
  <resources/>
  <connections/>

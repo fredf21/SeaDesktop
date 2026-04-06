@@ -6,7 +6,6 @@
 
 #include "project.h"
 #include "service.h"
-#include "schema.h"
 #include "entity.h"
 #include "field.h"
 #include "relation.h"

@@ -14,6 +14,8 @@ add_library(sea_infrastructure STATIC
 
     persistence/repository_factory.cpp
     persistence/memory/in_memory_generic_repository.cpp
+    yaml/yaml_project_repository.h yaml/yaml_project_repository.cpp
+    runtime/i_project_repository.h
 )
 
 add_library(Sea::infrastructure ALIAS sea_infrastructure)

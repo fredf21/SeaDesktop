@@ -27,6 +27,7 @@ class GenericCrudEngine {
 public:
     struct OperationResult {
         bool success{false};
+        std::optional<DynamicRecord> record;
         std::vector<std::string> errors;
     };
 

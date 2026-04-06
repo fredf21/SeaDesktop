@@ -14,7 +14,7 @@ namespace sea::infrastructure::persistence {
 // ─────────────────────────────────────────────────────────────
 class InMemoryGenericRepository final : public IGenericRepository {
 public:
-    void create(const std::string& entity_name,
+    std::optional<runtime::DynamicRecord> create(const std::string& entity_name,
                 runtime::DynamicRecord record) override;
 
     [[nodiscard]] std::vector<runtime::DynamicRecord>
@@ -27,7 +27,7 @@ public:
     bool remove(const std::string& entity_name,
                 const std::string& id) override;
 
-    bool update(const std::string& entity_name,
+    UpdateResponse update(const std::string& entity_name,
                 const std::string& id,
                 runtime::DynamicRecord record) override;
 

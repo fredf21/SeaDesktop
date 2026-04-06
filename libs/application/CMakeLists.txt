@@ -6,6 +6,8 @@ add_library(sea_application STATIC
     validate_schema_usecase.cpp
     start_service_usecase.cpp
     route_generator.cpp
+    load_project_use_case.h
+
 )
 
 add_library(Sea::application ALIAS sea_application)

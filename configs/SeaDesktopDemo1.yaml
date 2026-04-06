@@ -1,0 +1,95 @@
+project:
+  name: SeaDesktopDemo1
+
+services:
+  - name: CCNBService1
+    port: 8081
+    database:
+      type: memory
+    entities:
+      - name: Employee
+        fields:
+          - name: id
+            type: uuid
+            required: true
+            unique: true
+
+          - name: name
+            type: string
+            required: true
+
+          - name: email
+            type: email
+            required: true
+            unique: true
+
+          - name: age
+            type: int
+            required: false
+            
+      - name: Student
+        fields:
+          - name: id
+            type: uuid
+            required: true
+            unique: true
+
+          - name: name
+            type: string
+            required: true
+
+          - name: email
+            type: email
+            required: true
+            unique: true
+
+          - name: age
+            type: int
+            required: false
+            
+      - name: Program
+        fields:
+          - name: id
+            type: uuid
+            required: true
+            unique: true
+
+          - name: name
+            type: string
+            required: true
+
+  - name: GlobalSaleCompanyService
+    port: 8081
+    database:
+      type: memory
+    entities:
+      - name: Product
+        fields:
+          - name: id
+            type: uuid
+            required: true
+            unique: true
+
+          - name: title
+            type: string
+            required: true
+
+          - name: price
+            type: float
+            required: true
+            
+      - name: Employee
+        fields:
+          - name: id
+            type: uuid
+            required: true
+            unique: true
+
+          - name: name
+            type: string
+            required: true
+
+          - name: email
+            type: email
+            required: true
+            

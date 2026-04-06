@@ -19,12 +19,21 @@ namespace sea::infrastructure::persistence {
 // - PostgreSQL
 // - MongoDB
 // ─────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────
+// Reponse du serveur lors d un update contenant la reponse et la donnEes modifiEe
+// ─────────────────────────────────────────────────────────────
+struct UpdateResponse {
+    bool status                   = false;  // dis si le update s est bien passE
+    runtime::DynamicRecord record = {};     // la donnEes modifiEe
+};
+
 class IGenericRepository {
 public:
     virtual ~IGenericRepository() = default;
 
     // Insère ou remplace un record dans une entité logique
-    virtual void create(const std::string& entity_name,
+    virtual std::optional<runtime::DynamicRecord> create(const std::string& entity_name,
                         runtime::DynamicRecord record) = 0;
 
     // Retourne tous les records d’une entité
@@ -41,7 +50,7 @@ public:
                         const std::string& id) = 0;
 
     // Met à jour/remplace un record existant
-    virtual bool update(const std::string& entity_name,
+    virtual UpdateResponse update(const std::string& entity_name,
                         const std::string& id,
                         runtime::DynamicRecord record) = 0;
 };

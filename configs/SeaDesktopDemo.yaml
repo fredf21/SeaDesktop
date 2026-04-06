@@ -1,0 +1,77 @@
+project:
+  name: SeaDesktopDemo
+services:
+  - name: CCNBService
+    port: 8080
+    database:
+      type: memory
+    entities:
+      - name: Department
+        fields:
+          - name: id
+            type: uuid
+            required: true
+            unique: true
+          - name: name
+            type: string
+            required: true
+            unique: true
+        relations:
+          - name: employees
+            kind: has_many
+            target_entity: Employee
+            fk_column: department_id
+            on_delete: cascade
+
+      - name: Employee
+        fields:
+          - name: id
+            type: uuid
+            required: true
+            unique: true
+          - name: name
+            type: string
+            required: true
+          - name: email
+            type: email
+            required: true
+            unique: true
+          - name: age
+            type: int
+            required: false
+          - name: department_id
+            type: uuid
+            required: false
+        relations:
+          - name: department
+            kind: belongs_to
+            target_entity: Department
+            fk_column: department_id
+            on_delete: restrict
+
+      - name: Student
+        fields:
+          - name: id
+            type: uuid
+            required: true
+            unique: true
+          - name: name
+            type: string
+            required: true
+          - name: email
+            type: email
+            required: true
+            unique: true
+          - name: age
+            type: int
+            required: false
+
+      - name: Program
+        fields:
+          - name: id
+            type: uuid
+            required: true
+            unique: true
+          - name: name
+            type: string
+            required: true

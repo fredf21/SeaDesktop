@@ -20,6 +20,9 @@ public:
     validate(const sea::domain::Entity& entity,
              const DynamicRecord& record) const;
 
+    [[nodiscard]] std::vector<std::string>
+    validate_partial(const sea::domain::Entity& entity,
+             const DynamicRecord& record) const;
 private:
     [[nodiscard]] bool matches_type(sea::domain::FieldType type,
                                     const DynamicValue& value) const;

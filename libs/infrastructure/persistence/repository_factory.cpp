@@ -22,6 +22,9 @@ RepositoryFactory::create(const sea::domain::DatabaseConfig& config) const {
             "MongoDB n'est pas encore implemente dans le MVP."
             );
     case domain::DatabaseType::MySQL:
+        throw std::runtime_error(
+            "MySQL n'est pas encore implemente dans le MVP."
+            );
         break;
     }
 

@@ -25,6 +25,9 @@ public:
     // Vérifie si une entité existe
     [[nodiscard]] bool has_entity(const std::string& entity_name) const;
 
+    // Vérifie si une entité existe avec son champ
+    [[nodiscard]] const sea::domain::Field* find_field(const std::string& entity_name, const std::string& field_name) const;
+
     // Efface le contenu actuel
     void clear();
 

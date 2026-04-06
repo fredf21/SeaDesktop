@@ -182,7 +182,9 @@ sea::domain::Entity YamlSchemaParser::parse_entity_node(const YAML::Node& node) 
     sea::domain::Entity entity{};
 
     entity.name = require_string(node, "name", "entity");
-    entity.table_name = get_or_default<std::string>(node, "table_name", "");
+    std::string s = entity.name + "s";
+    s[0] = static_cast<char>(std::tolower(s[0]));
+    entity.table_name = get_or_default<std::string>(node, "table_name", s);
 
     // options:
     if (has_key(node, "options")) {

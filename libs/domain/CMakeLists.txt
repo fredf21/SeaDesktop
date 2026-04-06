@@ -3,6 +3,7 @@ project(sea_domain LANGUAGES CXX)
 
 add_library(sea_domain STATIC
     schema_validator.cpp
+
 )
 
 add_library(Sea::domain ALIAS sea_domain)

@@ -2,6 +2,14 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include "entitylistmodel.h"
+#include "servicelistmodel.h"
+#include "projectlistmodel.h"
+#include "fieldlistmodel.h"
+#include "routelistmodel.h"
+#include <QFileSystemWatcher>
+#include "servicestatuscheck.h"
+#include <QProcess>
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -16,8 +24,43 @@ class MainWindow : public QMainWindow
 public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
+    void loadProjects();
+    void startService(const QString& serviceName, const QString& yamlPath);
+    void stopService(const QString& serviceName);
+    void restartService(const QString& serviceName, const QString& yamlPath);
+
+private slots:
+    void on_projectListView_clicked(const QModelIndex &index);
+
+    void on_serviceListView_clicked(const QModelIndex &index);
+
+    void on_entityListView_clicked(const QModelIndex &index);
+
+    void on_fieldListView_clicked(const QModelIndex &index);
+    // ← nouveaux slots pour le ServiceClient
+    void onStatusUpdated(const QString& service, const QString& status, int port);
+    void onServiceUnreachable(const QString& service);
+
 
 private:
     Ui::MainWindow *ui;
+    ProjectListModel* _projectModel;
+    ServiceListModel* _serviceModel;
+    EntityListModel* _entityModel;
+    FieldListModel* _fieldModel;
+    RouteListModel* _routeModel;
+    QFileSystemWatcher* _watcher;
+    ServiceStatusCheck*    _statusCheck;      // ← nouveau
+    std::vector<sea::application::RouteDefinition> _currentServiceRoutes;
+    int _currentProjectRow = -1;
+    int _currentServiceRow = -1;
+    int _currentEntityRow = -1;
+    QMap<QString, QProcess*> _processes; // serviceName → process
+    const QString _configsPath = "/home/frederic/QtProjects/SeaDesktop/configs/";
+
+    QString yamlPathForProject(const QString& projectName) const {
+        return _configsPath + projectName + ".yaml";
+    }
+
 };
 #endif // MAINWINDOW_H

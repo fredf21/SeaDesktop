@@ -18,7 +18,7 @@ struct EntityOptions {
 };
 
 struct Entity {
-    std::string            name;        // ex: "User"  (PascalCase)
+    std::string            name;        // ex: "User"  (FredericCase)
     std::string            table_name;  // ex: "users" (calculé si vide)
     std::vector<Field>     fields;
     std::vector<Relation>  relations;
