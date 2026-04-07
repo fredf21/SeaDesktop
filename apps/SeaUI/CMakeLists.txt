@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.19)
 project(SeaUI LANGUAGES CXX)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Network LinguistTools)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Network WebEngineWidgets LinguistTools)
 
 qt_standard_project_setup()
 
@@ -34,6 +34,7 @@ target_link_libraries(SeaUI
         Qt6::Widgets
         Qt6::Network
         Sea::application
+        Qt6::WebEngineWidgets
 )
 
 install(TARGETS SeaUI

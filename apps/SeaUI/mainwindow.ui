@@ -194,6 +194,13 @@
            </property>
           </widget>
          </item>
+         <item>
+          <widget class="QPushButton" name="swaggerServiceButton">
+           <property name="text">
+            <string>open Swagger</string>
+           </property>
+          </widget>
+         </item>
         </layout>
        </widget>
       </item>

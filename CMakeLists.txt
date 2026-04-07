@@ -8,6 +8,5 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_subdirectory(libs/domain)
 add_subdirectory(libs/application)
 add_subdirectory(libs/infrastructure)
-
 add_subdirectory(apps/Backend_Seastar)
 add_subdirectory(apps/SeaUI)

@@ -5,6 +5,8 @@
 #include <QDir>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QWebEngineView>
+#include <QDialog>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -26,6 +28,7 @@ MainWindow::MainWindow(QWidget *parent)
     ui->startServiceButton->setEnabled(false);
     ui->stopServiceButton->setEnabled(false);
     ui->restartServiceButton->setEnabled(false);
+    ui->swaggerServiceButton->setEnabled(false);
 
     connect(ui->projectListView, &QListView::clicked,
             this, &MainWindow::on_projectListView_clicked);
@@ -68,6 +71,7 @@ MainWindow::MainWindow(QWidget *parent)
                 ui->startServiceButton->setEnabled(!running);
                 ui->stopServiceButton->setEnabled(running);
                 ui->restartServiceButton->setEnabled(running);
+                ui->swaggerServiceButton->setEnabled(running);
                 ui->serviceStatusLabel->setStyleSheet(
                     status == "RUNNING"
                         ? "color: #2ecc71; font-weight: bold;"  // vert
@@ -79,6 +83,8 @@ MainWindow::MainWindow(QWidget *parent)
                 ui->startServiceButton->setEnabled(true);
                 ui->stopServiceButton->setEnabled(false);
                 ui->restartServiceButton->setEnabled(false);
+                ui->swaggerServiceButton->setEnabled(false);
+
             });
     connect(ui->startServiceButton, &QPushButton::clicked, this, [this]() {
         ui->startServiceButton->setEnabled(false);
@@ -157,53 +163,96 @@ void MainWindow::loadProjects()
 
 void MainWindow::startService(const QString &serviceName, const QString &yamlPath)
 {
-    if (_processes.contains(serviceName) &&
-        _processes[serviceName]->state() != QProcess::NotRunning) {
-        return; // déjà en cours
+    if (_currentProjectRow < 0 || _currentServiceRow < 0) {
+        return;
     }
+
+    const auto& project = _projectModel->projectAt(_currentProjectRow);
+    const auto& service = _serviceModel->serviceAt(_currentServiceRow);
+
+    const QString projectName = QString::fromStdString(project->name);
+    const QString processKey =
+        QString("%1:%2:%3").arg(projectName, serviceName).arg(service->port);
+
+    if (_processes.contains(processKey) &&
+        _processes[processKey]->state() != QProcess::NotRunning) {
+        return;
+    }
+
     const QString logsDir = "/home/frederic/QtProjects/SeaDesktop/logs/";
-    QDir().mkpath(logsDir); // créer le dossier si inexistant
+    QDir().mkpath(logsDir);
 
-    const QString logPath = logsDir + serviceName + ".log";
-
+    const QString logPath = logsDir + processKey + ".log";
     const QString backendPath = "../Backend_Seastar/backend_seastar";
+
     auto* process = new QProcess(this);
 
-    connect(process, &QProcess::readyReadStandardOutput, this, [process, serviceName]() {
-        qDebug().noquote() << "[" + serviceName + "][OUT]"
+    connect(process, &QProcess::readyReadStandardOutput, this, [process, processKey]() {
+        qDebug().noquote() << "[" + processKey + "][OUT]"
                            << QString::fromLocal8Bit(process->readAllStandardOutput());
     });
-    connect(process, &QProcess::readyReadStandardError, this, [process, serviceName]() {
-        qDebug().noquote() << "[" + serviceName + "][ERR]"
+
+    connect(process, &QProcess::readyReadStandardError, this, [process, processKey]() {
+        qDebug().noquote() << "[" + processKey + "][ERR]"
                            << QString::fromLocal8Bit(process->readAllStandardError());
     });
-    // Rediriger stdout et stderr vers le fichier
+
     process->setStandardOutputFile(logPath, QIODevice::Append);
     process->setStandardErrorFile(logPath, QIODevice::Append);
+
     QStringList args;
     args << "--smp" << "1"
          << "--config" << yamlPath
-         << "--service" << serviceName;
+         << "--service_name" << serviceName;
 
     process->start(backendPath, args);
-    _processes[serviceName] = process;
+    _processes[processKey] = process;
 }
 
 void MainWindow::stopService(const QString &serviceName)
 {
-    if (!_processes.contains(serviceName)) return;
-    auto* process = _processes[serviceName];
+    if (_currentProjectRow < 0 || _currentServiceRow < 0) {
+        return;
+    }
+
+    const auto& project = _projectModel->projectAt(_currentProjectRow);
+    const auto& service = _serviceModel->serviceAt(_currentServiceRow);
+
+    const QString projectName = QString::fromStdString(project->name);
+    const QString processKey =
+        serviceProcessKey(projectName, serviceName, static_cast<int>(service->port));
+
+    if (!_processes.contains(processKey)) {
+        return;
+    }
+
+    auto* process = _processes[processKey];
+    if (!process) {
+        _processes.remove(processKey);
+        return;
+    }
+
     if (process->state() != QProcess::NotRunning) {
         process->terminate();
-        if (!process->waitForFinished(3000))
+        if (!process->waitForFinished(3000)) {
             process->kill();
+            process->waitForFinished();
+        }
     }
+
+    _processes.remove(processKey);
+    process->deleteLater();
 }
 
 void MainWindow::restartService(const QString& serviceName, const QString& yamlPath)
 {
     stopService(serviceName);
     startService(serviceName, yamlPath);
+}
+
+QString MainWindow::serviceProcessKey(const QString &projectName, const QString &serviceName, int port) const
+{
+    return QString("%1:%2:%3").arg(projectName, serviceName).arg(port);
 }
 
 void MainWindow::on_projectListView_clicked(const QModelIndex &index)
@@ -295,5 +344,31 @@ void MainWindow::onServiceUnreachable(const QString &service)
         "color: #e74c3c; font-weight: bold;"
         );
     //ui->servicePortLabel->setText("- - - -");
+}
+
+
+void MainWindow::on_swaggerServiceButton_clicked()
+{
+    if (_currentServiceRow < 0) return;
+    auto* dialog = new QDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle("Swagger");
+    dialog->resize(1200, 800);
+
+    auto* layout = new QVBoxLayout(dialog);
+    auto* view = new QWebEngineView(dialog);
+    auto* closeButton = new QPushButton("Retour", dialog);
+
+    const auto& project = _projectModel->projectAt(_currentProjectRow);
+    const auto& service = _serviceModel->serviceAt(_currentServiceRow);
+    QString url = QString("http://localhost:%1/docs").arg(service->port);
+    view->setUrl(QUrl(url));
+    layout->addWidget(view);
+    layout->addWidget(closeButton);
+
+    QObject::connect(closeButton, &QPushButton::clicked, dialog, &QDialog::close);
+
+    dialog->setLayout(layout);
+    dialog->show();
 }
 

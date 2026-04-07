@@ -7,6 +7,8 @@ add_library(sea_application STATIC
     start_service_usecase.cpp
     route_generator.cpp
     load_project_use_case.h
+    openapigenerator.h openapigenerator.cpp
+    authservice.h authservice.cpp
 
 )
 

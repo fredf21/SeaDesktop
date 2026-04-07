@@ -70,10 +70,17 @@ struct Relation {
     // ex: "user_id"
     std::string fk_column;
 
+    // ManyToMany
+
     // Nom de la table pivot
     // Utilisé seulement pour ManyToMany
     // ex: "user_roles"
     std::string pivot_table;
+    // Colonnes de la table pivot
+    // Utilisées seulement pour ManyToMany
+    // ex: "user_id", "role_id"
+    std::string source_fk_column;
+    std::string target_fk_column;
 
     // ── helpers ─────────────────────────────────────────────
 

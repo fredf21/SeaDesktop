@@ -360,9 +360,32 @@ sea::domain::Relation YamlSchemaParser::parse_relation_node(const YAML::Node& no
         relation.on_delete = parse_on_delete(on_delete_str);
     }
 
-    relation.fk_column   = get_or_default<std::string>(node, "fk_column", "");
-    relation.pivot_table = get_or_default<std::string>(node, "pivot_table", "");
+    relation.fk_column        = get_or_default<std::string>(node, "fk_column", "");
+    relation.pivot_table      = get_or_default<std::string>(node, "pivot_table", "");
+    relation.source_fk_column = get_or_default<std::string>(node, "source_fk_column", "");
+    relation.target_fk_column = get_or_default<std::string>(node, "target_fk_column", "");
+    if (relation.kind == sea::domain::RelationKind::ManyToMany) {
+        if (relation.pivot_table.empty()) {
+            throw std::runtime_error(
+                "La relation many_to_many '" + relation.name +
+                "' doit definir 'pivot_table'."
+                );
+        }
 
+        if (relation.source_fk_column.empty()) {
+            throw std::runtime_error(
+                "La relation many_to_many '" + relation.name +
+                "' doit definir 'source_fk_column'."
+                );
+        }
+
+        if (relation.target_fk_column.empty()) {
+            throw std::runtime_error(
+                "La relation many_to_many '" + relation.name +
+                "' doit definir 'target_fk_column'."
+                );
+        }
+    }
     return relation;
 }
 

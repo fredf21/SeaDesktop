@@ -3,6 +3,8 @@ project(backend_seastar LANGUAGES CXX)
 
 find_package(Seastar REQUIRED)
 
+add_subdirectory(third_party/libbcrypt)
+
 add_executable(backend_seastar
     src/main.cpp
 )
@@ -13,6 +15,9 @@ target_link_libraries(backend_seastar
         Sea::application
         Sea::infrastructure
         Sea::domain
+        bcrypt
 )
-
+target_include_directories(backend_seastar PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libbcrypt/include
+)
 target_compile_features(backend_seastar PRIVATE cxx_std_20)

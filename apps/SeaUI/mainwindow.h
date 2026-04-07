@@ -28,7 +28,9 @@ public:
     void startService(const QString& serviceName, const QString& yamlPath);
     void stopService(const QString& serviceName);
     void restartService(const QString& serviceName, const QString& yamlPath);
-
+    QString serviceProcessKey(const QString& projectName,
+                              const QString& serviceName,
+                              int port) const;
 private slots:
     void on_projectListView_clicked(const QModelIndex &index);
 
@@ -40,7 +42,7 @@ private slots:
     // ← nouveaux slots pour le ServiceClient
     void onStatusUpdated(const QString& service, const QString& status, int port);
     void onServiceUnreachable(const QString& service);
-
+    void on_swaggerServiceButton_clicked();
 
 private:
     Ui::MainWindow *ui;
