@@ -1554,10 +1554,12 @@ public:
         std::shared_ptr<GenericCrudEngine> crud_engine,
         std::shared_ptr<SchemaRuntimeRegistry> registry,
         std::string entity_name,
+        std::shared_ptr<sea::application::AuthService> auth_service,
         sea::domain::DatabaseType db_type)
         : crud_engine_(std::move(crud_engine))
         , registry_(std::move(registry))
         , entity_name_(std::move(entity_name))
+        , auth_service_(std::move(auth_service))
         , db_type_(db_type) {}
 
     /**
@@ -1582,6 +1584,16 @@ public:
         try {
             sea::infrastructure::runtime::JsonRecordParser parser;
             auto record = parser.parse(*entity, std::string(req->content));
+            const auto password_it = record.find("password");
+            if (password_it != record.end()) {
+                const auto plain_password = dynamic_value_to_string(password_it->second);
+                if (!plain_password.has_value()) {
+                    rep->set_status(seastar::http::reply::status_type::bad_request);
+                    rep->write_body("application/json", json{{"error", "Password invalide."}}.dump());
+                    co_return std::move(rep);
+                }
+                record["password"] = auth_service_->hash_password(*plain_password);
+            }
 
             if (db_type_ == sea::domain::DatabaseType::Memory) {
                 const sea::domain::Field* id_field = nullptr;
@@ -1637,6 +1649,7 @@ private:
     std::shared_ptr<SchemaRuntimeRegistry> registry_;
     std::string entity_name_;
     sea::domain::DatabaseType db_type_;
+    std::shared_ptr<sea::application::AuthService> auth_service_;
 };
 
 /**
@@ -1822,6 +1835,7 @@ void register_collection_route(
                     crud_engine,
                     registry,
                     route.entity_name,
+                    auth_service,
                     service.database_config.type),
                 requires_auth,
                 auth_service));
