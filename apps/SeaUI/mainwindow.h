@@ -10,6 +10,8 @@
 #include <QFileSystemWatcher>
 #include "servicestatuscheck.h"
 #include <QProcess>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -44,6 +46,12 @@ private slots:
     void onServiceUnreachable(const QString& service);
     void on_swaggerServiceButton_clicked();
 
+    void on_openEntityDataButton_clicked();
+
+    void on_serviceLoginButton_clicked();
+
+    void on_serviceLogoutButton_clicked();
+
 private:
     Ui::MainWindow *ui;
     ProjectListModel* _projectModel;
@@ -63,6 +71,13 @@ private:
     QString yamlPathForProject(const QString& projectName) const {
         return _configsPath + projectName + ".yaml";
     }
-
+    QNetworkAccessManager* _networkManager = nullptr;
+    void showJsonArrayInTable(const QJsonArray& array, const QString& title);
+    QString entityCollectionPath(const QString& entityName) const;
+    QString _authToken;
+    void promptLogin();
+    void loginUser(const QString& email, const QString& password);
+    void logoutUser();
+    void updateAuthUi();
 };
 #endif // MAINWINDOW_H
