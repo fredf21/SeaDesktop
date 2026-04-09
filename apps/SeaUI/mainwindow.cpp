@@ -22,6 +22,55 @@
 #include <QTableWidget>
 #include <QLineEdit>
 #include <QFormLayout>
+#include <QInputDialog>
+#include <QFileDialog>
+#include <QFile>
+#include <QFileInfo>
+#include <QStandardPaths>
+#include <QCoreApplication>
+#include <QTextStream>
+#include <QStringConverter>
+
+namespace {
+
+/**
+ * @brief Retourne le dossier de configuration de l'application.
+ *
+ * En debug, on utilise le dossier `configs` du projet pour travailler
+ * directement sur les YAML du dépôt.
+ *
+ * En release, on utilise un dossier inscriptible standard propre à l'application.
+ *
+ * @return QString Chemin absolu du dossier de configuration.
+ */
+[[nodiscard]] QString appConfigsDir()
+{
+#ifdef QT_DEBUG
+    return QStringLiteral("/home/frederic/QtProjects/SeaDesktop/configs");
+#else
+    const QString base =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    return base + "/configs";
+#endif
+}
+
+/**
+ * @brief Retourne le dossier de logs de l'application.
+ *
+ * @return QString Chemin absolu du dossier de logs.
+ */
+[[nodiscard]] QString appLogsDir()
+{
+#ifdef QT_DEBUG
+    return QStringLiteral("/home/frederic/QtProjects/SeaDesktop/logs");
+#else
+    const QString base =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    return base + "/logs";
+#endif
+}
+
+} // namespace
 namespace {
 
 /**
@@ -138,8 +187,11 @@ MainWindow::MainWindow(QWidget *parent)
 
     loadProjects();
 
+    const QString configsDir = appConfigsDir();
+    QDir().mkpath(configsDir);
+
     _watcher = new QFileSystemWatcher(this);
-    _watcher->addPath("/home/frederic/QtProjects/SeaDesktop/configs/");
+    _watcher->addPath(configsDir);
 
     connect(_watcher, &QFileSystemWatcher::fileChanged,
             this, [this](const QString& path) {
@@ -225,8 +277,10 @@ MainWindow::MainWindow(QWidget *parent)
         }
 
         const auto& service = _serviceModel->serviceAt(_currentServiceRow);
-        const QString logPath = "/home/frederic/QtProjects/SeaDesktop/logs/"
-                                + QString::fromStdString(service->name) + ".log";
+        const QString logPath = appLogsDir()
+                                + "/"
+                                + QString::fromStdString(service->name)
+                                + ".log";
         QDesktopServices::openUrl(QUrl::fromLocalFile(logPath));
     });
 
@@ -251,7 +305,10 @@ void MainWindow::loadProjects()
         sea::infrastructure::yaml::yaml_project_repository repo;
         sea::application::LoadProjectUseCase useCase(repo);
 
-        auto projects = useCase.execute("/home/frederic/QtProjects/SeaDesktop/configs/");
+        const QString configsDir = appConfigsDir();
+        QDir().mkpath(configsDir);
+
+        auto projects = useCase.execute(configsDir.toStdString());
         _projectModel->setProjects(projects);
 
         if (_currentProjectRow >= 0 && _currentProjectRow < _projectModel->rowCount({})) {
@@ -300,10 +357,10 @@ void MainWindow::startService(const QString &serviceName, const QString &yamlPat
         return;
     }
 
-    const QString logsDir = "/home/frederic/QtProjects/SeaDesktop/logs/";
+    const QString logsDir = appLogsDir();
     QDir().mkpath(logsDir);
 
-    const QString logPath = logsDir + processKey + ".log";
+    const QString logPath = logsDir + "/" + processKey + ".log";
     const QString backendPath = "../Backend_Seastar/backend_seastar";
 
     auto* process = new QProcess(this);
@@ -899,5 +956,67 @@ void MainWindow::on_serviceLoginButton_clicked()
 void MainWindow::on_serviceLogoutButton_clicked()
 {
     logoutUser();
+}
+
+
+void MainWindow::on_actionAdd_New_Project_triggered()
+{
+    bool ok = false;
+
+    // 1. Demander le nom
+    QString projectName = QInputDialog::getText(
+        this,
+        "Nouveau projet",
+        "Nom du projet :",
+        QLineEdit::Normal,
+        "",
+        &ok
+        );
+
+    if (!ok || projectName.trimmed().isEmpty()) {
+        return;
+    }
+
+    projectName = projectName.trimmed();
+
+    // normalisation (important)
+    projectName = projectName.trimmed();                         // 1. enlever espaces début/fin
+    projectName.remove(QRegularExpression("[^A-Za-z0-9_ ]"));    // 2. enlever caractères invalides
+    projectName.replace(QRegularExpression("\\s+"), "_");
+
+    // 2. Construire le chemin dans configs/
+    const QString configDir = appConfigsDir();
+    QDir().mkpath(configDir);
+
+    const QString filePath = configDir + "/" + projectName + ".yaml";
+
+    // 3. Vérifier existence
+    if (QFileInfo::exists(filePath)) {
+        QMessageBox::warning(this, "Erreur",
+                             "Ce projet existe déjà.");
+        return;
+    }
+
+    // 4. Créer fichier
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::critical(this, "Erreur",
+                              "Impossible de créer le fichier.");
+        return;
+    }
+
+    QTextStream out(&file);
+    out.setEncoding(QStringConverter::Utf8);
+
+    out << "project:\n";
+    out << "  name: " << projectName << "\n\n";
+
+    file.close();
+
+    // Pas besoin de reload manuel !
+    // QFileSystemWatcher va détecter automatiquement
+
+    QMessageBox::information(this, "Succès",
+                             "Projet créé dans configs/");
 }
 

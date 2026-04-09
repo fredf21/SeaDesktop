@@ -52,6 +52,8 @@ private slots:
 
     void on_serviceLogoutButton_clicked();
 
+    void on_actionAdd_New_Project_triggered();
+
 private:
     Ui::MainWindow *ui;
     ProjectListModel* _projectModel;

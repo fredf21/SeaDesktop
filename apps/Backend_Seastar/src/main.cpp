@@ -36,6 +36,7 @@
 #include "runtime/generic_validator.h"
 #include "runtime/json_record_parser.h"
 #include "runtime/schema_runtime_registry.h"
+#include "security/secret_store.h"
 
 namespace bpo = boost::program_options;
 using json = nlohmann::json;
@@ -48,6 +49,39 @@ using sea::infrastructure::runtime::DynamicRecord;
 using sea::infrastructure::runtime::DynamicValue;
 using sea::infrastructure::runtime::GenericCrudEngine;
 using sea::infrastructure::runtime::SchemaRuntimeRegistry;
+/**
+ * @brief Lit entièrement le corps (body) d'une requête HTTP Seastar.
+ *
+ * Cette fonction consomme le `content_stream` de la requête et assemble
+ * tous les chunks reçus en une seule chaîne de caractères.
+ *
+ * Elle remplace l'utilisation dépréciée de `req.content`.
+ *
+ * @param req Requête HTTP entrante.
+ * @return Une future contenant le body complet sous forme de std::string.
+ *
+ * @note Cette fonction consomme définitivement le stream.
+ *       Elle ne doit être appelée qu'une seule fois par requête.
+ *
+ * @warning Pour des payloads très volumineux, cette implémentation charge
+ *          tout en mémoire. Pour des cas avancés, privilégier un traitement
+ *          en streaming.
+ */
+[[nodiscard]] seastar::future<std::string>
+read_request_body(seastar::http::request& req) {
+    std::string body;
+
+    while (true) {
+        seastar::temporary_buffer<char> chunk = co_await req.content_stream->read();
+        if (chunk.empty()) {
+            break;
+        }
+
+        body.append(chunk.get(), chunk.size());
+    }
+
+    co_return body;
+}
 
 /**
  * @brief Met la première lettre d'une chaîne en minuscule.
@@ -427,7 +461,7 @@ using sea::infrastructure::runtime::SchemaRuntimeRegistry;
  * @brief Vérifie si une route logique appartient au bloc d'authentification global.
  *
  * @param route Route à inspecter.
- * @return true si la route est `/auth/*`, false sinon.
+ * @return true si la route correspond à l'entité "Auth", false sinon.
  */
 [[nodiscard]] bool is_auth_route(const RouteDefinition& route) {
     return route.entity_name == "Auth";
@@ -602,8 +636,10 @@ public:
         }
 
         try {
+            std::string body = co_await read_request_body(*req);
+            std::cerr << "[DEBUG] BODY = [" << body << "]" << std::endl;
             sea::infrastructure::runtime::JsonRecordParser parser;
-            auto record = parser.parse(*entity, std::string(req->content));
+            auto record = parser.parse(*entity, body);
 
             const auto all_users = crud_engine_->list("User");
 
@@ -642,7 +678,9 @@ public:
             }
 
             record["password"] = auth_service_->hash_password(*plain_password);
-
+            if (record.find("role") == record.end()) {
+                record["role"] = std::string("user");
+            }
             if (db_type_ == sea::domain::DatabaseType::Memory) {
                 const sea::domain::Field* id_field = nullptr;
                 for (const auto& field : entity->fields) {
@@ -722,7 +760,8 @@ public:
            std::unique_ptr<seastar::http::request> req,
            std::unique_ptr<seastar::http::reply> rep) override {
         try {
-            const auto body = json::parse(std::string(req->content));
+            std::string reqbody = co_await read_request_body(*req);
+            const auto body = json::parse(reqbody);
 
             if (!body.contains("email") || !body.contains("password")) {
                 rep->set_status(seastar::http::reply::status_type::bad_request);
@@ -770,7 +809,17 @@ public:
                 co_return std::move(rep);
             }
 
-            const auto token = auth_service_->generate_token(*user_id, email);
+            std::string role = "admin";
+
+            const auto role_it = user_record->find("role");
+            if (role_it != user_record->end()) {
+                const auto role_value = dynamic_value_to_string(role_it->second);
+                if (role_value.has_value() && !role_value->empty()) {
+                    role = *role_value;
+                }
+            }
+
+            const auto token = auth_service_->generate_token(*user_id, email, role);
 
             json user_json = json::parse(record_to_json(*user_record));
             user_json.erase("password");
@@ -1582,8 +1631,9 @@ public:
         }
 
         try {
+            std::string body = co_await read_request_body(*req);
             sea::infrastructure::runtime::JsonRecordParser parser;
-            auto record = parser.parse(*entity, std::string(req->content));
+            auto record = parser.parse(*entity, body);
             const auto password_it = record.find("password");
             if (password_it != record.end()) {
                 const auto plain_password = dynamic_value_to_string(password_it->second);
@@ -1593,6 +1643,10 @@ public:
                     co_return std::move(rep);
                 }
                 record["password"] = auth_service_->hash_password(*plain_password);
+                std::string role = "user";
+                if (record.find("role") == record.end()) {
+                    record["role"] = std::string("user");
+                }
             }
 
             if (db_type_ == sea::domain::DatabaseType::Memory) {
@@ -1699,8 +1753,9 @@ public:
         }
 
         try {
+            std::string body = co_await read_request_body(*req);
             sea::infrastructure::runtime::JsonRecordParser parser;
-            auto record = parser.parse(*entity, std::string(req->content));
+            auto record = parser.parse(*entity, body);
             const auto result = crud_engine_->update(entity_name_, std::string(id), std::move(record));
 
             if (!result.success) {
@@ -2155,10 +2210,22 @@ int main(int argc, char** argv) {
         log_route_definitions(service.name, route_definitions);
 
         auto server = std::make_shared<seastar::httpd::http_server_control>();
-        const auto jwt_secret = get_env_or_default("SEA_JWT_SECRET", "dev_only_secret_change_me");
-        auto auth_service = std::make_shared<sea::application::AuthService>(jwt_secret);
+        sea::infrastructure::security::JwtSecretConfig secret_cfg;
+        secret_cfg.storageDir = "./runtime/secrets";
+        secret_cfg.serviceName = service.name;
+
+        const auto jwt_secret =
+            sea::infrastructure::security::resolve_jwt_secret(secret_cfg);
+
+        auto auth_service =
+            std::make_shared<sea::application::AuthService>(jwt_secret);
 
         return server->start()
+            .then([server] {
+                return server->server().invoke_on_all([](seastar::httpd::http_server& s) {
+                    s.set_content_streaming(true);
+                });
+            })
             .then([server, crud_engine, registry, route_definitions, service, openapi_json, auth_service] {
                 std::cerr << "[BOOT] serveur HTTP initialise, enregistrement des routes..." << std::endl;
 

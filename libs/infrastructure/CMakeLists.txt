@@ -3,6 +3,17 @@ project(sea_infrastructure LANGUAGES CXX)
 
 find_package(yaml-cpp REQUIRED)
 find_package(nlohmann_json REQUIRED)
+find_package(OpenSSL REQUIRED)
+
+include(FetchContent)
+
+FetchContent_Declare(
+    jwt-cpp
+    GIT_REPOSITORY https://github.com/Thalhammer/jwt-cpp.git
+    GIT_TAG v0.7.0
+)
+
+FetchContent_MakeAvailable(jwt-cpp)
 
 add_library(sea_infrastructure STATIC
     yaml/yaml_schema_parser.cpp
@@ -14,7 +25,11 @@ add_library(sea_infrastructure STATIC
 
     persistence/repository_factory.cpp
     persistence/memory/in_memory_generic_repository.cpp
-    yaml/yaml_project_repository.h yaml/yaml_project_repository.cpp
+    yaml/yaml_project_repository.cpp
+
+    security/secret_store.cpp
+    security/jwt_service.cpp
+
     runtime/i_project_repository.h
 )
 
@@ -47,6 +62,9 @@ target_sources(sea_infrastructure
             
             persistence/mysql/mysql_generic_repository.h
             persistence/mysql/mysql_connector.h
+
+            security/secret_store.h
+            security/jwt_service.h
 )
 
 target_include_directories(sea_infrastructure
@@ -60,6 +78,8 @@ target_link_libraries(sea_infrastructure
         Sea::domain
         yaml-cpp
         nlohmann_json::nlohmann_json
+        jwt-cpp
+        OpenSSL::Crypto
 )
 
 target_compile_features(sea_infrastructure PUBLIC cxx_std_20)
