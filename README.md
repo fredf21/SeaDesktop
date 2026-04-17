@@ -53,7 +53,7 @@ SeaDesktop repose sur deux modes :
 
 ## Pourquoi Seastar
 
-:contentReference[oaicite:1]{index=1} permet :
+:contentReference Seastar permet :
 
 - Très hautes performances
 - Architecture non bloquante
