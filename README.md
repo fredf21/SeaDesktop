@@ -1,6 +1,6 @@
 # SeaDesktop
 
-SeaDesktop est une plateforme de génération de backend haute performance en C++ basée sur :contentReference[oaicite:0]{index=0}, permettant de transformer une configuration simple en un backend complet, prêt à l’emploi.
+SeaDesktop est une plateforme de génération de backend haute performance en C++ basée sur Seastar, permettant de transformer une configuration simple en un backend complet, prêt à l’emploi.
 
 ---
 
