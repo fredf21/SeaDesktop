@@ -272,15 +272,31 @@ MainWindow::MainWindow(QWidget *parent)
     });
 
     connect(ui->logsServiceButton, &QPushButton::clicked, this, [this]() {
-        if (_currentServiceRow < 0) {
+        if (_currentProjectRow < 0 || _currentServiceRow < 0) {
+            QMessageBox::warning(this, "Logs", "Aucun projet ou service sélectionné.");
             return;
         }
 
+        const auto& project = _projectModel->projectAt(_currentProjectRow);
         const auto& service = _serviceModel->serviceAt(_currentServiceRow);
-        const QString logPath = appLogsDir()
-                                + "/"
-                                + QString::fromStdString(service->name)
-                                + ".log";
+
+        const QString projectName = QString::fromStdString(project->name);
+        const QString serviceName = QString::fromStdString(service->name);
+
+        const QString processKey =
+            serviceProcessKey(projectName, serviceName, static_cast<int>(service->port));
+
+        const QString logPath = appLogsDir() + "/" + processKey + ".log";
+
+        if (!QFileInfo::exists(logPath)) {
+            QMessageBox::warning(
+                this,
+                "Logs",
+                "Le fichier de log n'existe pas encore :\n" + logPath
+                );
+            return;
+        }
+
         QDesktopServices::openUrl(QUrl::fromLocalFile(logPath));
     });
 

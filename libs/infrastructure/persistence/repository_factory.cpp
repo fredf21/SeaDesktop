@@ -1,13 +1,13 @@
 #include "repository_factory.h"
 
 #include "memory/in_memory_generic_repository.h"
-
+#include "mysql/mysql_generic_repository.h"
 #include <stdexcept>
 
 namespace sea::infrastructure::persistence {
 
 std::unique_ptr<IGenericRepository>
-RepositoryFactory::create(const sea::domain::DatabaseConfig& config) const {
+RepositoryFactory::create(const sea::domain::DatabaseConfig& config, const runtime::SchemaRuntimeRegistry &schema_registry) const {
     switch (config.type) {
     case sea::domain::DatabaseType::Memory:
         return std::make_unique<InMemoryGenericRepository>();
@@ -22,8 +22,16 @@ RepositoryFactory::create(const sea::domain::DatabaseConfig& config) const {
             "MongoDB n'est pas encore implemente dans le MVP."
             );
     case domain::DatabaseType::MySQL:
-        throw std::runtime_error(
-            "MySQL n'est pas encore implemente dans le MVP."
+        auto connector = std::make_unique<mysql::MySQLConnector>(
+            config.host,
+            config.username,
+            config.password,
+            config.database_name,
+            static_cast<unsigned int>(config.port)
+            );
+        return std::make_unique<mysql::MySQLGenericRepository>(
+            std::move(connector),
+            schema_registry
             );
         break;
     }

@@ -449,6 +449,9 @@ YamlSchemaParser::parse_database_type(const std::string& value) const {
     if (lowered == "memory") {
         return sea::domain::DatabaseType::Memory;
     }
+    if (lowered == "mysql" || lowered == "mysqldb") {
+        return sea::domain::DatabaseType::MySQL;
+    }
     if (lowered == "postgres" || lowered == "postgresql") {
         return sea::domain::DatabaseType::PostgreSQL;
     }

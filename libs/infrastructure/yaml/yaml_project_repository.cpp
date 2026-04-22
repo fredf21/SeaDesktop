@@ -78,6 +78,9 @@ sea::domain::Service sea::infrastructure::yaml::yaml_project_repository::parse_s
             service.database_config.type = sea::domain::DatabaseType::Memory;
         } else if (db_type == "postgres" || db_type == "postgresql") {
             service.database_config.type = sea::domain::DatabaseType::PostgreSQL;
+        }
+        else if (db_type == "mysql" || db_type == "mysqldb") {
+            service.database_config.type = sea::domain::DatabaseType::MySQL;
         } else if (db_type == "mongo" || db_type == "mongodb") {
             service.database_config.type = sea::domain::DatabaseType::MongoDB;
         } else {

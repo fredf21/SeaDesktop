@@ -6,10 +6,15 @@ services:
     port: 8081
 
     database:
-      type: memory
+      type: mysql
+      port: 3306
+      database_name: seadesktop
+      username: root
+      password: root
 
     entities:
       - name: User
+        table_name: User
         options:
           enable_crud: true
           enable_auth: true
@@ -34,6 +39,7 @@ services:
             required: false
 
       - name: Department
+        table_name: Department
         options:
           enable_auth: true
         fields:
@@ -53,6 +59,7 @@ services:
             on_delete: cascade
 
       - name: Employee
+        table_name: Employee
         options:
           enable_auth: true
         fields:
@@ -81,6 +88,7 @@ services:
             on_delete: restrict
 
       - name: Student
+        table_name: Student
         options:
           enable_auth: true
         fields:
@@ -108,6 +116,7 @@ services:
             on_delete: cascade
 
       - name: Program
+        table_name: Program
         options:
           enable_auth: true
         fields:
@@ -129,6 +138,7 @@ services:
             on_delete: cascade
 
       - name: StudentProgram
+        table_name: StudentProgram
         options:
           enable_auth: true
         fields:

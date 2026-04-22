@@ -2,6 +2,7 @@
 
 #include "i_generic_repository.h"
 #include "database_config.h"
+#include "runtime/schema_runtime_registry.h"
 
 #include <memory>
 
@@ -16,7 +17,7 @@ namespace sea::infrastructure::persistence {
 class RepositoryFactory {
 public:
     [[nodiscard]] std::unique_ptr<IGenericRepository>
-    create(const sea::domain::DatabaseConfig& config) const;
+    create(const sea::domain::DatabaseConfig& config, const runtime::SchemaRuntimeRegistry& schema_registry) const;
 };
 
 } // namespace sea::infrastructure::persistence
