@@ -1,6 +1,7 @@
 find_package(yaml-cpp REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(OpenSSL REQUIRED)
+find_package(Seastar REQUIRED)
 
 find_path(MYSQLCPP_INCLUDE_DIR
     NAMES mysql_connection.h
@@ -48,6 +49,7 @@ add_library(sea_infrastructure STATIC
 
     runtime/i_project_repository.h
     persistence/utilities.h
+    persistence/mysql/mysqlconnexionpool.h persistence/mysql/mysqlconnexionpool.cpp
 )
 
 add_library(Sea::infrastructure ALIAS sea_infrastructure)
@@ -66,6 +68,7 @@ target_sources(sea_infrastructure
             runtime/generic_crud_engine.h
             runtime/json_record_parser.h
 
+            persistence/utilities.h
             persistence/i_generic_repository.h
             persistence/repository_factory.h
             persistence/memory/in_memory_generic_repository.h
@@ -98,6 +101,7 @@ target_link_libraries(sea_infrastructure
         jwt-cpp
         OpenSSL::Crypto
         ${MYSQLCPP_LIBRARY}
+        Seastar::seastar
 
 )
 

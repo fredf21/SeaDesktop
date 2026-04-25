@@ -395,8 +395,7 @@ void MainWindow::startService(const QString &serviceName, const QString &yamlPat
     process->setStandardErrorFile(logPath, QIODevice::Append);
 
     QStringList args;
-    args << "--smp" << "1"
-         << "--config" << yamlPath
+    args << "--config" << yamlPath
          << "--service_name" << serviceName;
 
     process->start(backendPath, args);

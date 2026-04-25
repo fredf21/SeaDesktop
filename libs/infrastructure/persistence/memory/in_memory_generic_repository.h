@@ -14,23 +14,24 @@ namespace sea::infrastructure::persistence {
 // ─────────────────────────────────────────────────────────────
 class InMemoryGenericRepository final : public IGenericRepository {
 public:
-    std::optional<runtime::DynamicRecord> create(const std::string& entity_name,
+    seastar::future<std::optional<runtime::DynamicRecord>> create(const std::string& entity_name,
                 runtime::DynamicRecord record) override;
 
-    [[nodiscard]] std::vector<runtime::DynamicRecord>
-    find_all(const std::string& entity_name) const override;
+    seastar::future<std::vector<runtime::DynamicRecord>>
+    find_all(const std::string& entity_name) override;
 
-    [[nodiscard]] std::optional<runtime::DynamicRecord>
+    seastar::future<std::optional<runtime::DynamicRecord>>
     find_by_id(const std::string& entity_name,
-               const std::string& id) const override;
+               const std::string& id) override;
 
-    bool remove(const std::string& entity_name,
+    seastar::future<bool> remove(const std::string& entity_name,
                 const std::string& id) override;
 
-    UpdateResponse update(const std::string& entity_name,
+    seastar::future<UpdateResponse> update(const std::string& entity_name,
                 const std::string& id,
                 runtime::DynamicRecord record) override;
 
+    seastar::future<bool> insert_pivot(const std::string &pivot_table, runtime::DynamicRecord values) override;
 private:
     using EntityStorage = std::unordered_map<std::string, runtime::DynamicRecord>;
 
@@ -39,6 +40,8 @@ private:
 
     [[nodiscard]] std::optional<std::string>
     extract_id(const runtime::DynamicRecord& record) const;
+
+
 };
 
 } // namespace sea::infrastructure::persistence

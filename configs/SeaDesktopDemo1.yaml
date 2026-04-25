@@ -7,6 +7,7 @@ services:
 
     database:
       type: mysql
+      host: 127.0.0.1
       port: 3306
       database_name: seadesktop
       username: root
@@ -21,7 +22,7 @@ services:
         fields:
           - name: id
             type: uuid
-            required: true
+            required: false
             unique: true
           - name: email
             type: email
@@ -142,10 +143,6 @@ services:
         options:
           enable_auth: true
         fields:
-          - name: id
-            type: uuid
-            required: true
-            unique: true
           - name: student_id
             type: uuid
             required: true

@@ -5,7 +5,7 @@
 #include <optional>
 #include <string>
 #include <vector>
-
+#include <seastar/core/future.hh>
 
 namespace sea::infrastructure::persistence {
 
@@ -34,26 +34,31 @@ public:
     virtual ~IGenericRepository() = default;
 
     // Insère ou remplace un record dans une entité logique
-    virtual std::optional<runtime::DynamicRecord> create(const std::string& entity_name,
+    virtual seastar::future<std::optional<runtime::DynamicRecord>> create(const std::string& entity_name,
                         runtime::DynamicRecord record) = 0;
 
     // Retourne tous les records d’une entité
-    [[nodiscard]] virtual std::vector<runtime::DynamicRecord>
-    find_all(const std::string& entity_name) const = 0;
+    virtual seastar::future<std::vector<runtime::DynamicRecord>>
+    find_all(const std::string& entity_name) = 0;
 
     // Retourne un record par identifiant
-    [[nodiscard]] virtual std::optional<runtime::DynamicRecord>
+    virtual seastar::future<std::optional<runtime::DynamicRecord>>
     find_by_id(const std::string& entity_name,
-               const std::string& id) const = 0;
+               const std::string& id) = 0;
 
     // Supprime un record par identifiant
-    virtual bool remove(const std::string& entity_name,
+    virtual seastar::future<bool> remove(const std::string& entity_name,
                         const std::string& id) = 0;
 
     // Met à jour/remplace un record existant
-    virtual UpdateResponse update(const std::string& entity_name,
+    virtual seastar::future<UpdateResponse> update(const std::string& entity_name,
                         const std::string& id,
                         runtime::DynamicRecord record) = 0;
+
+    // Nouveau : insertion dans une table pivot many-to-many
+    virtual seastar::future<bool>
+    insert_pivot(const std::string& pivot_table,
+                 runtime::DynamicRecord values) = 0;
 };
 
 } // namespace sea::infrastructure::persistence

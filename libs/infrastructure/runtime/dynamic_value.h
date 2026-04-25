@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <variant>
+#include <vector>
 
 namespace sea::infrastructure::runtime {
 
@@ -23,7 +24,9 @@ using DynamicValue = std::variant<
     std::string,
     std::int64_t,
     double,
-    bool
+    bool,
+    std::vector<std::string>,
+    std::vector<std::int64_t>
     >;
 
 } // namespace sea::infrastructure::runtime

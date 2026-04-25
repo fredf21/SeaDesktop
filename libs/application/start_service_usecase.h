@@ -27,8 +27,12 @@ public:
         repository_factory_(repository_factory) {
     }
 
-    [[nodiscard]] std::unique_ptr<sea::infrastructure::persistence::IGenericRepository>
-    execute(const sea::domain::Service& service) const;
+    [[nodiscard]] std::shared_ptr<infrastructure::persistence::IGenericRepository>
+    execute(
+        const sea::domain::Service& service,
+        std::shared_ptr<infrastructure::runtime::SchemaRuntimeRegistry> registry,
+        const infrastructure::persistence::RepositoryFactory::DatabaseResources& resources
+        ) const;
 
 private:
     sea::infrastructure::runtime::SchemaRuntimeRegistry& registry_;

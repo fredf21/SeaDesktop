@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "seastar/core/future.hh"
 namespace sea::infrastructure::runtime {
 
 // ─────────────────────────────────────────────────────────────
@@ -40,27 +41,31 @@ public:
         repository_(std::move(repository)) {
     }
 
-    [[nodiscard]] OperationResult create(const std::string& entity_name,
-                                         DynamicRecord record) const;
+    seastar::future<OperationResult> create(const std::string& entity_name,
+                                         DynamicRecord record);
 
-    [[nodiscard]] std::vector<DynamicRecord>
+    seastar::future<std::vector<DynamicRecord>>
     list(const std::string& entity_name) const;
 
-    [[nodiscard]] std::optional<DynamicRecord>
+    seastar::future<std::optional<DynamicRecord>>
     get_by_id(const std::string& entity_name,
               const std::string& id) const;
 
-    [[nodiscard]] OperationResult update(const std::string& entity_name,
+    seastar::future<OperationResult> update(const std::string& entity_name,
                                          const std::string& id,
-                                         DynamicRecord record) const;
+                                         DynamicRecord record);
 
-    [[nodiscard]] bool remove(const std::string& entity_name,
-                              const std::string& id) const;
+    seastar::future<bool> remove(const std::string& entity_name,
+                              const std::string& id);
 
 private:
     std::shared_ptr<SchemaRuntimeRegistry> registry_;
     std::shared_ptr<GenericValidator> validator_;
     std::shared_ptr<sea::infrastructure::persistence::IGenericRepository> repository_;
+    seastar::future<std::vector<std::string>>
+    create_many_to_many_links(const sea::domain::Entity& entity,
+                              const runtime::DynamicRecord& input_record,
+                              const runtime::DynamicRecord& created_record);
 };
 
 } // namespace sea::infrastructure::runtime
