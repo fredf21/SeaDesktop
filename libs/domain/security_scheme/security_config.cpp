@@ -84,7 +84,7 @@ void SecurityConfig::validate() const
     // 1. HttpLimits
     http_limits_.validate();
 
-    // 2. Authentication  ← NOUVEAU
+    // 2. Authentication
     authentication_.validate();
 
     // 3. CORS + credentials interdit le wildcard

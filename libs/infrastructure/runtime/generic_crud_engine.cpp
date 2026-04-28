@@ -184,6 +184,19 @@ GenericCrudEngine::get_by_id(const std::string& entity_name,
     return repository_->find_by_id(entity_name, id);
 }
 
+seastar::future<std::optional<DynamicRecord>>
+GenericCrudEngine::find_one_by_field(const std::string& entity_name,
+                                     const std::string& field_name,
+                                     const std::string& value) const
+{
+    if (!registry_->has_entity(entity_name)) {
+        return seastar::make_ready_future<std::optional<DynamicRecord>>(std::nullopt);
+    }
+
+    return repository_->find_one_by_field(entity_name, field_name, value);
+}
+
+
 seastar::future<GenericCrudEngine::OperationResult>
 GenericCrudEngine::update(const std::string& entity_name,
                           const std::string& id,

@@ -1,16 +1,31 @@
 #pragma once
+
 #include <seastar/http/httpd.hh>
 #include <memory>
 
-namespace sea::application { class AuthService; }
-namespace sea::infrastructure::runtime { class GenericCrudEngine; }
+namespace sea::infrastructure::runtime {
+class GenericCrudEngine;
+}
 
 namespace sea::http::handlers::auth {
 
+/**
+ * MeHandler
+ *
+ * Route : GET /auth/me
+ *
+ * Responsabilité :
+ * - récupérer l'utilisateur courant
+ *
+ * Important :
+ * → suppose que l'authentification est déjà faite
+ *   par ProtectedHandler (middleware)
+ */
 class MeHandler final : public seastar::httpd::handler_base {
 public:
-    MeHandler(std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
-              std::shared_ptr<sea::application::AuthService> auth_service);
+    explicit MeHandler(
+        std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine
+        );
 
     seastar::future<std::unique_ptr<seastar::http::reply>>
     handle(const seastar::sstring&,
@@ -18,8 +33,10 @@ public:
            std::unique_ptr<seastar::http::reply> rep) override;
 
 private:
+    /**
+     * Accès aux opérations CRUD
+     */
     std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine_;
-    std::shared_ptr<sea::application::AuthService> auth_service_;
 };
 
-}
+} // namespace sea::http::handlers::auth

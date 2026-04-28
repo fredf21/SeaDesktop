@@ -7,6 +7,7 @@
 #include "runtime/schema_runtime_registry.h"
 
 #include <nlohmann/json.hpp>
+#include <seastar/core/thread.hh>
 #include <sstream>
 #include <utility>
 
@@ -19,12 +20,13 @@ CreateHandler::CreateHandler(
     std::shared_ptr<sea::infrastructure::runtime::SchemaRuntimeRegistry> registry,
     std::string entity_name,
     std::shared_ptr<sea::application::AuthService> auth_service,
-    sea::domain::DatabaseType db_type)
+    sea::domain::DatabaseType db_type, std::shared_ptr<IBlockingExecutor> blocking_executor)
     : crud_engine_(std::move(crud_engine))
     , registry_(std::move(registry))
     , entity_name_(std::move(entity_name))
     , auth_service_(std::move(auth_service))
     , db_type_(db_type)
+    , blocking_executor_(std::move(blocking_executor))
 {
 }
 
@@ -55,7 +57,15 @@ CreateHandler::handle(const seastar::sstring&,
                 co_return std::move(rep);
             }
 
-            record["password"] = auth_service_->hash_password(*plain_password);
+            const auto hashed_password =
+                co_await blocking_executor_->submit(
+                    [auth_service = auth_service_,
+                     plain = *plain_password] {
+                        return auth_service->hash_password(plain);
+                    }
+                    );
+
+            record["password"] = hashed_password;
 
             if (record.find("role") == record.end()) {
                 record["role"] = std::string("user");

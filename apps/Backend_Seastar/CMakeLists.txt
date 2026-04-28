@@ -31,7 +31,9 @@ add_executable(backend_seastar
     src/http/handlers/relation_handlers/get_one_by_fk_handler.h
     src/http/handlers/relation_handlers/get_with_children_handler.h
     src/http/handlers/relation_handlers/list_many_to_many_handler.h
-
+    src/http/middlewares/rate_limit_middleware.h
+    src/http/middlewares/http_limits_middleware.h
+    src/http/middlewares/cors_middleware.h
 
 
     src/http/utils/http_utils.cpp
@@ -57,6 +59,18 @@ add_executable(backend_seastar
     src/http/handlers/relation_handlers/get_one_by_fk_handler.cpp
     src/http/handlers/relation_handlers/get_with_children_handler.cpp
     src/http/handlers/relation_handlers/list_many_to_many_handler.cpp
+    src/http/middlewares/security_headers_middleware.cpp
+    src/http/middlewares/rate_limit_middleware.cpp
+    src/http/middlewares/http_limits_middleware.cpp
+    src/http/middlewares/cors_middleware.cpp
+    src/http/middlewares/rate_limit_store.h src/http/middlewares/rate_limit_store.cpp
+    src/http/middlewares/token_bucket.h src/http/middlewares/token_bucket.cpp
+
+
+
+
+
+
 )
 target_link_libraries(backend_seastar
     PRIVATE

@@ -51,6 +51,11 @@ public:
     get_by_id(const std::string& entity_name,
               const std::string& id) const;
 
+    seastar::future<std::optional<DynamicRecord>>
+    find_one_by_field(const std::string& entity_name,
+                      const std::string& field_name,
+                      const std::string& value) const;
+
     seastar::future<OperationResult> update(const std::string& entity_name,
                                          const std::string& id,
                                          DynamicRecord record);

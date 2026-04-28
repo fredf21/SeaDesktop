@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include "database_config.h"
+#include "thread_pool_execution/i_blocking_executor.h"
 
 namespace sea::application { class AuthService; }
 namespace sea::infrastructure::runtime {
@@ -18,7 +19,8 @@ public:
                   std::shared_ptr<sea::infrastructure::runtime::SchemaRuntimeRegistry> registry,
                   std::string entity_name,
                   std::shared_ptr<sea::application::AuthService> auth_service,
-                  sea::domain::DatabaseType db_type);
+                  sea::domain::DatabaseType db_type,
+                  std::shared_ptr<IBlockingExecutor> blocking_executor);
 
     seastar::future<std::unique_ptr<seastar::http::reply>>
     handle(const seastar::sstring&,
@@ -31,6 +33,7 @@ private:
     std::string entity_name_;
     std::shared_ptr<sea::application::AuthService> auth_service_;
     sea::domain::DatabaseType db_type_;
+    std::shared_ptr<IBlockingExecutor> blocking_executor_;
 };
 
 }

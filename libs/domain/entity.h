@@ -11,10 +11,11 @@ namespace sea::domain {
 
 struct EntityOptions {
     bool enable_crud       = true;   // génère GET/POST/PUT/DELETE
-    bool enable_auth       = false;  // génère /register /login /token
+    bool is_auth_source       = false;  // génère /register /login /token
     bool enable_websocket  = false;  // génère ws://<entity>/live
     bool soft_delete       = false;  // ajoute deleted_at, ne supprime pas vraiment
     bool timestamps        = true;   // ajoute created_at / updated_at automatiquement
+    bool public_routes    = false;   // Defini si une route est protege par le middleware de securitE
 };
 
 struct Entity {

@@ -63,7 +63,7 @@ struct Schema {
         std::vector<const Entity*> out;
 
         for (const auto& e : entities) {
-            if (e.options.enable_auth) {
+            if (e.options.is_auth_source) {
                 out.push_back(&e);
             }
         }

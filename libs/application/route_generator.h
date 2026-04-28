@@ -3,8 +3,8 @@
 #include <string>
 #include <vector>
 
-#include "schema.h"
 #include "entity.h"
+#include "service.h"
 
 namespace sea::application {
 
@@ -29,6 +29,7 @@ struct RouteDefinition {
     std::string path;
     std::string entity_name;
     std::string operation_name;
+    bool requires_auth = false;
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -40,11 +41,12 @@ struct RouteDefinition {
 class RouteGenerator {
 public:
     [[nodiscard]] std::vector<RouteDefinition>
-    generate(const sea::domain::Schema& schema) const;
+    generate(const sea::domain::Service& service) const;
 
 private:
     [[nodiscard]] std::vector<RouteDefinition>
-    generate_for_entity(const sea::domain::Entity& entity) const;
+    generate_for_entity(const sea::domain::Entity& entity, bool requires_auth) const;
+    bool service_requires_auth(const sea::domain::Service& service) const;
 };
 
 } // namespace sea::application

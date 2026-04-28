@@ -1,21 +1,33 @@
 project:
   name: SeaDesktopDemo
+
 services:
   - name: CCNBService
     port: 8080
+
+    security:
+      authentication:
+        type: none   # 👈 pas d'auth ici (important sinon ça casse sans User)
+
     database:
       type: memory
+
     entities:
       - name: Department
+        options:
+          enable_crud: true
+          public_routes: true
         fields:
           - name: id
             type: uuid
             required: true
             unique: true
+
           - name: name
             type: string
             required: true
             unique: true
+
         relations:
           - name: employees
             kind: has_many
@@ -24,24 +36,32 @@ services:
             on_delete: cascade
 
       - name: Employee
+        options:
+          enable_crud: true
+          public_routes: true
         fields:
           - name: id
             type: uuid
             required: true
             unique: true
+
           - name: name
             type: string
             required: true
+
           - name: email
             type: email
             required: true
             unique: true
+
           - name: age
             type: int
             required: false
+
           - name: department_id
             type: uuid
             required: false
+
         relations:
           - name: department
             kind: belongs_to
@@ -50,28 +70,39 @@ services:
             on_delete: restrict
 
       - name: Student
+        options:
+          enable_crud: true
+          public_routes: true
         fields:
           - name: id
             type: uuid
             required: true
             unique: true
+
           - name: name
             type: string
             required: true
+
           - name: email
             type: email
             required: true
             unique: true
+
           - name: age
             type: int
             required: false
 
       - name: Program
+        options:
+          enable_crud: true
+          public_routes: true
         fields:
           - name: id
             type: uuid
             required: true
             unique: true
+
           - name: name
             type: string
             required: true
+            unique: true

@@ -34,6 +34,15 @@ public:
 private:
     [[nodiscard]] sea::domain::Project parse_project_node(const YAML::Node& root) const;
     [[nodiscard]] sea::domain::Service parse_service_node(const YAML::Node& node) const;
+
+    //Parser La securitE
+    [[nodiscard]] domain::security::SecurityConfig parse_security_node(const YAML::Node& node) const;
+    [[nodiscard]] domain::security::AuthentificationConfig parse_auth_node(const YAML::Node& node) const;
+    [[nodiscard]] domain::security::CorsConfig parse_cors_node(const YAML::Node& node) const;
+    [[nodiscard]] domain::security::RateLimitRule parse_rate_limite_rule_node(const YAML::Node& node) const;
+    [[nodiscard]] domain::security::HttpLimits parse_http_limits_node(const YAML::Node& node) const;
+    [[nodiscard]] domain::security::SecurityHeaders parse_security_headers_node(const YAML::Node& node) const;
+
     [[nodiscard]] sea::domain::Entity parse_entity_node(const YAML::Node& node) const;
     [[nodiscard]] sea::domain::Field parse_field_node(const YAML::Node& node) const;
     [[nodiscard]] sea::domain::Relation parse_relation_node(const YAML::Node& node) const;
@@ -47,6 +56,12 @@ private:
     [[nodiscard]] std::string require_string(const YAML::Node& node,
                                              const char* key,
                                              const char* context) const;
+    [[nodiscard]]std::string resolve_env(const std::string& value)const ;
+    // =====================================================================
+    //                    HELPERS DE PARSING
+    // =====================================================================
+    std::chrono::seconds  parse_duration(const std::string& s) const;
+    std::uint64_t parse_size(const std::string& s) const;
 };
 
 } // namespace sea::infrastructure::yaml

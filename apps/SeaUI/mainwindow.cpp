@@ -1,8 +1,7 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 
-#include "load_project_use_case.h"
-#include "../../libs/infrastructure/yaml/yaml_project_repository.h"
+#include "../../libs/infrastructure/yaml/yaml_schema_parser.h"
 
 #include <QDebug>
 #include <QDesktopServices>
@@ -318,37 +317,58 @@ MainWindow::~MainWindow()
 void MainWindow::loadProjects()
 {
     try {
-        sea::infrastructure::yaml::yaml_project_repository repo;
-        sea::application::LoadProjectUseCase useCase(repo);
-
         const QString configsDir = appConfigsDir();
         QDir().mkpath(configsDir);
 
-        auto projects = useCase.execute(configsDir.toStdString());
+        QDir dir(configsDir);
+        QStringList files = dir.entryList(QStringList() << "*.yaml" << "*.yml",
+                                          QDir::Files);
+
+        sea::infrastructure::yaml::YamlSchemaParser parser;
+        std::vector<sea::domain::Project> projects;
+
+        for (const QString& file : std::as_const(files)) {
+            const std::filesystem::path path =
+                std::filesystem::path(configsDir.toStdString()) / file.toStdString();
+
+            try {
+                projects.push_back(parser.parse_project_file(path.string()));
+            } catch (const std::exception& e) {
+                qWarning() << "Erreur fichier:" << file << ":" << e.what();
+            }
+        }
+
         _projectModel->setProjects(projects);
 
-        if (_currentProjectRow >= 0 && _currentProjectRow < _projectModel->rowCount({})) {
+        // Restauration sélection (inchangé)
+        if (_currentProjectRow >= 0 &&
+            _currentProjectRow < _projectModel->rowCount({})) {
+
             const auto projectIndex = _projectModel->index(_currentProjectRow);
             ui->projectListView->setCurrentIndex(projectIndex);
             on_projectListView_clicked(projectIndex);
 
-            if (_currentServiceRow >= 0 && _currentServiceRow < _serviceModel->rowCount({})) {
+            if (_currentServiceRow >= 0 &&
+                _currentServiceRow < _serviceModel->rowCount({})) {
+
                 const auto serviceIndex = _serviceModel->index(_currentServiceRow);
                 ui->serviceListView->setCurrentIndex(serviceIndex);
                 on_serviceListView_clicked(serviceIndex);
 
-                if (_currentEntityRow >= 0 && _currentEntityRow < _entityModel->rowCount({})) {
+                if (_currentEntityRow >= 0 &&
+                    _currentEntityRow < _entityModel->rowCount({})) {
+
                     const auto entityIndex = _entityModel->index(_currentEntityRow);
                     ui->entityListView->setCurrentIndex(entityIndex);
                     on_entityListView_clicked(entityIndex);
                 }
             }
         }
+
     } catch (const std::exception& e) {
         qWarning() << "Erreur chargement projets:" << e.what();
     }
 }
-
 /**
  * @brief Démarre le processus backend correspondant au service sélectionné.
  *
@@ -517,7 +537,7 @@ void MainWindow::on_serviceListView_clicked(const QModelIndex &index)
     _statusCheck->selectService(serviceName, "127.0.0.1", service->port);
 
     sea::application::RouteGenerator routeGenerator;
-    _currentServiceRoutes = routeGenerator.generate(service->schema);
+    _currentServiceRoutes = routeGenerator.generate(*service);
 
     // Important : afficher toutes les routes du service dès la sélection.
     _routeModel->setRoutes(_currentServiceRoutes);
@@ -759,12 +779,16 @@ void MainWindow::loginUser(const QString &email, const QString &password)
 
         const QJsonObject obj = doc.object();
 
-        if (!obj.contains("token") || !obj.value("token").isString()) {
-            QMessageBox::critical(this, "Connexion", "Aucun token JWT reçu.");
+        if (!obj.contains("access_token") || !obj.value("access_token").isString()) {
+            QMessageBox::critical(this, "Connexion", "Aucun access_token JWT reçu.");
             return;
         }
 
-        _authToken = obj.value("token").toString();
+        _authToken = obj.value("access_token").toString();
+
+        if (obj.contains("refresh_token") && obj.value("refresh_token").isString()) {
+            _refreshToken = obj.value("refresh_token").toString();
+        }
         qDebug() << "JWT =" << _authToken;
 
         updateAuthUi();

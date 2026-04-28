@@ -61,6 +61,27 @@ std::string YamlSchemaParser::require_string(const YAML::Node& node,
     }
 }
 
+std::string YamlSchemaParser::resolve_env(const std::string &value) const
+{
+    if (value.size() >= 4 &&
+        value[0] == '$' &&
+        value[1] == '{' &&
+        value.back() == '}') {
+
+        const std::string var_name = value.substr(2, value.size() - 3);
+        const char* env_value = std::getenv(var_name.c_str());
+
+        if (env_value == nullptr) {
+            throw std::runtime_error(
+                "Variable d'environnement manquante: " + var_name
+                );
+        }
+
+        return std::string(env_value);
+    }
+    return value;
+}
+
 sea::domain::Project YamlSchemaParser::parse_project_file(const std::string& file_path) const {
     YAML::Node root;
 
@@ -156,6 +177,21 @@ sea::domain::Service YamlSchemaParser::parse_service_node(const YAML::Node& node
         service.database_config = parse_database_config_node(db_node);
     }
 
+    if(has_key(node, "security")){
+        const YAML::Node security_node = node["security"];
+        if(!security_node.IsMap()){
+            throw std::runtime_error(
+                "'security' doit être un objet dans le service '" + service.name + "'."
+                );
+        }
+        service.security = parse_security_node(security_node);
+    }
+
+    else{
+        // Pas de section security : defaults sécurisés
+        service.security = sea::domain::security::SecurityConfig::safe_defaults();
+    }
+
     // entities:
     if (has_key(node, "entities")) {
         const YAML::Node entities_node = node["entities"];
@@ -173,6 +209,7 @@ sea::domain::Service YamlSchemaParser::parse_service_node(const YAML::Node& node
 
     return service;
 }
+
 
 sea::domain::Entity YamlSchemaParser::parse_entity_node(const YAML::Node& node) const {
     if (!node || !node.IsMap()) {
@@ -197,8 +234,10 @@ sea::domain::Entity YamlSchemaParser::parse_entity_node(const YAML::Node& node) 
 
         entity.options.enable_crud =
             get_or_default<bool>(options_node, "enable_crud", entity.options.enable_crud);
-        entity.options.enable_auth =
-            get_or_default<bool>(options_node, "enable_auth", entity.options.enable_auth);
+        entity.options.is_auth_source =
+            get_or_default<bool>(options_node, "is_auth_source", entity.options.is_auth_source);
+        entity.options.public_routes =
+            get_or_default<bool>(options_node, "public_routes", false);
         entity.options.enable_websocket =
             get_or_default<bool>(options_node, "enable_websocket", entity.options.enable_websocket);
         entity.options.soft_delete =
@@ -389,6 +428,344 @@ sea::domain::Relation YamlSchemaParser::parse_relation_node(const YAML::Node& no
     return relation;
 }
 
+sea::domain::security::SecurityConfig YamlSchemaParser::parse_security_node(const YAML::Node &node) const
+{
+    using SecurityConfig = sea::domain::security::SecurityConfig;
+    if (!node || !node.IsMap()) {
+        throw std::runtime_error("Un champ YAML doit être un objet.");
+    }
+    SecurityConfig security_config = SecurityConfig::safe_defaults();
+
+    // Authentication
+    if (const YAML::Node auth_node = node["authentication"]) {
+        if (!auth_node.IsMap()) {
+            throw std::runtime_error(
+                "Le champ 'authentication' doit être un objet dans service '"
+                );
+        }
+        security_config.set_authentication(parse_auth_node(auth_node));
+    }
+
+    // Cors
+    if (const YAML::Node cors_node = node["cors"]) {
+        if (!cors_node.IsMap()) {
+            throw std::runtime_error(
+                "Le champ 'cors' doit être un objet dans securitE '"
+                );
+        }
+        security_config.set_cors(parse_cors_node(cors_node));
+    }
+
+    // Rate Limits
+    if (const YAML::Node rate_limits_node = node["rate_limits"]) {
+        if (!rate_limits_node.IsSequence()) {
+            throw std::runtime_error(
+                "Le champ 'rate_limits' doit être une liste dans service '"
+                );
+        }
+        std::vector<domain::security::RateLimitRule> rules;
+        for (const auto& rule_node : rate_limits_node) {
+            rules.push_back(parse_rate_limite_rule_node(rule_node));
+        }
+        security_config.set_rate_limits(std::move(rules));
+    }
+
+    // Security Headers
+    if (const YAML::Node headers_node = node["headers"]) {
+        if (!headers_node.IsMap()) {
+            throw std::runtime_error(
+                "Le champ 'headers' doit être un objet dans service '"
+                );
+        }
+        security_config.set_security_headers(parse_security_headers_node(headers_node));
+    }
+
+    // HTTP Limits
+    if (const YAML::Node limits_node = node["http_limits"]) {
+        if (!limits_node.IsMap()) {
+            throw std::runtime_error(
+                "Le champ 'http_limits' doit être un objet dans service '"
+                );
+        }
+        security_config.set_http_limits(parse_http_limits_node(limits_node));
+    }
+
+    // Validation finale de cohérence
+    try {
+        security_config.validate();
+    } catch (const std::exception& e) {
+        throw std::runtime_error(
+            "Configuration de sécurité invalide dans service '"
+            );
+    }
+
+    return security_config;
+}
+domain::security::AuthentificationConfig YamlSchemaParser::parse_auth_node(const YAML::Node &node) const
+{
+    if (!node || !node.IsMap()) {
+        throw std::runtime_error("Un champ YAML doit être un objet.");
+    }
+    using AuthentificationConfig = domain::security::AuthentificationConfig;
+    AuthentificationConfig auth_config;
+    const std::string type_str =
+        get_or_default<std::string>(node, "type", "none");
+    try {
+        auth_config.set_type(domain::security::auth_type_from_string(type_str));
+    } catch (const std::exception& e) {
+        throw std::runtime_error(
+            std::string("Type d'authentification invalide dans service '") + e.what()
+            );
+    }
+
+    // JWT
+    if (auth_config.type() == domain::security::AuthType::Jwt) {
+        const std::string algo_str =
+            get_or_default<std::string>(node, "algorithm", "HS256");
+        try {
+            auth_config.set_jwt_algorithm(domain::security::jwt_algorithm_from_string(algo_str));
+        } catch (const std::exception& e) {
+            throw std::runtime_error(
+                std::string("Algorithme JWT invalide dans service '") + e.what()
+                );
+        }
+
+        if (node["secret"]) {
+            auth_config.set_jwt_secret(resolve_env(node["secret"].as<std::string>()));
+        }
+        if (node["public_key_path"]) {
+            auth_config.set_jwt_public_key_path(node["public_key_path"].as<std::string>());
+        }
+        if (node["private_key_path"]) {
+            auth_config.set_jwt_private_key_path(node["private_key_path"].as<std::string>());
+        }
+        if (node["issuer"]) {
+            auth_config.set_jwt_issuer(node["issuer"].as<std::string>());
+        }
+        if (node["audience"]) {
+            auth_config.set_jwt_audience(node["audience"].as<std::string>());
+        }
+        if (node["access_token_ttl"]) {
+            auth_config.set_access_token_ttl(parse_duration(node["access_token_ttl"].as<std::string>()));
+        }
+        if (node["refresh_token_ttl"]) {
+            auth_config.set_refresh_token_ttl(parse_duration(node["refresh_token_ttl"].as<std::string>()));
+        }
+    }
+
+    // OAuth2
+    if (auth_config.type() == domain::security::AuthType::OAuth2) {
+        if (node["issuer_url"]) {
+            auth_config.set_oauth2_issuer_url(node["issuer_url"].as<std::string>());
+        }
+        if (node["jwks_url"]) {
+            auth_config.set_oauth2_jwks_url(node["jwks_url"].as<std::string>());
+        }
+    }
+
+    return auth_config;
+}
+
+domain::security::CorsConfig YamlSchemaParser::parse_cors_node(const YAML::Node &node) const
+{
+    using namespace sea::domain::security;
+
+    CorsConfig cors;
+
+    // allowed_origins
+    if (const YAML::Node origins = node["allowed_origins"]) {
+        if (!origins.IsSequence()) {
+            throw std::runtime_error(
+                "Le champ 'cors.allowed_origins' doit être une liste dans service "
+                );
+        }
+        std::vector<std::string> list;
+        for (const auto& o : origins) {
+            list.push_back(o.as<std::string>());
+        }
+        // Adapte selon ton API exacte de CorsConfig
+        cors.set_allowed_origins(std::move(list));
+    }
+
+    // allowed_methods
+    if (const YAML::Node methods = node["allowed_methods"]) {
+        if (!methods.IsSequence()) {
+            throw std::runtime_error(
+                "Le champ 'cors.allowed_methods' doit être une liste dans service "
+                );
+        }
+        std::vector<sea::domain::http::HttpMethod> list;
+        for (const auto& m : methods) {
+            try {
+                list.push_back(sea::domain::http::from_string(m.as<std::string>()));
+            } catch (const std::exception& e) {
+                throw std::runtime_error(
+                    std::string("Méthode HTTP invalide dans 'cors.allowed_methods' du service : ") + e.what()
+                    );
+            }
+        }
+        // cors.set_allowed_methods(std::move(list));
+    }
+
+    // allow_credentials
+    if (node["allow_credentials"]) {
+        // cors.set_allow_credentials(node["allow_credentials"].as<bool>());
+    }
+
+    // max_age
+    if (node["max_age"]) {
+        // cors.set_max_age(parse_duration(node["max_age"].as<std::string>()));
+    }
+
+    return cors;
+}
+
+domain::security::RateLimitRule YamlSchemaParser::parse_rate_limite_rule_node(const YAML::Node &node) const
+{
+    using namespace sea::domain::security;
+
+    if (!node || !node.IsMap()) {
+        throw std::runtime_error(
+            "Une règle 'rate_limits' doit être un objet"
+            );
+    }
+
+    const std::string scope_str = require_string(node, "scope", "rate_limit_rule");
+    RateLimitScope scope;
+    try {
+        scope = scope_from_string(scope_str);
+    } catch (const std::exception& e) {
+        throw std::runtime_error(
+            std::string("Scope invalide pour 'rate_limits' : ") + e.what()
+            );
+    }
+
+    if (!node["requests"]) {
+        throw std::runtime_error(
+            "Le champ 'requests' est obligatoire dans 'rate_limits'"
+            );
+    }
+    if (!node["window"]) {
+        throw std::runtime_error(
+            "Le champ 'window' est obligatoire dans 'rate_limits'"
+            );
+    }
+
+    const std::uint32_t requests = node["requests"].as<std::uint32_t>();
+    const std::chrono::seconds window = parse_duration(node["window"].as<std::string>());
+
+    // burst optionnel : par défaut 2x requests
+    std::uint32_t burst = requests * 2;
+    if (node["burst"]) {
+        burst = node["burst"].as<std::uint32_t>();
+    }
+
+    RateLimitRule rule(scope, requests, window, burst);
+
+    try {
+        rule.validate();
+    } catch (const std::exception& e) {
+        throw std::runtime_error(
+            std::string("Règle 'rate_limits' invalide ") + e.what()
+            );
+    }
+
+    return rule;
+}
+
+domain::security::HttpLimits YamlSchemaParser::parse_http_limits_node(const YAML::Node &node) const
+{
+    using namespace sea::domain::security;
+
+    HttpLimits limits = HttpLimits::safe_defaults();
+
+    if (node["max_body_size"]) {
+        try {
+            limits.set_max_body_size(parse_size(node["max_body_size"].as<std::string>()));
+        } catch (const std::exception& e) {
+            throw std::runtime_error(
+                std::string("Valeur invalide pour 'http_limits.max_body_size' ") + e.what()
+                );
+        }
+    }
+
+    if (node["max_header_size"]) {
+        limits.set_max_header_size(parse_size(node["max_header_size"].as<std::string>()));
+    }
+
+    if (node["max_headers_count"]) {
+        limits.set_max_headers_count(node["max_headers_count"].as<std::uint32_t>());
+    }
+
+    if (node["max_url_length"]) {
+        limits.set_max_url_length(parse_size(node["max_url_length"].as<std::string>()));
+    }
+
+    if (node["max_query_params"]) {
+        limits.set_max_query_params(node["max_query_params"].as<std::uint32_t>());
+    }
+
+    if (node["request_timeout"]) {
+        limits.set_request_timeout(parse_duration(node["request_timeout"].as<std::string>()));
+    }
+
+    if (node["keep_alive_timeout"]) {
+        limits.set_keep_alive_timeout(parse_duration(node["keep_alive_timeout"].as<std::string>()));
+    }
+
+    if (node["max_connections_per_ip"]) {
+        limits.set_max_connections_per_ip(node["max_connections_per_ip"].as<std::uint32_t>());
+    }
+
+    return limits;
+}
+
+domain::security::SecurityHeaders YamlSchemaParser::parse_security_headers_node(const YAML::Node &node) const
+{
+    using namespace sea::domain::security;
+
+    // Détermine le preset de base
+    SecurityHeaders headers = SecurityHeaders::recommended();
+
+    if (const YAML::Node preset = node["preset"]) {
+        const std::string name = preset.as<std::string>();
+        if (name == "recommended") {
+            headers = SecurityHeaders::recommended();
+        } else if (name == "strict") {
+            headers = SecurityHeaders::strict();
+        } else if (name == "none") {
+            headers = SecurityHeaders::none();
+        } else {
+            throw std::runtime_error(
+                "Preset de headers de sécurité inconnu Valeurs possibles: 'recommended', 'strict', 'none'."
+                );
+        }
+    }
+
+    // Overrides individuels
+    const YAML::Node overrides = node["overrides"] ? node["overrides"] : node;
+
+    if (overrides["hsts"]) {
+        headers.set_hsts(overrides["hsts"].as<std::string>());
+    }
+    if (overrides["x_content_type_options"]) {
+        headers.set_content_type_options(overrides["x_content_type_options"].as<std::string>());
+    }
+    if (overrides["x_frame_options"]) {
+        headers.set_frame_options(overrides["x_frame_options"].as<std::string>());
+    }
+    if (overrides["referrer_policy"]) {
+        headers.set_referrer_policy(overrides["referrer_policy"].as<std::string>());
+    }
+    if (overrides["content_security_policy"]) {
+        headers.set_content_security_policy(overrides["content_security_policy"].as<std::string>());
+    }
+    if (overrides["permissions_policy"]) {
+        headers.set_permissions_policy(overrides["permissions_policy"].as<std::string>());
+    }
+
+    return headers;
+}
 sea::domain::DatabaseConfig
 YamlSchemaParser::parse_database_config_node(const YAML::Node& node) const {
     sea::domain::DatabaseConfig config{};
@@ -460,6 +837,67 @@ YamlSchemaParser::parse_database_type(const std::string& value) const {
     }
 
     throw std::runtime_error("Type de base de donnees inconnu: '" + value + "'.");
+}
+// =====================================================================
+//                    HELPERS DE PARSING
+// =====================================================================
+
+std::chrono::seconds
+YamlSchemaParser::parse_duration(
+    const std::string& s) const
+{
+    if (s.empty()) {
+        throw std::runtime_error("Durée vide");
+    }
+
+    std::size_t suffix_pos = 0;
+    while (suffix_pos < s.size() && std::isdigit(static_cast<unsigned char>(s[suffix_pos]))) {
+        ++suffix_pos;
+    }
+
+    if (suffix_pos == 0) {
+        throw std::runtime_error("Durée invalide (pas de nombre): '" + s + "'");
+    }
+
+    const std::uint64_t number = std::stoull(s.substr(0, suffix_pos));
+    const std::string suffix = s.substr(suffix_pos);
+
+    using namespace std::chrono;
+    if (suffix.empty() || suffix == "s") return seconds(number);
+    if (suffix == "m") return seconds(number * 60);
+    if (suffix == "h") return seconds(number * 3600);
+    if (suffix == "d") return seconds(number * 86400);
+
+    throw std::runtime_error("Suffixe de durée inconnu: '" + suffix + "' dans '" + s + "'");
+}
+
+std::uint64_t
+YamlSchemaParser::parse_size(
+    const std::string& s) const
+{
+    if (s.empty()) {
+        throw std::runtime_error("Taille vide");
+    }
+
+    std::size_t suffix_pos = 0;
+    while (suffix_pos < s.size() &&
+           (std::isdigit(static_cast<unsigned char>(s[suffix_pos])) || s[suffix_pos] == '.')) {
+        ++suffix_pos;
+    }
+
+    if (suffix_pos == 0) {
+        throw std::runtime_error("Taille invalide (pas de nombre): '" + s + "'");
+    }
+
+    const std::uint64_t number = std::stoull(s.substr(0, suffix_pos));
+    const std::string suffix = s.substr(suffix_pos);
+
+    if (suffix.empty() || suffix == "B") return number;
+    if (suffix == "KB" || suffix == "K") return number * 1024;
+    if (suffix == "MB" || suffix == "M") return number * 1024 * 1024;
+    if (suffix == "GB" || suffix == "G") return number * 1024ULL * 1024 * 1024;
+
+    throw std::runtime_error("Suffixe de taille inconnu: '" + suffix + "' dans '" + s + "'");
 }
 
 } // namespace sea::infrastructure::yaml

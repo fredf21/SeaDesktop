@@ -50,6 +50,8 @@ add_library(sea_infrastructure STATIC
     runtime/i_project_repository.h
     persistence/utilities.h
     persistence/mysql/mysqlconnexionpool.h persistence/mysql/mysqlconnexionpool.cpp
+    thread_pool_execution/i_blocking_executor.h
+    thread_pool_execution/std_thread_pool_executor.h
 )
 
 add_library(Sea::infrastructure ALIAS sea_infrastructure)
@@ -60,6 +62,7 @@ target_sources(sea_infrastructure
         BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
         FILES
             yaml/yaml_schema_parser.h
+            yaml/yaml_project_repository.h
 
             runtime/dynamic_value.h
             runtime/dynamic_record.h
@@ -102,6 +105,7 @@ target_link_libraries(sea_infrastructure
         OpenSSL::Crypto
         ${MYSQLCPP_LIBRARY}
         Seastar::seastar
+        pthread
 
 )
 

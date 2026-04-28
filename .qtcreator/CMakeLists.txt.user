@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE QtCreatorProject>
-<!-- Written by QtCreator 19.0.0, 2026-04-24T15:17:34. -->
+<!-- Written by QtCreator 19.0.0, 2026-04-26T15:25:12. -->
 <qtcreator>
  <data>
   <variable>EnvironmentId</variable>
@@ -89,6 +89,9 @@
    <valuemap type="QVariantMap" key="CppEditor.QuickFix">
     <value type="bool" key="UseGlobalSettings">true</value>
    </valuemap>
+   <valuelist type="QVariantList" key="ProjectExplorer.Project.Environment">
+    <value type="QString">SEA_DESKTOP_JWT_SECRET=36e2b4a351eb3efe2703be35ee7bab78b33501b33009cf7a724c8063eecce74e</value>
+   </valuelist>
    <value type="int" key="RcSync">0</value>
   </valuemap>
  </data>

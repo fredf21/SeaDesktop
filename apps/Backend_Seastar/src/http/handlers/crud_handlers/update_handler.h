@@ -1,4 +1,5 @@
 #pragma once
+#include "thread_pool_execution/i_blocking_executor.h"
 #include <seastar/http/httpd.hh>
 #include <memory>
 #include <string>
@@ -16,7 +17,7 @@ public:
     UpdateHandler(std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
                   std::shared_ptr<sea::infrastructure::runtime::SchemaRuntimeRegistry> registry,
                   std::shared_ptr<sea::application::AuthService> auth_service,
-                  std::string entity_name);
+                  std::string entity_name, std::shared_ptr<IBlockingExecutor> blocking_executor);
 
     seastar::future<std::unique_ptr<seastar::http::reply>>
     handle(const seastar::sstring&,
@@ -28,6 +29,7 @@ private:
     std::shared_ptr<sea::infrastructure::runtime::SchemaRuntimeRegistry> registry_;
     std::shared_ptr<sea::application::AuthService> auth_service_;
     std::string entity_name_;
+    std::shared_ptr<IBlockingExecutor> blocking_executor_;
 };
 
 }

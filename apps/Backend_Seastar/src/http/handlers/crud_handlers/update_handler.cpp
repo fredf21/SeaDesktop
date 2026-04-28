@@ -7,6 +7,7 @@
 #include "runtime/schema_runtime_registry.h"
 
 #include <nlohmann/json.hpp>
+#include <seastar/core/thread.hh>
 #include <sstream>
 #include <utility>
 
@@ -18,11 +19,12 @@ UpdateHandler::UpdateHandler(
     std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
     std::shared_ptr<sea::infrastructure::runtime::SchemaRuntimeRegistry> registry,
     std::shared_ptr<sea::application::AuthService> auth_service,
-    std::string entity_name)
+    std::string entity_name, std::shared_ptr<IBlockingExecutor> blocking_executor)
     : crud_engine_(std::move(crud_engine))
     , registry_(std::move(registry))
     , auth_service_(std::move(auth_service))
     , entity_name_(std::move(entity_name))
+    , blocking_executor_(std::move(blocking_executor))
 {
 }
 
@@ -60,7 +62,13 @@ UpdateHandler::handle(const seastar::sstring&,
                 co_return std::move(rep);
             }
 
-            record["password"] = auth_service_->hash_password(*plain_password);
+            const auto hashed_password = co_await blocking_executor_->submit(
+                    [auth_service = auth_service_,
+                     plain = *plain_password] {
+                        return auth_service->hash_password(plain);
+                    }
+                    );
+            record["password"] = hashed_password;
         }
 
         const auto result = co_await crud_engine_->update(entity_name_, std::string(id), std::move(record));

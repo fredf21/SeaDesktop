@@ -5,24 +5,24 @@
 #include <cppconn/metadata.h>
 #include <cppconn/resultset.h>
 #include <cppconn/resultset_metadata.h>
+#include <cppconn/statement.h>
+
 #include "persistence/utilities.h"
-#include <seastar/util/defer.hh>
+
 #include <seastar/core/coroutine.hh>
 
+#include <memory>
+#include <sstream>
+
 namespace sea::infrastructure::persistence::mysql {
+
 namespace {
-/// \brief Lit une valeur SQL selon le type métier du champ.
-///
-/// Le typage suit le FieldType métier.
-///
-/// \param rs ResultSet courant
-/// \param field_name Nom du champ/colonne
-/// \param field_type Type métier du champ
-///
-/// \return Valeur convertie en DynamicValue
-runtime::DynamicValue read_typed_value(sql::ResultSet* rs,
-                                       const std::string& field_name,
-                                       sea::domain::FieldType field_type) {
+
+runtime::DynamicValue read_typed_value(
+    sql::ResultSet* rs,
+    const std::string& field_name,
+    sea::domain::FieldType field_type)
+{
     if (rs->isNull(field_name)) {
         return std::monostate{};
     }
@@ -51,16 +51,10 @@ runtime::DynamicValue read_typed_value(sql::ResultSet* rs,
     return std::monostate{};
 }
 
-/// \brief Convertit une ligne SQL en DynamicRecord.
-///
-/// La conversion suit l'ordre et les types décrits dans l'entité.
-///
-/// \param rs ResultSet positionné sur une ligne valide
-/// \param entity Entité métier correspondante
-///
-/// \return Record reconstruit
-runtime::DynamicRecord resultset_to_record(sql::ResultSet* rs,
-                                           const sea::domain::Entity& entity) {
+runtime::DynamicRecord resultset_to_record(
+    sql::ResultSet* rs,
+    const sea::domain::Entity& entity)
+{
     runtime::DynamicRecord record;
 
     for (const auto& field : entity.fields) {
@@ -70,38 +64,29 @@ runtime::DynamicRecord resultset_to_record(sql::ResultSet* rs,
     return record;
 }
 
-/// \brief Lie une valeur dynamique à un paramètre SQL préparé.
-///
-/// Cette fonction convertit un DynamicValue vers l'API MySQL Connector/C++.
-///
-/// \param stmt Statement préparé
-/// \param index Position du paramètre SQL (commence à 1)
-/// \param value Valeur à lier
-void bindValue(sql::PreparedStatement *stmt, int index, const runtime::DynamicValue &value)
+void bindValue(
+    sql::PreparedStatement* stmt,
+    int index,
+    const runtime::DynamicValue& value)
 {
     if (std::holds_alternative<std::monostate>(value)) {
         stmt->setNull(index, 0);
-    }
-    else if (std::holds_alternative<std::string>(value)) {
+    } else if (std::holds_alternative<std::string>(value)) {
         stmt->setString(index, std::get<std::string>(value));
-    }
-    else if (std::holds_alternative<std::int64_t>(value)) {
+    } else if (std::holds_alternative<std::int64_t>(value)) {
         stmt->setInt64(index, std::get<std::int64_t>(value));
-    }
-    else if (std::holds_alternative<double>(value)) {
+    } else if (std::holds_alternative<double>(value)) {
         stmt->setDouble(index, std::get<double>(value));
-    }
-    else if (std::holds_alternative<bool>(value)) {
+    } else if (std::holds_alternative<bool>(value)) {
         stmt->setBoolean(index, std::get<bool>(value));
-    }
-    else {
+    } else {
         throw std::runtime_error("Impossible de binder un tableau sur une colonne SQL simple");
     }
 }
 
-const sea::domain::Field*
-find_field_by_name(const sea::domain::Entity& entity,
-                   const std::string& field_name)
+const sea::domain::Field* find_field_by_name(
+    const sea::domain::Entity& entity,
+    const std::string& field_name)
 {
     for (const auto& field : entity.fields) {
         if (field.name == field_name) {
@@ -112,14 +97,12 @@ find_field_by_name(const sea::domain::Entity& entity,
     return nullptr;
 }
 
-const sea::domain::Field*
-find_id_field(const sea::domain::Entity& entity)
+const sea::domain::Field* find_id_field(const sea::domain::Entity& entity)
 {
     return find_field_by_name(entity, "id");
 }
 
-std::optional<std::string>
-generate_mysql_uuid(sql::Connection* conn)
+std::optional<std::string> generate_mysql_uuid(sql::Connection* conn)
 {
     try {
         auto stmt = std::unique_ptr<sql::Statement>(conn->createStatement());
@@ -133,6 +116,7 @@ generate_mysql_uuid(sql::Connection* conn)
         }
 
         return std::nullopt;
+
     } catch (const sql::SQLException&) {
         return std::nullopt;
     }
@@ -170,30 +154,84 @@ std::string build_id_where_clause(const sea::domain::Entity& entity)
 
     return "`id` = ?";
 }
+
+
+/**
+ * Helper critique : exécute une opération MySQL bloquante hors du reactor Seastar.
+ *
+ * Flow :
+ * 1. Acquire connexion (non bloquant côté Seastar)
+ * 2. Exécuter la requête dans le thread pool (bloquant OK)
+ * 3. Retourner le résultat dans le reactor (via future)
+ * 4. Release connexion
+ *
+ * Pourquoi ?
+ * → éviter de bloquer le thread Seastar (sinon perte totale de perf)
+ */
+template <typename Result, typename Func>
+seastar::future<Result> run_blocking_mysql(
+    MysqlConnexionPool& pool,
+    IBlockingExecutor& executor,
+    Func&& func)
+{
+    std::cout << "RUN BLOCKING MYSQL\n";
+    auto* conn = co_await pool.acquire();
+
+    try {
+        auto result = co_await executor.submit(
+            [conn, fn = std::forward<Func>(func)]() mutable -> Result {
+                return fn(conn);
+            }
+            );
+
+        pool.release(conn);
+        co_return result;
+
+    } catch (...) {
+        pool.release(conn);
+        throw;
+    }
+}
+
 } // namespace
 
-MySQLGenericRepository::MySQLGenericRepository(seastar::sharded<MysqlConnexionPool>& pool, std::shared_ptr<runtime::SchemaRuntimeRegistry> schema_registry) :
-    _pool(pool)
-    , _schema_registry(schema_registry)
+
+/**
+ * Constructeur du repository MySQL
+ *
+ * @param pool pool de connexions MySQL (géré par Seastar, shard-local)
+ * @param schema_registry registre des entités runtime
+ * @param executor thread pool pour exécuter les opérations bloquantes
+ */
+MySQLGenericRepository::MySQLGenericRepository(
+    seastar::sharded<MysqlConnexionPool>& pool,
+    std::shared_ptr<runtime::SchemaRuntimeRegistry> schema_registry,
+    std::shared_ptr<IBlockingExecutor> executor)
+    : _pool(pool)
+    , _schema_registry(std::move(schema_registry))
+    , _executor(std::move(executor))
 {
 }
 
-seastar::future<std::optional<sea::infrastructure::runtime::DynamicRecord>>
-MySQLGenericRepository::create(const std::string& entity_name,
-                               runtime::DynamicRecord record)
+seastar::future<std::optional<runtime::DynamicRecord>>
+MySQLGenericRepository::create(
+    const std::string& entity_name,
+    runtime::DynamicRecord record)
 {
     auto& pool = _pool.local();
-    auto* conn = co_await pool.acquire();
-    auto guard = seastar::defer([&pool, conn] { pool.release(conn); });
 
-    co_return co_await seastar::async(
-        [this, conn, entity_name, record = std::move(record)]() mutable
-        -> std::optional<sea::infrastructure::runtime::DynamicRecord> {
+    co_return co_await run_blocking_mysql<std::optional<runtime::DynamicRecord>>(
+        pool,
+        *_executor,
+        [this, entity_name, record = std::move(record)](sql::Connection* conn) mutable
+        -> std::optional<runtime::DynamicRecord> {
             using namespace sea::infrastructure::persistence::utilities;
 
             ValidationResult validation_result;
 
-            const auto* entity = get_required_entity(*_schema_registry, entity_name, validation_result);
+            const auto* entity =
+                get_required_entity(*_schema_registry, entity_name, validation_result);
+
             if (entity == nullptr) {
                 return std::nullopt;
             }
@@ -209,7 +247,6 @@ MySQLGenericRepository::create(const std::string& entity_name,
                 return std::nullopt;
             }
 
-            // Si id UUID absent : MySQL genere l'UUID, puis on le stocke dans le record.
             if (id_field != nullptr &&
                 id_field->type == sea::domain::FieldType::UUID &&
                 record.find("id") == record.end()) {
@@ -221,8 +258,6 @@ MySQLGenericRepository::create(const std::string& entity_name,
                 record["id"] = generated_id.value();
             }
 
-            // Si id Int absent : on ne fait rien.
-            // MySQL AUTO_INCREMENT doit le generer.
             const bool should_fetch_auto_increment_id =
                 id_field != nullptr &&
                 id_field->type == sea::domain::FieldType::Int &&
@@ -242,7 +277,6 @@ MySQLGenericRepository::create(const std::string& entity_name,
                     if (i > 0) {
                         sql << ", ";
                     }
-
                     sql << "`" << columns[i] << "`";
                 }
 
@@ -270,7 +304,9 @@ MySQLGenericRepository::create(const std::string& entity_name,
                     );
 
                 for (std::size_t i = 0; i < columns.size(); ++i) {
-                    const auto* value = get_required_value(record, columns[i], validation_result);
+                    const auto* value =
+                        get_required_value(record, columns[i], validation_result);
+
                     if (value == nullptr) {
                         return std::nullopt;
                     }
@@ -281,9 +317,8 @@ MySQLGenericRepository::create(const std::string& entity_name,
                 stmt->execute();
 
                 if (should_fetch_auto_increment_id) {
-                    auto id_stmt = std::unique_ptr<sql::Statement>(
-                        conn->createStatement()
-                        );
+                    auto id_stmt =
+                        std::unique_ptr<sql::Statement>(conn->createStatement());
 
                     auto rs = std::unique_ptr<sql::ResultSet>(
                         id_stmt->executeQuery("SELECT LAST_INSERT_ID()")
@@ -298,78 +333,96 @@ MySQLGenericRepository::create(const std::string& entity_name,
 
                 return record;
 
-            } catch (const sql::SQLException& e) {
-                // std::cerr << "[MYSQL CREATE ERROR] " << e.what() << " | code=" << e.getErrorCode() << " | state=" << e.getSQLState() << std::endl;
+            } catch (const sql::SQLException&) {
                 return std::nullopt;
             }
         }
         );
 }
-seastar::future<std::vector<sea::infrastructure::runtime::DynamicRecord>> MySQLGenericRepository::find_all(const std::string &entity_name)
+
+/**
+ * Récupère tous les enregistrements d'une entité
+ *
+ *  La requête SQL est exécutée dans le thread pool
+ */
+seastar::future<std::vector<runtime::DynamicRecord>>
+MySQLGenericRepository::find_all(const std::string& entity_name)
 {
     auto& pool = _pool.local();
-    auto* conn = co_await pool.acquire();
-    auto guard = seastar::defer([&pool, conn] { pool.release(conn); });
-    co_return co_await seastar::async([this, conn, entity_name]  -> std::vector<runtime::DynamicRecord>{
-        using namespace sea::infrastructure::persistence::utilities;
-        ValidationResult validation_result;
-        const auto* entity = get_required_entity(*_schema_registry, entity_name, validation_result);
-        if (entity == nullptr) {
-            return {};
-        }
 
-        const std::string table_name = resolve_table_name(*entity);
-
-        if (!validate_sql_identifier(table_name, validation_result)) {
-            return {};
-        }
-
-        try {
-
-            std::ostringstream sql;
-            sql << "SELECT " << build_select_columns(*entity)
-                << " FROM `" << table_name << "`";
-
-            auto stmt = std::unique_ptr<sql::Statement>(conn->createStatement());
-            auto rs = std::unique_ptr<sql::ResultSet>(stmt->executeQuery(sql.str()));
-
-            std::vector<runtime::DynamicRecord> results;
-
-            while (rs->next()) {
-                results.push_back(resultset_to_record(rs.get(), *entity));
-            }
-
-            return results;
-
-        } catch (const sql::SQLException&) {
-            return {};
-        }
-
-    });
-
-}
-
-seastar::future<std::optional<sea::infrastructure::runtime::DynamicRecord>>
-MySQLGenericRepository::find_by_id(const std::string& entity_name,
-                                   const std::string& id)
-{
-    auto& pool = _pool.local();
-    auto* conn = co_await pool.acquire();
-    auto guard = seastar::defer([&pool, conn] { pool.release(conn); });
-
-    co_return co_await seastar::async(
-        [this, entity_name, id, conn]
-        -> std::optional<sea::infrastructure::runtime::DynamicRecord> {
+    co_return co_await run_blocking_mysql<std::vector<runtime::DynamicRecord>>(
+        pool,
+        *_executor,
+        [this, entity_name](sql::Connection* conn)
+        -> std::vector<runtime::DynamicRecord> {
             using namespace sea::infrastructure::persistence::utilities;
 
             ValidationResult validation_result;
 
-            const auto* entity = get_required_entity(*_schema_registry, entity_name, validation_result);
+            const auto* entity =
+                get_required_entity(*_schema_registry, entity_name, validation_result);
+
+            if (entity == nullptr) {
+                return {};
+            }
+
+            const std::string table_name = resolve_table_name(*entity);
+
+            if (!validate_sql_identifier(table_name, validation_result)) {
+                return {};
+            }
+
+            try {
+                std::ostringstream sql;
+                sql << "SELECT " << build_select_columns(*entity)
+                    << " FROM `" << table_name << "`";
+
+                auto stmt =
+                    std::unique_ptr<sql::Statement>(conn->createStatement());
+
+                auto rs =
+                    std::unique_ptr<sql::ResultSet>(stmt->executeQuery(sql.str()));
+
+                std::vector<runtime::DynamicRecord> results;
+
+                while (rs->next()) {
+                    results.push_back(resultset_to_record(rs.get(), *entity));
+                }
+
+                return results;
+
+            } catch (const sql::SQLException&) {
+                return {};
+            }
+        }
+        );
+}
+
+seastar::future<std::optional<runtime::DynamicRecord>>
+MySQLGenericRepository::find_by_id(
+    const std::string& entity_name,
+    const std::string& id)
+{
+    auto& pool = _pool.local();
+
+    co_return co_await run_blocking_mysql<std::optional<runtime::DynamicRecord>>(
+        pool,
+        *_executor,
+        [this, entity_name, id](sql::Connection* conn)
+        -> std::optional<runtime::DynamicRecord> {
+            using namespace sea::infrastructure::persistence::utilities;
+
+            ValidationResult validation_result;
+
+            const auto* entity =
+                get_required_entity(*_schema_registry, entity_name, validation_result);
+
             if (entity == nullptr) {
                 return std::nullopt;
             }
 
             const std::string table_name = resolve_table_name(*entity);
+
             if (!validate_sql_identifier(table_name, validation_result)) {
                 return std::nullopt;
             }
@@ -404,67 +457,147 @@ MySQLGenericRepository::find_by_id(const std::string& entity_name,
         );
 }
 
-seastar::future<bool> MySQLGenericRepository::remove(const std::string &entity_name, const std::string &id)
+seastar::future<std::optional<runtime::DynamicRecord>>
+MySQLGenericRepository::find_one_by_field(
+    const std::string& entity_name,
+    const std::string& field_name,
+    const std::string& value)
 {
     auto& pool = _pool.local();
-    auto* conn = co_await pool.acquire();
-    auto guard = seastar::defer([&pool, conn] { pool.release(conn); });
 
-    co_return co_await seastar::async([this, entity_name, id, conn]->bool{
-        using namespace sea::infrastructure::persistence::utilities;
-        ValidationResult validation_result;
+    co_return co_await run_blocking_mysql<std::optional<runtime::DynamicRecord>>(
+        pool,
+        *_executor,
+        [this, entity_name, field_name, value](sql::Connection* conn)
+        -> std::optional<runtime::DynamicRecord> {
+            using namespace sea::infrastructure::persistence::utilities;
 
+            ValidationResult validation_result;
 
-        const auto* entity = get_required_entity(*_schema_registry, entity_name, validation_result);
-        if (entity == nullptr) {
-            return false;
+            const auto* entity =
+                get_required_entity(*_schema_registry, entity_name, validation_result);
+
+            if (entity == nullptr) {
+                return std::nullopt;
+            }
+
+            const auto* field = find_field_by_name(*entity, field_name);
+            if (field == nullptr) {
+                return std::nullopt;
+            }
+
+            const std::string table_name = resolve_table_name(*entity);
+
+            if (!validate_sql_identifier(table_name, validation_result) ||
+                !validate_sql_identifier(field_name, validation_result)) {
+                return std::nullopt;
+            }
+
+            try {
+                std::ostringstream sql;
+                sql << "SELECT " << build_select_columns(*entity)
+                    << " FROM `" << table_name << "` WHERE ";
+
+                if (field->type == sea::domain::FieldType::UUID) {
+                    sql << "`" << field_name << "` = UUID_TO_BIN(?, 1)";
+                } else {
+                    sql << "`" << field_name << "` = ?";
+                }
+
+                sql << " LIMIT 1";
+
+                auto stmt = std::unique_ptr<sql::PreparedStatement>(
+                    conn->prepareStatement(sql.str())
+                    );
+
+                stmt->setString(1, value);
+
+                auto rs = std::unique_ptr<sql::ResultSet>(
+                    stmt->executeQuery()
+                    );
+
+                if (!rs->next()) {
+                    return std::nullopt;
+                }
+
+                return resultset_to_record(rs.get(), *entity);
+
+            } catch (const sql::SQLException&) {
+                return std::nullopt;
+            }
         }
+        );
+}
 
-        const std::string table_name = resolve_table_name(*entity);
+seastar::future<bool>
+MySQLGenericRepository::remove(
+    const std::string& entity_name,
+    const std::string& id)
+{
+    auto& pool = _pool.local();
 
-        if (!validate_sql_identifier(table_name, validation_result)) {
-            return false;
+    co_return co_await run_blocking_mysql<bool>(
+        pool,
+        *_executor,
+        [this, entity_name, id](sql::Connection* conn) -> bool {
+            using namespace sea::infrastructure::persistence::utilities;
+
+            ValidationResult validation_result;
+
+            const auto* entity =
+                get_required_entity(*_schema_registry, entity_name, validation_result);
+
+            if (entity == nullptr) {
+                return false;
+            }
+
+            const std::string table_name = resolve_table_name(*entity);
+
+            if (!validate_sql_identifier(table_name, validation_result)) {
+                return false;
+            }
+
+            try {
+                std::ostringstream sql;
+                sql << "DELETE FROM `" << table_name << "` WHERE "
+                    << build_id_where_clause(*entity);
+
+                auto stmt = std::unique_ptr<sql::PreparedStatement>(
+                    conn->prepareStatement(sql.str())
+                    );
+
+                stmt->setString(1, id);
+
+                const int affected_rows = stmt->executeUpdate();
+                return affected_rows > 0;
+
+            } catch (const sql::SQLException&) {
+                return false;
+            }
         }
-
-        try {
-
-            std::ostringstream sql;
-            sql << "DELETE FROM `" << table_name << "` WHERE "
-                << build_id_where_clause(*entity);
-
-            auto stmt = std::unique_ptr<sql::PreparedStatement>(
-                conn->prepareStatement(sql.str())
-                );
-
-            stmt->setString(1, id);
-
-            const int affected_rows = stmt->executeUpdate();
-            return affected_rows > 0;
-
-        } catch (const sql::SQLException&) {
-            return false;
-        }
-    });
-
+        );
 }
 
 seastar::future<sea::infrastructure::persistence::UpdateResponse>
-MySQLGenericRepository::update(const std::string& entity_name,
-                               const std::string& id,
-                               runtime::DynamicRecord record)
+MySQLGenericRepository::update(
+    const std::string& entity_name,
+    const std::string& id,
+    runtime::DynamicRecord record)
 {
     auto& pool = _pool.local();
-    auto* conn = co_await pool.acquire();
-    auto guard = seastar::defer([conn, &pool] { pool.release(conn); });
 
-    co_return co_await seastar::async(
-        [this, entity_name, id, record = std::move(record), conn]
+    co_return co_await run_blocking_mysql<sea::infrastructure::persistence::UpdateResponse>(
+        pool,
+        *_executor,
+        [this, entity_name, id, record = std::move(record)](sql::Connection* conn) mutable
         -> sea::infrastructure::persistence::UpdateResponse {
             using namespace sea::infrastructure::persistence::utilities;
 
             ValidationResult validation_result;
 
-            const auto* entity = get_required_entity(*_schema_registry, entity_name, validation_result);
+            const auto* entity =
+                get_required_entity(*_schema_registry, entity_name, validation_result);
+
             if (entity == nullptr) {
                 return {.status = false, .record = {}};
             }
@@ -493,7 +626,15 @@ MySQLGenericRepository::update(const std::string& entity_name,
                     if (i > 0) {
                         sql << ", ";
                     }
-                    sql << "`" << columns[i] << "` = ?";
+
+                    const auto* field = find_field_by_name(*entity, columns[i]);
+
+                    if (field != nullptr &&
+                        field->type == sea::domain::FieldType::UUID) {
+                        sql << "`" << columns[i] << "` = UUID_TO_BIN(?, 1)";
+                    } else {
+                        sql << "`" << columns[i] << "` = ?";
+                    }
                 }
 
                 sql << " WHERE " << build_id_where_clause(*entity);
@@ -505,7 +646,9 @@ MySQLGenericRepository::update(const std::string& entity_name,
                 int param_index = 1;
 
                 for (const auto& column : columns) {
-                    const auto* value = get_required_value(record, column, validation_result);
+                    const auto* value =
+                        get_required_value(record, column, validation_result);
+
                     if (value == nullptr) {
                         return {.status = false, .record = {}};
                     }
@@ -516,6 +659,7 @@ MySQLGenericRepository::update(const std::string& entity_name,
                 stmt->setString(param_index, id);
 
                 const int affected_rows = stmt->executeUpdate();
+
                 if (affected_rows <= 0) {
                     return {.status = false, .record = {}};
                 }
@@ -523,14 +667,18 @@ MySQLGenericRepository::update(const std::string& entity_name,
                 std::ostringstream select_sql;
                 select_sql << "SELECT " << build_select_columns(*entity)
                            << " FROM `" << table_name << "` WHERE "
-                           << build_id_where_clause(*entity);
+                           << build_id_where_clause(*entity)
+                           << " LIMIT 1";
 
                 auto select_stmt = std::unique_ptr<sql::PreparedStatement>(
                     conn->prepareStatement(select_sql.str())
                     );
+
                 select_stmt->setString(1, id);
 
-                auto rs = std::unique_ptr<sql::ResultSet>(select_stmt->executeQuery());
+                auto rs = std::unique_ptr<sql::ResultSet>(
+                    select_stmt->executeQuery()
+                    );
 
                 if (rs->next()) {
                     return UpdateResponse{
@@ -549,28 +697,28 @@ MySQLGenericRepository::update(const std::string& entity_name,
 }
 
 seastar::future<bool>
-MySQLGenericRepository::insert_pivot(const std::string& pivot_table,
-                                     runtime::DynamicRecord values)
+MySQLGenericRepository::insert_pivot(
+    const std::string& pivot_table,
+    runtime::DynamicRecord values)
 {
     using namespace sea::infrastructure::persistence::utilities;
 
     if (values.empty()) {
-        co_return co_await seastar::make_exception_future<bool>(
-            std::runtime_error("insert_pivot: aucune valeur fournie"));
+        throw std::runtime_error("insert_pivot: aucune valeur fournie");
     }
 
     ValidationResult validation_result;
+
     if (!validate_sql_identifier(pivot_table, validation_result)) {
-        co_return co_await seastar::make_exception_future<bool>(
-            std::runtime_error("insert_pivot: nom de table pivot invalide"));
+        throw std::runtime_error("insert_pivot: nom de table pivot invalide");
     }
 
     auto& pool = _pool.local();
-    auto* conn = co_await pool.acquire();
-    auto guard = seastar::defer([&pool, conn] { pool.release(conn); });
 
-    co_return co_await seastar::async(
-        [conn, pivot_table, values = std::move(values)]() mutable -> bool {
+    co_return co_await run_blocking_mysql<bool>(
+        pool,
+        *_executor,
+        [pivot_table, values = std::move(values)](sql::Connection* conn) mutable -> bool {
             try {
                 std::vector<std::string> columns;
                 std::vector<runtime::DynamicValue> bind_values;
@@ -583,28 +731,31 @@ MySQLGenericRepository::insert_pivot(const std::string& pivot_table,
                     bind_values.push_back(value);
                 }
 
-                std::string query = "INSERT INTO `" + pivot_table + "` (";
+                std::ostringstream query;
+                query << "INSERT INTO `" << pivot_table << "` (";
 
                 for (std::size_t i = 0; i < columns.size(); ++i) {
                     if (i > 0) {
-                        query += ", ";
+                        query << ", ";
                     }
-                    query += "`" + columns[i] + "`";
+
+                    query << "`" << columns[i] << "`";
                 }
 
-                query += ") VALUES (";
+                query << ") VALUES (";
 
                 for (std::size_t i = 0; i < columns.size(); ++i) {
                     if (i > 0) {
-                        query += ", ";
+                        query << ", ";
                     }
-                    query += "?";
+
+                    query << "?";
                 }
 
-                query += ")";
+                query << ")";
 
                 auto stmt = std::unique_ptr<sql::PreparedStatement>(
-                    conn->prepareStatement(query)
+                    conn->prepareStatement(query.str())
                     );
 
                 for (std::size_t i = 0; i < bind_values.size(); ++i) {
@@ -621,5 +772,4 @@ MySQLGenericRepository::insert_pivot(const std::string& pivot_table,
         );
 }
 
-
-}
+} // namespace sea::infrastructure::persistence::mysql

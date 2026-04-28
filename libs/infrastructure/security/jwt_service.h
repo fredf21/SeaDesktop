@@ -1,33 +1,62 @@
 #pragma once
+// sea_infrastructure/security/jwt_service.h
 
-#include <cstdint>
+#include <chrono>
 #include <optional>
 #include <string>
 
 namespace sea::infrastructure::security {
 
+// Type de token (sera mis dans le claim "token_type")
+enum class TokenType {
+    Access,
+    Refresh
+};
+
+// Claims complets décodés depuis un JWT
 struct JwtClaims {
-    std::string userId;
-    std::string email;
-    std::string role;
+    std::string user_id;       // claim "sub"
+    std::string email;          // claim "email"
+    std::string role;           // claim "role"
+    std::string issuer;         // claim "iss"
+    TokenType token_type;       // claim "token_type"
+    std::int64_t issued_at;     // claim "iat"
+    std::int64_t expires_at;    // claim "exp"
+};
+
+// Paramètres pour générer un token
+struct GenerateTokenParams {
+    std::string user_id;
+    std::string email;          // vide pour refresh tokens
+    std::string role;           // vide pour refresh tokens
+    std::string secret;
+    std::string issuer;
+    TokenType token_type;
+    std::chrono::seconds ttl;
+};
+
+// Paramètres pour vérifier un token
+struct VerifyTokenParams {
+    std::string token;
+    std::string secret;
+    std::string expected_issuer;
+    TokenType expected_type;    // Access ou Refresh
 };
 
 class JwtService {
 public:
+    // Génération
     [[nodiscard]] static std::string generate_token(
-        const std::string& userId,
-        const std::string& email,
-        const std::string& role,
-        const std::string& secret,
-        std::int64_t expiresInSeconds = 3600
-        );
+        const GenerateTokenParams& params);
 
+    // Vérification (retourne les claims si valide, nullopt sinon)
     [[nodiscard]] static std::optional<JwtClaims> verify_token(
-        const std::string& token,
-        const std::string& secret
-        );
-};
+        const VerifyTokenParams& params);
 
-[[nodiscard]] std::optional<std::string> extract_bearer_token(const std::string& authorizationHeader);
+    // Helpers de conversion
+    [[nodiscard]] static std::string token_type_to_string(TokenType t) noexcept;
+    [[nodiscard]] static std::optional<TokenType> token_type_from_string(
+        const std::string& s) noexcept;
+};
 
 } // namespace sea::infrastructure::security

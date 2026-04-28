@@ -46,6 +46,11 @@ public:
     find_by_id(const std::string& entity_name,
                const std::string& id) = 0;
 
+    virtual seastar::future<std::optional<runtime::DynamicRecord>>
+    find_one_by_field(const std::string& entity_name,
+                      const std::string& field_name,
+                      const std::string& value) = 0;
+
     // Supprime un record par identifiant
     virtual seastar::future<bool> remove(const std::string& entity_name,
                         const std::string& id) = 0;

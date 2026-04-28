@@ -77,6 +77,7 @@ private:
     void showJsonArrayInTable(const QJsonArray& array, const QString& title);
     QString entityCollectionPath(const QString& entityName) const;
     QString _authToken;
+    QString _refreshToken;
     void promptLogin();
     void loginUser(const QString& email, const QString& password);
     void logoutUser();

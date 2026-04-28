@@ -7,7 +7,7 @@
 #include <cstdint>     // std::uint16_t
 #include <string>
 #include <string_view>
-
+#include "security_scheme/security_config.h"
 namespace sea::domain {
 
 // ─────────────────────────────────────────────────────────────
@@ -39,13 +39,14 @@ struct ServiceOptions {
 // - il pourra devenir un vrai service Seastar généré
 // ─────────────────────────────────────────────────────────────
 struct Service {
-    std::string    name;               // ex: "UserService"
-    std::uint16_t  port = 8080;        // port HTTP d'exposition
+    std::string              name;               // ex: "UserService"
+    std::uint16_t            port = 8080;        // port HTTP d'exposition
 
-    Schema         schema;             // structure métier du service
-    DatabaseConfig database_config{};  // backend de persistence
-    ServiceOptions options{};          // options transverses
+    security::SecurityConfig security;
 
+    Schema                   schema;             // structure métier du service
+    DatabaseConfig           database_config{};  // backend de persistence
+    ServiceOptions           options{};          // options transverses
     // ── helpers ─────────────────────────────────────────────
 
     [[nodiscard]] bool has_valid_port() const noexcept {

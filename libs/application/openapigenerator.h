@@ -5,53 +5,53 @@
 #include <vector>
 
 #include "route_generator.h"
+#include "schema.h"
 #include "service.h"
 
 namespace sea::application {
 
 class OpenApiGenerator {
 public:
+    using json = nlohmann::json;
+
     OpenApiGenerator();
 
-    [[nodiscard]] nlohmann::json generate(
-        const sea::domain::Service& service,
+    json generate(
+        const domain::Service& service,
         const std::vector<RouteDefinition>& route_definitions
         ) const;
 
-    [[nodiscard]] bool entity_requires_auth(
-        const sea::domain::Service& service,
-        const std::string& entity_name
-        ) const;
-
 private:
-    using json = nlohmann::json;
+    // Helpers de sécurité
+    bool service_has_auth(const domain::Service& service) const;
+    bool schema_has_auth_source(const domain::Schema& schema) const;
 
-    [[nodiscard]] json make_entity_schema(
-        const sea::domain::Entity& entity
-        ) const;
+    // Génération de schémas
+    json make_entity_schema(const domain::Entity& entity) const;
+    json make_entity_input_schema(const domain::Entity& entity) const;
+    json field_to_openapi_schema(const domain::Field& field) const;
+    void add_auth_schemas(json& schemas) const;
 
-    [[nodiscard]] json make_entity_input_schema(
-        const sea::domain::Entity& entity
-        ) const;
-
-    [[nodiscard]] json field_to_openapi_schema(
-        const sea::domain::Field& field
-        ) const;
-
+    // Génération de paths
     void add_crud_path(
         json& paths,
         const RouteDefinition& route,
-        const sea::domain::Service& service
+        const domain::Service& service
         ) const;
 
     void add_relation_paths(
         json& paths,
-        const sea::domain::Service& service
+        const domain::Service& service
         ) const;
 
-    [[nodiscard]] std::string to_openapi_method(
-        sea::application::HttpMethod method
-        ) const;
+    void add_auth_paths(json& paths) const;
+    void add_health_path(json& paths) const;
+
+    // Conversion HTTP method
+    std::string to_openapi_method(HttpMethod method) const;
+
+    // Helper pour construire la security clause
+    json bearer_security() const;
 };
 
 } // namespace sea::application
