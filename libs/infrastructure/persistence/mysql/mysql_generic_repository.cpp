@@ -333,7 +333,8 @@ MySQLGenericRepository::create(
 
                 return record;
 
-            } catch (const sql::SQLException&) {
+            } catch (const sql::SQLException& e) {
+                std::cerr << "[MYSQL CREATE] EXCEPTION: " << e.what() << "\n";
                 return std::nullopt;
             }
         }

@@ -60,7 +60,7 @@ LoginHandler::handle(const seastar::sstring&,
         const std::string email = body["email"].get<std::string>();
         const std::string password = body["password"].get<std::string>();
 
-        // 🔹 Recherche utilisateur
+        // Recherche utilisateur
         const auto user_record =
             co_await crud_engine_->find_one_by_field("User", "email", email);
 
@@ -72,7 +72,7 @@ LoginHandler::handle(const seastar::sstring&,
             co_return std::move(rep);
         }
 
-        // 🔹 Récupération hash password
+        // Récupération hash password
         const auto pwd_it = user_record->find("password");
         if (pwd_it == user_record->end()) {
             rep->set_status(seastar::http::reply::status_type::unauthorized);
@@ -146,12 +146,51 @@ LoginHandler::handle(const seastar::sstring&,
             }
         }
 
-        //  Génération JWT
+        // Construction des claims custom à inclure dans le JWT.
+        //
+        // Ces claims sont nécessaires pour l'autorisation ABAC.
+        // Exemple : department_id permet à AuthorizationMiddleware de vérifier
+        // que l'utilisateur peut accéder aux ressources de son département.
+        //
+        // Liste des champs systématiquement exclus du JWT :
+        // - id, email, role : déjà gérés via les claims standards
+        // - password : NE JAMAIS mettre dans un JWT
+        // - les champs system (created_at, updated_at, deleted_at, etc.)
+        std::unordered_map<std::string, std::string> additional_claims;
+
+        static const std::set<std::string> excluded_fields = {
+            "id", "email", "role", "password", "full_name",
+            "created_at", "updated_at", "deleted_at"
+        };
+
+        for (const auto& [field_name, field_value] : *user_record) {
+            if (excluded_fields.count(field_name)) {
+                continue;
+            }
+
+            const auto value_str =
+                sea::http::utils::dynamic_value_to_string(field_value);
+
+            if (value_str.has_value() && !value_str->empty()) {
+                additional_claims[field_name] = *value_str;
+            }
+        }
+
+        //  Génération JWT (async, hors reactor — libcrypto est CPU-bound)
         const auto access_token =
-            auth_service_->generate_access_token(*user_id, email, role);
+            co_await auth_service_->generate_access_token_async(
+                *user_id,
+                email,
+                role,
+                additional_claims,
+                *blocking_executor_
+                );
 
         const auto refresh_token =
-            auth_service_->generate_refresh_token(*user_id);
+            co_await auth_service_->generate_refresh_token_async(
+                *user_id,
+                *blocking_executor_
+                );
 
         /**
          *  Nettoyage user

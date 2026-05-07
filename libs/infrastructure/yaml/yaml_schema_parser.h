@@ -43,7 +43,49 @@ private:
     [[nodiscard]] domain::security::HttpLimits parse_http_limits_node(const YAML::Node& node) const;
     [[nodiscard]] domain::security::SecurityHeaders parse_security_headers_node(const YAML::Node& node) const;
 
-    [[nodiscard]] sea::domain::Entity parse_entity_node(const YAML::Node& node) const;
+    // Parser l'autorisation
+    [[nodiscard]] sea::domain::access_control::AccessControlConfig parse_authorization_node(const YAML::Node& node) const;
+
+    [[nodiscard]] sea::domain::access_control::EntityAccessControl
+    parse_entity_access_control_node(
+        const YAML::Node& entity_node,
+        const sea::domain::Entity& entity,
+        const sea::domain::access_control::AccessControlConfig& global_config
+        ) const;
+
+    [[nodiscard]] sea::domain::access_control::AccessControlSpec
+    parse_operation_access_control_node(
+        const YAML::Node& op_node,
+        const std::string& entity_name,
+        const std::string& op_name,
+        const std::string& effective_scope_field,
+        const std::string& effective_owner_field,
+        const sea::domain::access_control::AccessControlConfig& global_config
+        ) const;
+
+    // Compilation des shortcuts en PolicyCondition
+    [[nodiscard]] sea::domain::access_control::PolicyCondition
+    compile_allow_roles_shortcut(const std::vector<std::string>& roles) const;
+
+    [[nodiscard]] sea::domain::access_control::PolicyCondition
+    compile_same_scope_shortcut(
+        const std::string& scope_field,
+        bool allow_admin,
+        const std::string& admin_role
+        ) const;
+
+    [[nodiscard]] sea::domain::access_control::PolicyCondition
+    compile_own_resource_shortcut(
+        const std::string& owner_field,
+        bool allow_admin,
+        const std::string& admin_role
+        ) const;
+
+
+    sea::domain::Entity parse_entity_node(
+        const YAML::Node& node,
+        const sea::domain::access_control::AccessControlConfig& global_config
+        ) const;
     [[nodiscard]] sea::domain::Field parse_field_node(const YAML::Node& node) const;
     [[nodiscard]] sea::domain::Relation parse_relation_node(const YAML::Node& node) const;
     [[nodiscard]] sea::domain::DatabaseConfig parse_database_config_node(const YAML::Node& node) const;

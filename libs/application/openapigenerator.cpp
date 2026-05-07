@@ -1,11 +1,20 @@
 #include "openapigenerator.h"
 
 #include <cctype>
+#include <functional>
+#include <sstream>
 #include <string>
 
 #include "schema.h"
 #include "security_scheme/security_config.h"
 #include "security_scheme/authentification_config.h"
+
+// ✨ Includes pour access_control
+#include "access_control/crud_operation.h"
+#include "access_control/access_control_spec.h"
+#include "access_control/policy_condition.h"
+#include "access_control/policy_predicate.h"
+#include "access_control/policy_value_ref.h"
 
 namespace sea::application {
 
@@ -53,45 +62,42 @@ nlohmann::json OpenApiGenerator::generate(
                            {"type", "http"},
                            {"scheme", "bearer"},
                            {"bearerFormat", "JWT"},
-                           {"description", "JWT obtenu via /auth/login ou /auth/register. Format: Bearer <token>"}
+                           {"description", "JWT token obtenu via /auth/login"}
                        }}
     };
 
-    // Schémas d'entités
+    // --- Schémas des entités ---
     for (const auto& entity : service.schema.entities) {
         doc["components"]["schemas"][entity.name] = make_entity_schema(entity);
         doc["components"]["schemas"][entity.name + "Input"] = make_entity_input_schema(entity);
     }
 
-    // Schémas d'authentification (si on a une auth source)
-    const bool has_auth_source = schema_has_auth_source(service.schema);
-    if (has_auth_source) {
+    // --- Schémas auth ---
+    if (auth_enabled) {
         add_auth_schemas(doc["components"]["schemas"]);
     }
 
-    // --- Paths ---
-
-    // Routes CRUD générées depuis les RouteDefinition
+    // --- Paths CRUD ---
     for (const auto& route : route_definitions) {
         add_crud_path(doc["paths"], route, service);
     }
 
-    // Routes relationnelles
+    // --- Paths relations ---
     add_relation_paths(doc["paths"], service);
 
-    // Routes d'authentification (si une entité est auth source)
-    if (has_auth_source) {
+    // --- Paths auth ---
+    if (auth_enabled) {
         add_auth_paths(doc["paths"]);
     }
 
-    // Health check (toujours public)
+    // --- Health ---
     add_health_path(doc["paths"]);
 
     return doc;
 }
 
 // =====================================================================
-//                          HELPERS DE SÉCURITÉ
+//                       HELPERS DE SÉCURITÉ
 // =====================================================================
 
 bool OpenApiGenerator::service_has_auth(const domain::Service& service) const {
@@ -109,20 +115,17 @@ bool OpenApiGenerator::schema_has_auth_source(const domain::Schema& schema) cons
 }
 
 OpenApiGenerator::json OpenApiGenerator::bearer_security() const {
-    return json{{"bearerAuth", json::array()}};
+    return {{"bearerAuth", json::array()}};
 }
 
 // =====================================================================
-//                          SCHÉMAS D'ENTITÉS
+//                       SCHÉMAS ENTITÉS
 // =====================================================================
 
 OpenApiGenerator::json OpenApiGenerator::make_entity_schema(
     const domain::Entity& entity
     ) const {
-    json schema;
-    schema["type"] = "object";
-    schema["properties"] = json::object();
-
+    json properties = json::object();
     json required = json::array();
 
     for (const auto& field : entity.fields) {
@@ -130,12 +133,17 @@ OpenApiGenerator::json OpenApiGenerator::make_entity_schema(
             continue;
         }
 
-        schema["properties"][field.name] = field_to_openapi_schema(field);
+        properties[field.name] = field_to_openapi_schema(field);
 
         if (field.required) {
             required.push_back(field.name);
         }
     }
+
+    json schema = {
+        {"type", "object"},
+        {"properties", properties}
+    };
 
     if (!required.empty()) {
         schema["required"] = required;
@@ -147,23 +155,24 @@ OpenApiGenerator::json OpenApiGenerator::make_entity_schema(
 OpenApiGenerator::json OpenApiGenerator::make_entity_input_schema(
     const domain::Entity& entity
     ) const {
-    json schema;
-    schema["type"] = "object";
-    schema["properties"] = json::object();
-
+    json properties = json::object();
     json required = json::array();
 
     for (const auto& field : entity.fields) {
-        if (field.name == "id") {
-            continue;
-        }
+        if (field.name == "id") continue;
+        if (!field.serializable && field.name != "password") continue;
 
-        schema["properties"][field.name] = field_to_openapi_schema(field);
+        properties[field.name] = field_to_openapi_schema(field);
 
         if (field.required) {
             required.push_back(field.name);
         }
     }
+
+    json schema = {
+        {"type", "object"},
+        {"properties", properties}
+    };
 
     if (!required.empty()) {
         schema["required"] = required;
@@ -175,59 +184,124 @@ OpenApiGenerator::json OpenApiGenerator::make_entity_input_schema(
 OpenApiGenerator::json OpenApiGenerator::field_to_openapi_schema(
     const domain::Field& field
     ) const {
+    json schema = json::object();
+
+    using sea::domain::FieldType;
+
     switch (field.type) {
-    case sea::domain::FieldType::Int:
-        return json{{"type", "integer"}, {"format", "int64"}};
+    case FieldType::String:
+    case FieldType::Text:
+    case FieldType::Password:
+    // case FieldType::Url:
+    //     schema["type"] = "string";
+    //     break;
 
-    case sea::domain::FieldType::Float:
-        return json{{"type", "number"}, {"format", "double"}};
+    case FieldType::Email:
+        schema["type"] = "string";
+        schema["format"] = "email";
+        break;
 
-    case sea::domain::FieldType::Bool:
-        return json{{"type", "boolean"}};
+    case FieldType::UUID:
+        schema["type"] = "string";
+        schema["format"] = "uuid";
+        break;
 
-    case sea::domain::FieldType::Email:
-        return json{{"type", "string"}, {"format", "email"}};
+    case FieldType::Int:
+        schema["type"] = "integer";
+        break;
 
-    case sea::domain::FieldType::Password:
-        return json{{"type", "string"}, {"format", "password"}};
+    case FieldType::Float:
+        schema["type"] = "number";
+        break;
 
-    case sea::domain::FieldType::UUID:
-        return json{{"type", "string"}, {"format", "uuid"}};
+    case FieldType::Bool:
+        schema["type"] = "boolean";
+        break;
 
-    case sea::domain::FieldType::String:
+    // case FieldType::Date:
+    //     schema["type"] = "string";
+    //     schema["format"] = "date";
+    //     break;
+
+    // case FieldType::DateTime:
+    // case FieldType::Timestamp:
+    //     schema["type"] = "string";
+    //     schema["format"] = "date-time";
+    //     break;
+
+    // case FieldType::Json:
+    //     schema["type"] = "object";
+    //     break;
+
     default:
-        return json{{"type", "string"}};
+        schema["type"] = "string";
+        break;
     }
+
+    if (field.has_default()) {
+        std::visit(
+            [&schema](const auto& value) {
+                using T = std::decay_t<decltype(value)>;
+
+                if constexpr (std::is_same_v<T, std::monostate>) {
+                    // Pas de default, ne rien faire
+                }
+                else if constexpr (std::is_same_v<T, std::string>) {
+                    if (!value.empty()) {
+                        schema["default"] = value;
+                    }
+                }
+                else if constexpr (std::is_same_v<T, std::int64_t>) {
+                    schema["default"] = value;
+                }
+                else if constexpr (std::is_same_v<T, double>) {
+                    schema["default"] = value;
+                }
+                else if constexpr (std::is_same_v<T, bool>) {
+                    schema["default"] = value;
+                }
+            },
+            field.default_val
+            );
+    }
+
+    if (field.max_length.has_value()) {
+        schema["maxLength"] = *field.max_length;
+    }
+
+    return schema;
 }
 
-// =====================================================================
-//                       SCHÉMAS D'AUTHENTIFICATION
-// =====================================================================
-
 void OpenApiGenerator::add_auth_schemas(json& schemas) const {
-    // LoginRequest
     schemas["LoginRequest"] = {
         {"type", "object"},
         {"required", json::array({"email", "password"})},
         {"properties", {
                            {"email", {{"type", "string"}, {"format", "email"}}},
-                           {"password", {{"type", "string"}, {"format", "password"}}}
+                           {"password", {{"type", "string"}}}
                        }}
     };
 
-    // RegisterRequest
     schemas["RegisterRequest"] = {
         {"type", "object"},
-        {"required", json::array({"email", "password", "full_name"})},
+        {"required", json::array({"email", "password"})},
         {"properties", {
                            {"email", {{"type", "string"}, {"format", "email"}}},
-                           {"password", {{"type", "string"}, {"format", "password"}, {"minLength", 8}}},
-                           {"full_name", {{"type", "string"}}},
-                           {"role", {{"type", "string"}, {"example", "user"}}}
+                           {"password", {{"type", "string"}}},
+                           {"full_name", {{"type", "string"}}}
                        }}
     };
 
-    // RefreshRequest
+    schemas["TokenResponse"] = {
+        {"type", "object"},
+        {"properties", {
+                           {"access_token", {{"type", "string"}}},
+                           {"refresh_token", {{"type", "string"}}},
+                           {"token_type", {{"type", "string"}, {"example", "Bearer"}}},
+                           {"user", {{"type", "object"}}}
+                       }}
+    };
+
     schemas["RefreshRequest"] = {
         {"type", "object"},
         {"required", json::array({"refresh_token"})},
@@ -236,45 +310,23 @@ void OpenApiGenerator::add_auth_schemas(json& schemas) const {
                        }}
     };
 
-    // AuthTokens (réponse de login/register/refresh)
-    schemas["AuthTokens"] = {
-        {"type", "object"},
-        {"properties", {
-                           {"access_token", {
-                                                {"type", "string"},
-                                                {"description", "JWT a utiliser dans le header Authorization (TTL ~15min)"}
-                                            }},
-                           {"refresh_token", {
-                                                 {"type", "string"},
-                                                 {"description", "Token longue durée pour obtenir de nouveaux access_token"}
-                                             }},
-                           {"token_type", {{"type", "string"}, {"example", "Bearer"}}},
-                           {"expires_in", {
-                                              {"type", "integer"},
-                                              {"description", "Secondes avant expiration de l'access_token"}
-                                          }}
-                       }}
-    };
-
-    // ErrorResponse
     schemas["ErrorResponse"] = {
         {"type", "object"},
         {"properties", {
                            {"error", {{"type", "string"}}},
-                           {"message", {{"type", "string"}}},
-                           {"code", {{"type", "integer"}}}
+                           {"message", {{"type", "string"}}}
                        }}
     };
 }
 
 // =====================================================================
-//                          PATHS CRUD
+//                       PATHS CRUD
 // =====================================================================
 
 void OpenApiGenerator::add_crud_path(
     json& paths,
     const RouteDefinition& route,
-    const domain::Service& /*service*/
+    const domain::Service& service
     ) const {
     const auto http_method = to_openapi_method(route.method);
     if (http_method.empty()) {
@@ -333,6 +385,9 @@ void OpenApiGenerator::add_crud_path(
             op["security"] = json::array();  // public explicite
         }
 
+        // Enrichissement avec access_control
+        enrich_with_access_control(op, service, route.entity_name, route.operation_name);
+
         paths[entity_plural][http_method] = op;
     }
     else if (route.operation_name == "create") {
@@ -374,6 +429,9 @@ void OpenApiGenerator::add_crud_path(
             op["security"] = json::array();
         }
 
+        // ✨ Enrichissement avec access_control
+        enrich_with_access_control(op, service, route.entity_name, route.operation_name);
+
         paths[entity_plural][http_method] = op;
     }
     else if (route.operation_name == "get_by_id") {
@@ -407,6 +465,9 @@ void OpenApiGenerator::add_crud_path(
         } else {
             op["security"] = json::array();
         }
+
+        // ✨ Enrichissement avec access_control
+        enrich_with_access_control(op, service, route.entity_name, route.operation_name);
 
         paths[item_path][http_method] = op;
     }
@@ -451,6 +512,9 @@ void OpenApiGenerator::add_crud_path(
             op["security"] = json::array();
         }
 
+        // ✨ Enrichissement avec access_control
+        enrich_with_access_control(op, service, route.entity_name, route.operation_name);
+
         paths[item_path][http_method] = op;
     }
     else if (route.operation_name == "delete") {
@@ -478,6 +542,9 @@ void OpenApiGenerator::add_crud_path(
             op["security"] = json::array();
         }
 
+        // ✨ Enrichissement avec access_control
+        enrich_with_access_control(op, service, route.entity_name, route.operation_name);
+
         paths[item_path][http_method] = op;
     }
 }
@@ -490,36 +557,37 @@ void OpenApiGenerator::add_relation_paths(
     json& paths,
     const domain::Service& service
     ) const {
-    // Détermine une fois si l'auth est activée au niveau service
     const bool requires_auth = service_has_auth(service);
 
     for (const auto& entity : service.schema.entities) {
-        std::string parent_path = "/" + entity.name;
-        parent_path[1] = static_cast<char>(
-            std::tolower(static_cast<unsigned char>(parent_path[1]))
+        // Plural path de l'entité parent
+        std::string parent_plural = "/" + entity.name;
+        parent_plural[1] = static_cast<char>(
+            std::tolower(static_cast<unsigned char>(parent_plural[1]))
             );
-        parent_path += "s";
+        parent_plural += "s";
+
+        std::string parent_lower = entity.name;
+        parent_lower[0] = static_cast<char>(
+            std::tolower(static_cast<unsigned char>(parent_lower[0]))
+            );
 
         for (const auto& relation : entity.relations) {
-            if (relation.kind == sea::domain::RelationKind::HasMany) {
-                std::string child_path = "/" + relation.target_entity;
-                child_path[1] = static_cast<char>(
-                    std::tolower(static_cast<unsigned char>(child_path[1]))
-                    );
-                child_path += "s";
+            using sea::domain::RelationKind;
 
-                std::string parent_name = entity.name;
-                parent_name[0] = static_cast<char>(
-                    std::tolower(static_cast<unsigned char>(parent_name[0]))
+            if (relation.kind == RelationKind::HasMany) {
+                std::string child_plural = "/" + relation.target_entity;
+                child_plural[1] = static_cast<char>(
+                    std::tolower(static_cast<unsigned char>(child_plural[1]))
                     );
+                child_plural += "s";
 
                 // /children/filter/with_parent/{id}
-                const std::string by_id_path =
-                    child_path + "/filter/with_" + parent_name + "/{id}";
+                const std::string by_id_path = child_plural + "/filter/with_" + parent_lower + "/{id}";
 
                 json by_id_op = {
-                    {"tags", json::array({entity.name})},
-                    {"summary", "List related " + relation.target_entity + " by parent id"},
+                    {"tags", json::array({relation.target_entity})},
+                    {"summary", "List " + relation.target_entity + " by " + entity.name + " id"},
                     {"parameters", json::array({
                                        {
                                            {"name", "id"},
@@ -530,7 +598,7 @@ void OpenApiGenerator::add_relation_paths(
                                    })},
                     {"responses", {
                                       {"200", {
-                                                  {"description", "Liste des enregistrements lies"},
+                                                  {"description", "Liste filtree"},
                                                   {"content", {
                                                                   {"application/json", {
                                                                                            {"schema", {
@@ -540,7 +608,6 @@ void OpenApiGenerator::add_relation_paths(
                                                                                        }}
                                                               }}
                                               }},
-                                      {"400", {{"description", "Parametre invalide"}}},
                                       {"401", {{"description", "Non authentifie"}}}
                                   }}
                 };
@@ -560,11 +627,11 @@ void OpenApiGenerator::add_relation_paths(
                     }
 
                     const std::string by_field_path =
-                        child_path + "/filter/with_" + parent_name + "_" + field.name + "/{value}";
+                        child_plural + "/filter/with_" + parent_lower + "_" + field.name + "/{value}";
 
                     json by_field_op = {
-                        {"tags", json::array({entity.name})},
-                        {"summary", "List related " + relation.target_entity + " by parent " + field.name},
+                        {"tags", json::array({relation.target_entity})},
+                        {"summary", "List " + relation.target_entity + " by " + entity.name + " " + field.name},
                         {"parameters", json::array({
                                            {
                                                {"name", "value"},
@@ -575,7 +642,7 @@ void OpenApiGenerator::add_relation_paths(
                                        })},
                         {"responses", {
                                           {"200", {
-                                                      {"description", "Liste des enregistrements lies"},
+                                                      {"description", "Liste filtree"},
                                                       {"content", {
                                                                       {"application/json", {
                                                                                                {"schema", {
@@ -586,7 +653,7 @@ void OpenApiGenerator::add_relation_paths(
                                                                   }}
                                                   }},
                                           {"401", {{"description", "Non authentifie"}}},
-                                          {"404", {{"description", "Parent introuvable"}}}
+                                          {"404", {{"description", "Introuvable"}}}
                                       }}
                     };
 
@@ -600,12 +667,11 @@ void OpenApiGenerator::add_relation_paths(
                 }
 
                 // /parents_with_relation/{id}
-                const std::string with_children_path =
-                    parent_path + "_with_" + relation.name + "/{id}";
+                const std::string with_children_path = parent_plural + "_with_" + relation.name + "/{id}";
 
                 json with_children_op = {
                     {"tags", json::array({entity.name})},
-                    {"summary", "Get " + entity.name + " with related " + relation.name},
+                    {"summary", "Get " + entity.name + " with " + relation.name},
                     {"parameters", json::array({
                                        {
                                            {"name", "id"},
@@ -615,9 +681,11 @@ void OpenApiGenerator::add_relation_paths(
                                        }
                                    })},
                     {"responses", {
-                                      {"200", {{"description", "Parent avec ses enfants"}}},
+                                      {"200", {
+                                                  {"description", entity.name + " avec ses " + relation.name}
+                                              }},
                                       {"401", {{"description", "Non authentifie"}}},
-                                      {"404", {{"description", "Parent introuvable"}}}
+                                      {"404", {{"description", "Introuvable"}}}
                                   }}
                 };
 
@@ -630,13 +698,12 @@ void OpenApiGenerator::add_relation_paths(
                 paths[with_children_path]["get"] = with_children_op;
             }
 
-            if (relation.kind == sea::domain::RelationKind::HasOne) {
-                const std::string relation_path =
-                    parent_path + "/" + relation.name + "/{id}";
+            if (relation.kind == RelationKind::HasOne) {
+                const std::string path = parent_plural + "/" + relation.name + "/{id}";
 
                 json op = {
-                    {"tags", json::array({entity.name})},
-                    {"summary", "Get related " + relation.target_entity},
+                    {"tags", json::array({relation.target_entity})},
+                    {"summary", "Get " + relation.name + " of " + entity.name},
                     {"parameters", json::array({
                                        {
                                            {"name", "id"},
@@ -646,7 +713,14 @@ void OpenApiGenerator::add_relation_paths(
                                        }
                                    })},
                     {"responses", {
-                                      {"200", {{"description", "OK"}}},
+                                      {"200", {
+                                                  {"description", "Enregistrement trouve"},
+                                                  {"content", {
+                                                                  {"application/json", {
+                                                                                           {"schema", {{"$ref", "#/components/schemas/" + relation.target_entity}}}
+                                                                                       }}
+                                                              }}
+                                              }},
                                       {"401", {{"description", "Non authentifie"}}},
                                       {"404", {{"description", "Introuvable"}}}
                                   }}
@@ -658,27 +732,21 @@ void OpenApiGenerator::add_relation_paths(
                     op["security"] = json::array();
                 }
 
-                paths[relation_path]["get"] = op;
+                paths[path]["get"] = op;
             }
 
-            if (relation.kind == sea::domain::RelationKind::ManyToMany) {
-                std::string target_path = "/" + relation.target_entity;
-                target_path[1] = static_cast<char>(
-                    std::tolower(static_cast<unsigned char>(target_path[1]))
+            if (relation.kind == RelationKind::ManyToMany) {
+                std::string target_plural = "/" + relation.target_entity;
+                target_plural[1] = static_cast<char>(
+                    std::tolower(static_cast<unsigned char>(target_plural[1]))
                     );
-                target_path += "s";
+                target_plural += "s";
 
-                std::string source_name = entity.name;
-                source_name[0] = static_cast<char>(
-                    std::tolower(static_cast<unsigned char>(source_name[0]))
-                    );
-
-                const std::string by_id_path =
-                    target_path + "/filter/with_" + source_name + "/{id}";
+                const std::string m2m_path = target_plural + "/filter/with_" + parent_lower + "/{id}";
 
                 json op = {
-                    {"tags", json::array({entity.name})},
-                    {"summary", "List related " + relation.target_entity + " by many-to-many relation"},
+                    {"tags", json::array({relation.target_entity})},
+                    {"summary", "List " + relation.target_entity + " of " + entity.name},
                     {"parameters", json::array({
                                        {
                                            {"name", "id"},
@@ -689,7 +757,7 @@ void OpenApiGenerator::add_relation_paths(
                                    })},
                     {"responses", {
                                       {"200", {
-                                                  {"description", "Liste des enregistrements lies"},
+                                                  {"description", "Liste"},
                                                   {"content", {
                                                                   {"application/json", {
                                                                                            {"schema", {
@@ -699,7 +767,6 @@ void OpenApiGenerator::add_relation_paths(
                                                                                        }}
                                                               }}
                                               }},
-                                      {"400", {{"description", "Parametre invalide"}}},
                                       {"401", {{"description", "Non authentifie"}}}
                                   }}
                 };
@@ -710,23 +777,22 @@ void OpenApiGenerator::add_relation_paths(
                     op["security"] = json::array();
                 }
 
-                paths[by_id_path]["get"] = op;
+                paths[m2m_path]["get"] = op;
             }
         }
     }
 }
 
 // =====================================================================
-//                    PATHS D'AUTHENTIFICATION
+//                       PATHS AUTH
 // =====================================================================
 
 void OpenApiGenerator::add_auth_paths(json& paths) const {
-    // POST /auth/register
+    // POST /auth/register (public)
     paths["/auth/register"]["post"] = {
-        {"tags", json::array({"Authentication"})},
-        {"summary", "Register a new user"},
-        {"description", "Cree un nouveau compte utilisateur et retourne les tokens d'acces."},
-        {"security", json::array()},   // public
+        {"tags", json::array({"Auth"})},
+        {"summary", "Inscription d'un nouvel utilisateur"},
+        {"security", json::array()},
         {"requestBody", {
                             {"required", true},
                             {"content", {
@@ -737,38 +803,23 @@ void OpenApiGenerator::add_auth_paths(json& paths) const {
                         }},
         {"responses", {
                           {"201", {
-                                      {"description", "Utilisateur cree avec succes"},
+                                      {"description", "Utilisateur cree"},
                                       {"content", {
                                                       {"application/json", {
-                                                                               {"schema", {{"$ref", "#/components/schemas/AuthTokens"}}}
+                                                                               {"schema", {{"$ref", "#/components/schemas/TokenResponse"}}}
                                                                            }}
                                                   }}
                                   }},
-                          {"400", {
-                                      {"description", "Donnees invalides"},
-                                      {"content", {
-                                                      {"application/json", {
-                                                                               {"schema", {{"$ref", "#/components/schemas/ErrorResponse"}}}
-                                                                           }}
-                                                  }}
-                                  }},
-                          {"409", {
-                                      {"description", "Email deja utilise"},
-                                      {"content", {
-                                                      {"application/json", {
-                                                                               {"schema", {{"$ref", "#/components/schemas/ErrorResponse"}}}
-                                                                           }}
-                                                  }}
-                                  }}
+                          {"400", {{"description", "Requete invalide"}}},
+                          {"409", {{"description", "Email deja utilise"}}}
                       }}
     };
 
-    // POST /auth/login
+    // POST /auth/login (public)
     paths["/auth/login"]["post"] = {
-        {"tags", json::array({"Authentication"})},
-        {"summary", "Login with email and password"},
-        {"description", "Verifie les credentials et retourne les tokens d'acces."},
-        {"security", json::array()},   // public
+        {"tags", json::array({"Auth"})},
+        {"summary", "Connexion utilisateur"},
+        {"security", json::array()},
         {"requestBody", {
                             {"required", true},
                             {"content", {
@@ -779,30 +830,22 @@ void OpenApiGenerator::add_auth_paths(json& paths) const {
                         }},
         {"responses", {
                           {"200", {
-                                      {"description", "Connexion reussie"},
+                                      {"description", "Authentification reussie"},
                                       {"content", {
                                                       {"application/json", {
-                                                                               {"schema", {{"$ref", "#/components/schemas/AuthTokens"}}}
+                                                                               {"schema", {{"$ref", "#/components/schemas/TokenResponse"}}}
                                                                            }}
                                                   }}
                                   }},
-                          {"401", {
-                                      {"description", "Identifiants invalides"},
-                                      {"content", {
-                                                      {"application/json", {
-                                                                               {"schema", {{"$ref", "#/components/schemas/ErrorResponse"}}}
-                                                                           }}
-                                                  }}
-                                  }}
+                          {"401", {{"description", "Identifiants invalides"}}}
                       }}
     };
 
-    // POST /auth/refresh
+    // POST /auth/refresh (public, mais utilise refresh_token)
     paths["/auth/refresh"]["post"] = {
-        {"tags", json::array({"Authentication"})},
-        {"summary", "Refresh access token"},
-        {"description", "Echange un refresh_token valide contre un nouveau access_token. L'ancien refresh_token est invalide."},
-        {"security", json::array()},   // public (utilise refresh_token, pas access_token)
+        {"tags", json::array({"Auth"})},
+        {"summary", "Rafraichir le token d'acces"},
+        {"security", json::array()},
         {"requestBody", {
                             {"required", true},
                             {"content", {
@@ -813,83 +856,52 @@ void OpenApiGenerator::add_auth_paths(json& paths) const {
                         }},
         {"responses", {
                           {"200", {
-                                      {"description", "Token rafraichi avec succes"},
+                                      {"description", "Token rafraichi"},
                                       {"content", {
                                                       {"application/json", {
-                                                                               {"schema", {{"$ref", "#/components/schemas/AuthTokens"}}}
+                                                                               {"schema", {{"$ref", "#/components/schemas/TokenResponse"}}}
                                                                            }}
                                                   }}
                                   }},
-                          {"401", {
-                                      {"description", "Refresh token invalide ou expire"},
-                                      {"content", {
-                                                      {"application/json", {
-                                                                               {"schema", {{"$ref", "#/components/schemas/ErrorResponse"}}}
-                                                                           }}
-                                                  }}
-                                  }}
+                          {"401", {{"description", "Refresh token invalide"}}}
                       }}
     };
 
-    // POST /auth/logout
-    paths["/auth/logout"]["post"] = {
-        {"tags", json::array({"Authentication"})},
-        {"summary", "Logout (revoke refresh token)"},
-        {"description", "Invalide le refresh_token de la session courante."},
-        {"security", json::array({bearer_security()})},
-        {"responses", {
-                          {"204", {{"description", "Deconnexion reussie"}}},
-                          {"401", {
-                                      {"description", "Token invalide ou expire"},
-                                      {"content", {
-                                                      {"application/json", {
-                                                                               {"schema", {{"$ref", "#/components/schemas/ErrorResponse"}}}
-                                                                           }}
-                                                  }}
-                                  }}
-                      }}
-    };
-
-    // GET /auth/me
+    // GET /auth/me (protégée)
     paths["/auth/me"]["get"] = {
-        {"tags", json::array({"Authentication"})},
-        {"summary", "Get current authenticated user"},
-        {"description", "Retourne l'utilisateur associe au JWT fourni."},
+        {"tags", json::array({"Auth"})},
+        {"summary", "Profil utilisateur courant"},
         {"security", json::array({bearer_security()})},
         {"responses", {
-                          {"200", {
-                                      {"description", "Utilisateur courant"},
-                                      {"content", {
-                                                      {"application/json", {
-                                                                               {"schema", {{"$ref", "#/components/schemas/User"}}}
-                                                                           }}
-                                                  }}
-                                  }},
-                          {"401", {
-                                      {"description", "Token invalide ou absent"},
-                                      {"content", {
-                                                      {"application/json", {
-                                                                               {"schema", {{"$ref", "#/components/schemas/ErrorResponse"}}}
-                                                                           }}
-                                                  }}
-                                  }}
+                          {"200", {{"description", "Profil utilisateur"}}},
+                          {"401", {{"description", "Non authentifie"}}}
+                      }}
+    };
+
+    // POST /auth/logout (protégée)
+    paths["/auth/logout"]["post"] = {
+        {"tags", json::array({"Auth"})},
+        {"summary", "Deconnexion"},
+        {"security", json::array({bearer_security()})},
+        {"responses", {
+                          {"200", {{"description", "Deconnexion reussie"}}},
+                          {"401", {{"description", "Non authentifie"}}}
                       }}
     };
 }
 
 // =====================================================================
-//                          PATHS SYSTÈME
+//                       PATH HEALTH
 // =====================================================================
 
 void OpenApiGenerator::add_health_path(json& paths) const {
     paths["/health"]["get"] = {
         {"tags", json::array({"System"})},
         {"summary", "Health check"},
-        {"description", "Verifie que le service est en ligne."},
-        {"security", json::array()},   // toujours public
+        {"security", json::array()},
         {"responses", {
                           {"200", {
-                                      {"description", "Service en ligne"},
+                                      {"description", "Service en bonne sante"},
                                       {"content", {
                                                       {"application/json", {
                                                                                {"schema", {
@@ -911,12 +923,170 @@ void OpenApiGenerator::add_health_path(json& paths) const {
 
 std::string OpenApiGenerator::to_openapi_method(HttpMethod method) const {
     switch (method) {
-    case sea::application::HttpMethod::Get:    return "get";
-    case sea::application::HttpMethod::Post:   return "post";
-    case sea::application::HttpMethod::Put:    return "put";
-    case sea::application::HttpMethod::Delete: return "delete";
-    default: return "";
+    case HttpMethod::Get:    return "get";
+    case HttpMethod::Post:   return "post";
+    case HttpMethod::Put:    return "put";
+    case HttpMethod::Delete: return "delete";
     }
+    return "";
+}
+
+// =====================================================================
+// ✨ HELPERS ACCESS CONTROL (RBAC + ABAC)
+// =====================================================================
+
+void OpenApiGenerator::enrich_with_access_control(
+    json& op,
+    const domain::Service& service,
+    const std::string& entity_name,
+    const std::string& operation_name) const
+{
+    // Si l'autorisation n'est pas activée globalement, rien à enrichir
+    if (!service.access_control.enabled()) {
+        return;
+    }
+
+    // Sur les routes protégées, ajouter systématiquement la réponse 403
+    if (op.contains("security") && !op["security"].empty()) {
+        op["responses"]["403"] = {
+            {"description", "Forbidden - Permissions insuffisantes pour cette operation"},
+            {"content", {
+                            {"application/json", {
+                                                     {"schema", {{"$ref", "#/components/schemas/ErrorResponse"}}}
+                                                 }}
+                        }}
+        };
+    }
+
+    // Trouve l'entité pour lire ses règles d'access_control
+    const auto* entity = find_entity_by_name(service, entity_name);
+    if (entity == nullptr) {
+        return;
+    }
+
+    // Construit la description Markdown des règles
+    const auto auth_desc = build_authorization_description(*entity, operation_name);
+    if (auth_desc.empty()) {
+        return;
+    }
+
+    // Ajoute (ou enrichit) la description
+    std::string current_desc = op.value("description", "");
+    if (!current_desc.empty()) {
+        current_desc += "\n\n";
+    }
+    op["description"] = current_desc + auth_desc;
+}
+
+const sea::domain::Entity* OpenApiGenerator::find_entity_by_name(
+    const domain::Service& service,
+    const std::string& entity_name) const
+{
+    for (const auto& entity : service.schema.entities) {
+        if (entity.name == entity_name) {
+            return &entity;
+        }
+    }
+    return nullptr;
+}
+
+std::string OpenApiGenerator::build_authorization_description(
+    const domain::Entity& entity,
+    const std::string& operation_name) const
+{
+    using namespace sea::domain::access_control;
+
+    // Convertit "list" / "get_by_id" / "create" / "update" / "delete" en CrudOperation
+    const auto op_opt = crud_operation_from_string(operation_name);
+    if (!op_opt.has_value()) {
+        return "";
+    }
+
+    // Récupère la spec d'access_control pour cette opération
+    const auto* spec = entity.access_control.find_spec(*op_opt);
+    if (spec == nullptr || spec->is_empty()) {
+        return "";
+    }
+
+    std::ostringstream oss;
+    oss << "### Access Control\n\n";
+
+    // Stratégie d'évaluation : fast path (subject-only) ou slow path (resource-aware)
+    if (spec->requires_resource()) {
+        oss << "**Strategie**: Resource-aware (after DB load) - slow path\n\n";
+    } else {
+        oss << "**Strategie**: Subject-only - fast path\n\n";
+    }
+
+    // Helper pour formatter une référence (subject.x, resource.x, literal, etc.)
+    auto format_ref = [](const PolicyValueRef& ref) -> std::string {
+        switch (ref.source) {
+        case PolicyValueSource::Subject:
+            return "subject." + ref.path;
+        case PolicyValueSource::Resource:
+            return "resource." + ref.path;
+        case PolicyValueSource::Context:
+            return "context." + ref.path;
+        case PolicyValueSource::Literal:
+            if (!ref.literal_list.empty()) {
+                std::string s = "[";
+                for (std::size_t i = 0; i < ref.literal_list.size(); ++i) {
+                    if (i > 0) s += ", ";
+                    s += ref.literal_list[i];
+                }
+                s += "]";
+                return s;
+            }
+            return "'" + ref.literal + "'";
+        }
+        return "?";
+    };
+
+    // Helper pour décrire un prédicat
+    auto describe_predicate = [&](const PolicyPredicate& pred) -> std::string {
+        return format_ref(pred.left) + " "
+               + std::string(to_string(pred.op)) + " "
+               + format_ref(pred.right);
+    };
+
+    // Helper récursif pour décrire une condition (avec indentation)
+    std::function<void(const PolicyCondition&, const std::string&)> describe_condition;
+    describe_condition = [&](const PolicyCondition& cond, const std::string& indent) {
+        switch (cond.type()) {
+        case PolicyConditionType::Predicate:
+            if (cond.predicate().has_value()) {
+                oss << indent << "- `"
+                    << describe_predicate(*cond.predicate()) << "`\n";
+            }
+            break;
+
+        case PolicyConditionType::All:
+            oss << indent << "- **AND** (toutes les conditions) :\n";
+            for (const auto& child : cond.children()) {
+                describe_condition(child, indent + "    ");
+            }
+            break;
+
+        case PolicyConditionType::Any:
+            oss << indent << "- **OR** (au moins une condition) :\n";
+            for (const auto& child : cond.children()) {
+                describe_condition(child, indent + "    ");
+            }
+            break;
+
+        case PolicyConditionType::Not:
+            oss << indent << "- **NOT** :\n";
+            if (!cond.children().empty()) {
+                describe_condition(cond.children()[0], indent + "    ");
+            }
+            break;
+        }
+    };
+
+    oss << "**Regles** :\n\n";
+    describe_condition(spec->condition(), "");
+
+    return oss.str();
 }
 
 } // namespace sea::application

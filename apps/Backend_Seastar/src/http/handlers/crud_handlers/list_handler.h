@@ -5,12 +5,22 @@
 
 namespace sea::infrastructure::runtime { class GenericCrudEngine; }
 
+// forward declaration
+namespace sea::http::handlers::access_control {
+class ResourceAuthorizationHelper;
+}
+
 namespace sea::http::handlers::crud {
 
 class ListHandler final : public seastar::httpd::handler_base {
 public:
-    ListHandler(std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
-                std::string entity_name);
+    ListHandler(
+        std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
+        std::string entity_name,
+        // helper ABAC resource-aware (optionnel : peut etre nullptr
+        //  si l'authorization n'est pas activee)
+        std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> auth_helper = nullptr
+        );
 
     seastar::future<std::unique_ptr<seastar::http::reply>>
     handle(const seastar::sstring&,
@@ -20,6 +30,7 @@ public:
 private:
     std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine_;
     std::string entity_name_;
+    std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> auth_helper_;
 };
 
 }

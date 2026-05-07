@@ -1,6 +1,7 @@
 #ifndef ROUTE_REGISTRATION_H
 #define ROUTE_REGISTRATION_H
 
+#include "http/handlers/access_control/resource_authorization_helper.h"
 #include "route_generator.h"
 #include "service.h"
 #include "../middlewares/rate_limit_store.h"
@@ -12,6 +13,11 @@
 #include <string>
 #include <vector>
 #include "thread_pool_execution/i_blocking_executor.h"
+
+// forward-declare PolicyEngine
+namespace sea::application::access_control {
+class PolicyEngine;
+}
 
 namespace sea::infrastructure::runtime {
 class GenericCrudEngine;
@@ -30,6 +36,11 @@ struct MiddlewareContext {
     std::shared_ptr<sea::application::AuthService> auth_service;
     seastar::sharded<sea::http::middlewares::RateLimitStore>* rate_limit_store;
     std::shared_ptr<IBlockingExecutor> blocking_executor;
+
+    // PolicyEngine pour AuthorizationMiddleware
+    std::shared_ptr<sea::application::access_control::PolicyEngine> policy_engine;
+    std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> resource_auth_helper;
+
 };
 
 // Wrap un handler avec toute la stack de middlewares.

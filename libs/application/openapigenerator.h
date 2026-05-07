@@ -52,6 +52,50 @@ private:
 
     // Helper pour construire la security clause
     json bearer_security() const;
+
+    // ─────────────────────────────────────────────────────────────
+    // ✨ Helpers Access Control (RBAC + ABAC)
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * Enrichit un objet operation OpenAPI avec :
+     *  - la réponse 403 Forbidden
+     *  - une description Markdown des règles d'access_control
+     *
+     * Appelée pour chaque opération CRUD juste avant l'ajout au paths.
+     */
+    void enrich_with_access_control(
+        json& op,
+        const domain::Service& service,
+        const std::string& entity_name,
+        const std::string& operation_name
+        ) const;
+
+    /**
+     * Trouve une entité dans le service par son nom.
+     * Retourne nullptr si non trouvée.
+     */
+    const domain::Entity* find_entity_by_name(
+        const domain::Service& service,
+        const std::string& entity_name
+        ) const;
+
+    /**
+     * Construit la description Markdown des règles d'autorisation
+     * pour une opération CRUD donnée.
+     *
+     * Exemple de sortie :
+     *   ### Access Control
+     *   **Strategie**: Resource-aware (after DB load) - slow path
+     *   **Regles** :
+     *     - AND (toutes les conditions) :
+     *       - `subject.roles intersects [admin, manager]`
+     *       - `subject.attributes.department_id equals resource.attributes.department_id`
+     */
+    std::string build_authorization_description(
+        const domain::Entity& entity,
+        const std::string& operation_name
+        ) const;
 };
 
 } // namespace sea::application

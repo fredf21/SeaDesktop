@@ -1,5 +1,6 @@
 #pragma once
 
+#include "access_control/entity_access_control.h"
 #include "field.h"
 #include "relation.h"
 
@@ -24,7 +25,7 @@ struct Entity {
     std::vector<Field>     fields;
     std::vector<Relation>  relations;
     EntityOptions          options;
-
+    access_control::EntityAccessControl access_control;
     // ── helpers ────────────────────────────────────────────────
 
     [[nodiscard]] std::string route_prefix() const {
@@ -58,6 +59,7 @@ struct Entity {
             if (f.serializable) out.push_back(f);
         return out;
     }
+
 };
 
 } // namespace sea::domain

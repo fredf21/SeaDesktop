@@ -1,7 +1,9 @@
 #include "update_handler.h"
+#include "../access_control/resource_authorization_helper.h"
 #include "../../utils/http_utils.h"
 
 #include "authservice.h"
+#include "access_control/crud_operation.h"
 #include "runtime/generic_crud_engine.h"
 #include "runtime/json_record_parser.h"
 #include "runtime/schema_runtime_registry.h"
@@ -19,12 +21,15 @@ UpdateHandler::UpdateHandler(
     std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
     std::shared_ptr<sea::infrastructure::runtime::SchemaRuntimeRegistry> registry,
     std::shared_ptr<sea::application::AuthService> auth_service,
-    std::string entity_name, std::shared_ptr<IBlockingExecutor> blocking_executor)
+    std::string entity_name,
+    std::shared_ptr<IBlockingExecutor> blocking_executor,
+    std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> auth_helper)
     : crud_engine_(std::move(crud_engine))
     , registry_(std::move(registry))
     , auth_service_(std::move(auth_service))
     , entity_name_(std::move(entity_name))
     , blocking_executor_(std::move(blocking_executor))
+    , auth_helper_(std::move(auth_helper))
 {
 }
 
@@ -48,6 +53,47 @@ UpdateHandler::handle(const seastar::sstring&,
     }
 
     try {
+        // check ABAC AVANT modification
+        // On charge la ressource existante pour evaluer les regles ABAC
+        // (own_resource, same_scope, etc.) sur l'etat AVANT modification.
+        if (auth_helper_) {
+            const auto current = co_await crud_engine_->get_by_id(
+                entity_name_, std::string(id)
+                );
+
+            if (!current.has_value()) {
+                rep->set_status(seastar::http::reply::status_type::not_found);
+                rep->write_body("application/json",
+                                json{{"error", "Enregistrement introuvable."}}.dump());
+                co_return std::move(rep);
+            }
+
+            const std::string current_json = sea::http::utils::record_to_json(*current);
+
+            const auto subject = auth_helper_->build_subject_from_headers(*req);
+
+            const std::string path_str(req->_url.data(), req->_url.size());
+            const auto context = auth_helper_->build_context(*req, path_str);
+
+            const auto check = auth_helper_->check_single(
+                entity_name_,
+                sea::domain::access_control::CrudOperation::Update,
+                subject,
+                current_json,
+                context
+                );
+
+            if (!check.allowed) {
+                rep->set_status(seastar::http::reply::status_type::forbidden);
+                rep->write_body("application/json",
+                                json{
+                                    {"error", "Forbidden"},
+                                    {"message", check.reason}
+                                }.dump());
+                co_return std::move(rep);
+            }
+        }
+
         const std::string body = co_await sea::http::utils::read_request_body(*req);
 
         sea::infrastructure::runtime::JsonRecordParser parser;
@@ -63,11 +109,11 @@ UpdateHandler::handle(const seastar::sstring&,
             }
 
             const auto hashed_password = co_await blocking_executor_->submit(
-                    [auth_service = auth_service_,
-                     plain = *plain_password] {
-                        return auth_service->hash_password(plain);
-                    }
-                    );
+                [auth_service = auth_service_,
+                 plain = *plain_password] {
+                    return auth_service->hash_password(plain);
+                }
+                );
             record["password"] = hashed_password;
         }
 

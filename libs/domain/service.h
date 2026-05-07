@@ -1,4 +1,5 @@
 #pragma once
+#include "access_control/access_control_config.h"
 #pragma once
 
 #include "database_config.h"
@@ -39,14 +40,16 @@ struct ServiceOptions {
 // - il pourra devenir un vrai service Seastar généré
 // ─────────────────────────────────────────────────────────────
 struct Service {
-    std::string              name;               // ex: "UserService"
+    std::string              name;                // ex: "UserService"
     std::uint16_t            port = 8080;        // port HTTP d'exposition
 
-    security::SecurityConfig security;
+    security::SecurityConfig security;           // pour les middleware ratelimits httplimit cors scurity headers
 
     Schema                   schema;             // structure métier du service
     DatabaseConfig           database_config{};  // backend de persistence
     ServiceOptions           options{};          // options transverses
+
+    access_control::AccessControlConfig access_control; // Pour l'ABAC
     // ── helpers ─────────────────────────────────────────────
 
     [[nodiscard]] bool has_valid_port() const noexcept {

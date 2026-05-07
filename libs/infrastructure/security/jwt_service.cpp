@@ -64,6 +64,14 @@ std::string JwtService::generate_token(const GenerateTokenParams& params)
             builder = builder.set_payload_claim("role",
                                                 jwt::claim(params.role));
         }
+        // injecter les claims custom (department_id, etc.)
+        // Convention : on les met tous comme strings.
+        for (const auto& [key, value] : params.additional_claims) {
+            if (key.empty() || value.empty()) {
+                continue;
+            }
+            builder = builder.set_payload_claim(key, jwt::claim(value));
+        }
     }
 
     return builder.sign(jwt::algorithm::hs256{params.secret});
@@ -127,7 +135,47 @@ std::optional<JwtClaims> JwtService::verify_token(
                                issued_at.time_since_epoch()).count();
         claims.expires_at = std::chrono::duration_cast<std::chrono::seconds>(
                                 expires_at.time_since_epoch()).count();
+        // extraire tous les claims custom (non-standards)
+        // On itère sur le payload JSON et on garde tout ce qui n'est pas standard.
+        static const std::set<std::string> standard_claims = {
+            "iss", "sub", "aud", "exp", "iat", "nbf", "jti",
+            "email", "role", "token_type"
+        };
 
+        try {
+            const auto& payload = decoded.get_payload_json();
+            for (const auto& [claim_name, claim_value] : payload) {
+                if (standard_claims.count(claim_name)) {
+                    continue;
+                }
+
+                // Convertit la valeur en string selon son type JSON
+                std::string value_str;
+                try {
+                    if (claim_value.is<std::string>()) {
+                        value_str = claim_value.get<std::string>();
+                    } else if (claim_value.is<bool>()) {
+                        value_str = claim_value.get<bool>() ? "true" : "false";
+                    } else if (claim_value.is<int64_t>()) {
+                        value_str = std::to_string(claim_value.get<int64_t>());
+                    } else if (claim_value.is<double>()) {
+                        value_str = std::to_string(claim_value.get<double>());
+                    } else {
+                        // Fallback : sérialise en JSON
+                        value_str = claim_value.serialize();
+                    }
+                } catch (...) {
+                    continue;  // skip si conversion échoue
+                }
+
+                if (!value_str.empty()) {
+                    claims.additional_claims[claim_name] = value_str;
+                }
+            }
+        } catch (...) {
+            // Si l'API d'itération sur le payload n'est pas dispo,
+            // on continue avec juste les claims standards.
+        }
         return claims;
 
     } catch (const std::exception&) {

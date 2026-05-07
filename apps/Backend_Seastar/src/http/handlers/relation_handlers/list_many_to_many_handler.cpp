@@ -1,6 +1,8 @@
 #include "list_many_to_many_handler.h"
+#include "../access_control/resource_authorization_helper.h"
 #include "../../utils/http_utils.h"
 
+#include "access_control/crud_operation.h"
 #include "runtime/generic_crud_engine.h"
 
 #include <utility>
@@ -15,12 +17,14 @@ ListManyToManyHandler::ListManyToManyHandler(
     std::string pivot_table,
     std::string target_entity,
     std::string source_fk_column,
-    std::string target_fk_column)
+    std::string target_fk_column,
+    std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> auth_helper)
     : crud_engine_(std::move(crud_engine))
     , pivot_table_(std::move(pivot_table))
     , target_entity_(std::move(target_entity))
     , source_fk_column_(std::move(source_fk_column))
     , target_fk_column_(std::move(target_fk_column))
+    , auth_helper_(std::move(auth_helper))
 {
 }
 
@@ -72,8 +76,26 @@ ListManyToManyHandler::handle(const seastar::sstring&,
         }
     }
 
+    std::string final_json = utils::records_to_json(results);
+
+    // filter ABAC silencieux sur la collection (entite cible)
+    if (auth_helper_) {
+        const auto subject = auth_helper_->build_subject_from_headers(*req);
+
+        const std::string path_str(req->_url.data(), req->_url.size());
+        const auto context = auth_helper_->build_context(*req, path_str);
+
+        final_json = auth_helper_->filter_collection(
+            target_entity_,
+            sea::domain::access_control::CrudOperation::List,
+            subject,
+            final_json,
+            context
+            );
+    }
+
     rep->set_status(seastar::http::reply::status_type::ok);
-    rep->write_body("application/json", utils::records_to_json(results));
+    rep->write_body("application/json", final_json);
     co_return std::move(rep);
 }
 

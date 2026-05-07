@@ -177,6 +177,11 @@ sea::domain::Service YamlSchemaParser::parse_service_node(const YAML::Node& node
         service.database_config = parse_database_config_node(db_node);
     }
 
+    else{
+        // Pas de section security : defaults sécurisés
+        service.security = sea::domain::security::SecurityConfig::safe_defaults();
+    }
+
     if(has_key(node, "security")){
         const YAML::Node security_node = node["security"];
         if(!security_node.IsMap()){
@@ -186,10 +191,17 @@ sea::domain::Service YamlSchemaParser::parse_service_node(const YAML::Node& node
         }
         service.security = parse_security_node(security_node);
     }
+    else {
+        service.access_control = sea::domain::access_control::AccessControlConfig::disabled();
+    }
 
-    else{
-        // Pas de section security : defaults sécurisés
-        service.security = sea::domain::security::SecurityConfig::safe_defaults();
+
+    if (has_key(node, "security") && has_key(node["security"], "authorization")) {
+        service.access_control = parse_authorization_node(
+            node["security"]["authorization"]
+            );
+    } else {
+        service.access_control = sea::domain::access_control::AccessControlConfig::disabled();
     }
 
     // entities:
@@ -203,7 +215,9 @@ sea::domain::Service YamlSchemaParser::parse_service_node(const YAML::Node& node
         }
 
         for (const auto& entity_node : entities_node) {
-            service.schema.entities.push_back(parse_entity_node(entity_node));
+            service.schema.entities.push_back(
+                parse_entity_node(entity_node, service.access_control)
+                );
         }
     }
 
@@ -211,7 +225,7 @@ sea::domain::Service YamlSchemaParser::parse_service_node(const YAML::Node& node
 }
 
 
-sea::domain::Entity YamlSchemaParser::parse_entity_node(const YAML::Node& node) const {
+sea::domain::Entity YamlSchemaParser::parse_entity_node(const YAML::Node& node, const sea::domain::access_control::AccessControlConfig& global_config) const {
     if (!node || !node.IsMap()) {
         throw std::runtime_error("Une entité YAML doit être un objet.");
     }
@@ -275,6 +289,8 @@ sea::domain::Entity YamlSchemaParser::parse_entity_node(const YAML::Node& node) 
             entity.relations.push_back(parse_relation_node(relation_node));
         }
     }
+    // access_control pour cette entité (Module 5)
+    entity.access_control = parse_entity_access_control_node(node, entity, global_config);
 
     return entity;
 }
@@ -837,6 +853,406 @@ YamlSchemaParser::parse_database_type(const std::string& value) const {
     }
 
     throw std::runtime_error("Type de base de donnees inconnu: '" + value + "'.");
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Module 3 : Access Control parsing
+// ═══════════════════════════════════════════════════════════════════════
+
+sea::domain::access_control::AccessControlConfig
+YamlSchemaParser::parse_authorization_node(const YAML::Node& node) const
+{
+    using namespace sea::domain::access_control;
+
+    if (!node || !node.IsMap()) {
+        return AccessControlConfig::disabled();
+    }
+
+    AccessControlConfig config;
+
+    // enabled
+    if (has_key(node, "enabled")) {
+        config.set_enabled(node["enabled"].as<bool>());
+    }
+
+    if (!config.enabled()) {
+        return AccessControlConfig::disabled();
+    }
+
+    // default_policy
+    if (has_key(node, "default_policy")) {
+        const auto policy_str = node["default_policy"].as<std::string>();
+        const auto policy = default_policy_from_string(policy_str);
+        if (!policy.has_value()) {
+            throw std::runtime_error(
+                "security.authorization.default_policy must be 'deny' or 'allow' (got '" +
+                policy_str + "')"
+                );
+        }
+        config.set_default_policy(*policy);
+    } else {
+        config.set_default_policy(DefaultPolicy::Deny);
+    }
+
+    // roles_claim_name
+    if (has_key(node, "roles_claim_name")) {
+        config.set_roles_claim_name(node["roles_claim_name"].as<std::string>());
+    } else {
+        config.set_roles_claim_name("role");
+    }
+
+    // admin_role
+    if (has_key(node, "admin_role")) {
+        config.set_admin_role(node["admin_role"].as<std::string>());
+    } else {
+        config.set_admin_role("admin");
+    }
+
+    // default_allow_admin
+    if (has_key(node, "default_allow_admin")) {
+        config.set_default_allow_admin(node["default_allow_admin"].as<bool>());
+    } else {
+        config.set_default_allow_admin(true);
+    }
+
+    // default_scope_field
+    if (has_key(node, "default_scope_field")) {
+        config.set_default_scope_field(node["default_scope_field"].as<std::string>());
+    }
+
+    // roles (catalogue)
+    if (has_key(node, "roles") && node["roles"].IsSequence()) {
+        std::vector<std::string> roles;
+        for (const auto& r : node["roles"]) {
+            roles.push_back(r.as<std::string>());
+        }
+        config.set_declared_roles(std::move(roles));
+    }
+    // abac_mode (service-level)
+    if (has_key(node, "abac_mode")) {
+        const auto mode_str = node["abac_mode"].as<std::string>();
+        const auto mode = abac_mode_from_string(mode_str);
+        if (!mode.has_value()) {
+            throw std::runtime_error(
+                "authorization.abac_mode: invalid value '" + mode_str +
+                "'. Valid values: permissive, strict"
+                );
+        }
+        config.set_abac_mode(*mode);
+    }
+    // Validation finale (throw si incohérent)
+    config.validate();
+
+    return config;
+}
+
+sea::domain::access_control::EntityAccessControl
+YamlSchemaParser::parse_entity_access_control_node(
+    const YAML::Node& entity_node,
+    const sea::domain::Entity& entity,
+    const sea::domain::access_control::AccessControlConfig& global_config) const
+{
+    using namespace sea::domain::access_control;
+
+    EntityAccessControl entity_ac;
+
+    const std::string ctx = "entity '" + entity.name + "'";
+
+    // scope_field au niveau entité
+    if (has_key(entity_node, "scope_field")) {
+        entity_ac.set_scope_field(entity_node["scope_field"].as<std::string>());
+    }
+
+    // owner_field au niveau entité
+    if (has_key(entity_node, "owner_field")) {
+        entity_ac.set_owner_field(entity_node["owner_field"].as<std::string>());
+    }
+
+    // Section access_control
+    if (!has_key(entity_node, "access_control")) {
+        return entity_ac;  // pas de règles, default_policy s'appliquera
+    }
+
+    const auto ac_node = entity_node["access_control"];
+    if (!ac_node.IsMap()) {
+        throw std::runtime_error(ctx + ".access_control must be a mapping");
+    }
+
+    // abac_mode override par entité (optionnel)
+    if (has_key(ac_node, "abac_mode")) {
+        const auto mode_str = ac_node["abac_mode"].as<std::string>();
+        const auto mode = abac_mode_from_string(mode_str);
+
+        if (!mode.has_value()) {
+            throw std::runtime_error(
+                ctx + ".access_control.abac_mode: invalid value '" + mode_str +
+                "'. Valid values: permissive, strict"
+                );
+        }
+        entity_ac.set_abac_mode_override(*mode);
+    }
+
+    // Détermine le scope_field effectif (entité OU défaut service)
+    const std::string effective_scope_field =
+        !entity_ac.scope_field().empty()
+            ? entity_ac.scope_field()
+            : global_config.default_scope_field();
+
+    const std::string effective_owner_field = entity_ac.owner_field();
+
+    // Parse chaque opération
+    for (auto it = ac_node.begin(); it != ac_node.end(); ++it) {
+        const auto op_name = it->first.as<std::string>();
+        const auto op_node = it->second;
+
+        // skip "abac_mode" (n'est pas une opération CRUD)
+        if (op_name == "abac_mode") {
+            continue;
+        }
+        const auto op = crud_operation_from_string(op_name);
+        if (!op.has_value()) {
+            throw std::runtime_error(
+                ctx + ".access_control: unknown operation '" + op_name +
+                "'. Valid operations: list, get_by_id, create, update, delete"
+                );
+        }
+
+        if (!op_node.IsMap()) {
+            throw std::runtime_error(
+                ctx + ".access_control." + op_name + " must be a mapping"
+                );
+        }
+
+        auto spec = parse_operation_access_control_node(
+            op_node, entity.name, op_name,
+            effective_scope_field, effective_owner_field,
+            global_config
+            );
+
+        entity_ac.set_spec(*op, std::move(spec));
+    }
+
+    return entity_ac;
+}
+
+sea::domain::access_control::AccessControlSpec
+YamlSchemaParser::parse_operation_access_control_node(
+    const YAML::Node& op_node,
+    const std::string& entity_name,
+    const std::string& op_name,
+    const std::string& effective_scope_field,
+    const std::string& effective_owner_field,
+    const sea::domain::access_control::AccessControlConfig& global_config) const
+{
+    using namespace sea::domain::access_control;
+
+    const std::string ctx =
+        "entity '" + entity_name + "'.access_control." + op_name;
+
+    std::vector<PolicyCondition> generated_conditions;
+
+    // ─── allow_roles ───
+    if (has_key(op_node, "allow_roles")) {
+        if (!op_node["allow_roles"].IsSequence()) {
+            throw std::runtime_error(ctx + ".allow_roles must be a list");
+        }
+
+        std::vector<std::string> roles;
+        for (const auto& r : op_node["allow_roles"]) {
+            const auto role = r.as<std::string>();
+
+            // Validation : le rôle doit être déclaré (si la liste existe)
+            if (!global_config.declared_roles().empty() &&
+                !global_config.is_role_declared(role)) {
+                throw std::runtime_error(
+                    ctx + ".allow_roles: role '" + role +
+                    "' is not declared in authorization.roles"
+                    );
+            }
+            roles.push_back(role);
+        }
+
+        if (!roles.empty()) {
+            generated_conditions.push_back(compile_allow_roles_shortcut(roles));
+        }
+    }
+
+    // ─── same_scope ───
+    if (has_key(op_node, "same_scope")) {
+        const auto& ss_node = op_node["same_scope"];
+        std::string scope_to_use;
+
+        // Tente de parser comme bool, sinon comme string
+        try {
+            if (ss_node.as<bool>()) {
+                scope_to_use = effective_scope_field;
+            }
+        } catch (const YAML::Exception&) {
+            scope_to_use = ss_node.as<std::string>();
+        }
+
+        if (!scope_to_use.empty()) {
+            if (effective_scope_field.empty()) {
+                throw std::runtime_error(
+                    ctx + ".same_scope requires a scope_field. "
+                          "Define it at entity level or via authorization.default_scope_field"
+                    );
+            }
+
+            generated_conditions.push_back(
+                compile_same_scope_shortcut(
+                    scope_to_use,
+                    global_config.default_allow_admin(),
+                    global_config.admin_role()
+                    )
+                );
+        }
+    }
+
+    // ─── own_resource ───
+    if (has_key(op_node, "own_resource")) {
+        const auto& or_node = op_node["own_resource"];
+        std::string owner_to_use;
+
+        try {
+            if (or_node.as<bool>()) {
+                owner_to_use = effective_owner_field;
+            }
+        } catch (const YAML::Exception&) {
+            owner_to_use = or_node.as<std::string>();
+        }
+
+        if (!owner_to_use.empty()) {
+            if (effective_owner_field.empty()) {
+                throw std::runtime_error(
+                    ctx + ".own_resource requires an owner_field. "
+                          "Define it at entity level (owner_field: <field>)"
+                    );
+            }
+
+            generated_conditions.push_back(
+                compile_own_resource_shortcut(
+                    owner_to_use,
+                    global_config.default_allow_admin(),
+                    global_config.admin_role()
+                    )
+                );
+        }
+    }
+
+    // ─── Combinaison finale ───
+    if (generated_conditions.empty()) {
+        return AccessControlSpec{};  // vide → default_policy au runtime
+    }
+
+    if (generated_conditions.size() == 1) {
+        return AccessControlSpec(std::move(generated_conditions[0]));
+    }
+
+    // Plusieurs conditions → AND implicite
+    return AccessControlSpec(
+        PolicyCondition::all_of(std::move(generated_conditions))
+        );
+}
+
+sea::domain::access_control::PolicyCondition
+YamlSchemaParser::compile_allow_roles_shortcut(
+    const std::vector<std::string>& roles) const
+{
+    using namespace sea::domain::access_control;
+
+    auto pred = PolicyPredicate::make(
+        PolicyValueRef::from_subject("roles"),
+        PolicyOperator::Intersects,
+        PolicyValueRef::from_literal_list(roles)
+        );
+
+    return PolicyCondition(std::move(pred));
+}
+
+sea::domain::access_control::PolicyCondition
+YamlSchemaParser::compile_same_scope_shortcut(
+    const std::string& scope_field,
+    bool allow_admin,
+    const std::string& admin_role) const
+{
+    using namespace sea::domain::access_control;
+
+    if (scope_field.empty()) {
+        throw std::runtime_error("same_scope requires a non-empty scope_field");
+    }
+
+    // subject.attributes.<scope_field> == resource.attributes.<scope_field>
+    const std::string path = "attributes." + scope_field;
+
+    auto pred = PolicyPredicate::make(
+        PolicyValueRef::from_subject(path),
+        PolicyOperator::Equals,
+        PolicyValueRef::from_resource(path)
+        );
+
+    PolicyCondition condition(std::move(pred));
+
+    if (!allow_admin) {
+        return condition;
+    }
+
+    // Admin bypass : (admin) OR (same_scope check)
+    auto admin_check = PolicyCondition(PolicyPredicate::make(
+        PolicyValueRef::from_subject("roles"),
+        PolicyOperator::Contains,
+        PolicyValueRef::from_literal(admin_role)
+        ));
+
+    std::vector<PolicyCondition> children;
+    children.push_back(std::move(admin_check));
+    children.push_back(std::move(condition));
+
+    return PolicyCondition::any_of(std::move(children));
+}
+
+sea::domain::access_control::PolicyCondition
+YamlSchemaParser::compile_own_resource_shortcut(
+    const std::string& owner_field,
+    bool allow_admin,
+    const std::string& admin_role) const
+{
+    using namespace sea::domain::access_control;
+
+    if (owner_field.empty()) {
+        throw std::runtime_error("own_resource requires a non-empty owner_field");
+    }
+
+    // subject.id == resource.<owner_field>
+    // Si owner_field == "id" → resource.id (champ direct)
+    // Sinon → resource.attributes.<owner_field>
+    const std::string resource_path =
+        (owner_field == "id") ? "id" : ("attributes." + owner_field);
+
+    auto pred = PolicyPredicate::make(
+        PolicyValueRef::from_subject("id"),
+        PolicyOperator::Equals,
+        PolicyValueRef::from_resource(resource_path)
+        );
+
+    PolicyCondition condition(std::move(pred));
+
+    if (!allow_admin) {
+        return condition;
+    }
+
+    // Admin bypass
+    auto admin_check = PolicyCondition(PolicyPredicate::make(
+        PolicyValueRef::from_subject("roles"),
+        PolicyOperator::Contains,
+        PolicyValueRef::from_literal(admin_role)
+        ));
+
+    std::vector<PolicyCondition> children;
+    children.push_back(std::move(admin_check));
+    children.push_back(std::move(condition));
+
+    return PolicyCondition::any_of(std::move(children));
 }
 // =====================================================================
 //                    HELPERS DE PARSING

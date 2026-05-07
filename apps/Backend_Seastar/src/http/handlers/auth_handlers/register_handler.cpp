@@ -138,33 +138,42 @@ RegisterHandler::handle(const seastar::sstring&,
         }
 
         /**
-         *  Génération ID pour InMemory
+         *  Génération ID
          */
-        if (db_type_ == sea::domain::DatabaseType::Memory) {
-            const sea::domain::Field* id_field = nullptr;
 
-            for (const auto& field : entity->fields) {
-                if (field.name == "id") {
-                    id_field = &field;
-                    break;
-                }
-            }
+        const sea::domain::Field* id_field = nullptr;
 
-            if (id_field != nullptr) {
-                if (id_field->type == sea::domain::FieldType::UUID) {
-                    std::string new_id;
-
-                    do {
-                        new_id = sea::http::utils::generate_uuid();
-                    } while ((co_await crud_engine_->get_by_id("User", new_id)).has_value());
-
-                    record["id"] = new_id;
-                } else if (id_field->type == sea::domain::FieldType::Int) {
-                    record["id"] =
-                        co_await sea::http::utils::generate_int_id("User", crud_engine_);
-                }
+        for (const auto& field : entity->fields) {
+            if (field.name == "id") {
+                id_field = &field;
+                break;
             }
         }
+
+        if (id_field != nullptr) {
+            if (id_field->type == sea::domain::FieldType::UUID) {
+                std::string new_id;
+
+                do {
+                    new_id = sea::http::utils::generate_uuid();
+                } while ((co_await crud_engine_->get_by_id("User", new_id)).has_value());
+
+                record["id"] = new_id;
+            } else if (id_field->type == sea::domain::FieldType::Int) {
+                record["id"] =
+                    co_await sea::http::utils::generate_int_id("User", crud_engine_);
+            }
+        }
+        std::cerr << "[REGISTER DEBUG] Record contents before create:\n";
+        for (const auto& [key, value] : record) {
+            std::cerr << "  - " << key << " : ";
+            if (auto str = sea::http::utils::dynamic_value_to_string(value)) {
+                std::cerr << "'" << *str << "' (len=" << str->size() << ")\n";
+            } else {
+                std::cerr << "<not a string>\n";
+            }
+        }
+
 
         // Création utilisateur
         const auto result =

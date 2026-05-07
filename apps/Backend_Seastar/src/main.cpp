@@ -27,6 +27,7 @@
 #include "http/handlers/misc_handlers/health_handler.h"
 #include "http/handlers/misc_handlers/openapi_handler.h"
 #include "http/handlers/misc_handlers/swagger_ui_handler.h"
+#include "http/handlers/misc_handlers/swagger_assets_handler.h"
 
 // Middlewares
 #include "http/middlewares/rate_limit_store.h"
@@ -49,6 +50,8 @@
 
 // Routing
 #include "http/routing/route_registration.h"
+#include "access_control/policy_engine.h"
+#include "access_control/operators/operator_registry.h"
 
 namespace bpo = boost::program_options;
 
@@ -116,7 +119,51 @@ int main(int argc, char** argv)
         }
 
         const auto service = *selected_service;
+        // Après l'import du service depuis YAML
+        const auto& ac_config = service.access_control;
 
+        std::cerr << "[BOOT] Authorization: "
+                  << (ac_config.enabled() ? "ENABLED" : "DISABLED") << "\n";
+
+        if (ac_config.enabled()) {
+            using namespace sea::domain::access_control;
+
+            std::cerr << "  default_policy: " << to_string(ac_config.default_policy()) << "\n";
+            std::cerr << "  admin_role: " << ac_config.admin_role() << "\n";
+            std::cerr << "  default_scope_field: " << ac_config.default_scope_field() << "\n";
+
+            std::cerr << "  declared_roles: ";
+            for (const auto& r : ac_config.declared_roles()) {
+                std::cerr << r << " ";
+            }
+            std::cerr << "\n";
+
+            // Per-entity rules
+            std::cerr << "[BOOT] Per-entity access control rules:\n";
+            for (const auto& entity : service.schema.entities) {
+                const auto& entity_ac = entity.access_control;
+                if (!entity_ac.has_any_spec()) continue;
+
+                std::cerr << "  " << entity.name;
+                if (!entity_ac.scope_field().empty()) {
+                    std::cerr << " (scope_field=" << entity_ac.scope_field() << ")";
+                }
+                if (!entity_ac.owner_field().empty()) {
+                    std::cerr << " (owner_field=" << entity_ac.owner_field() << ")";
+                }
+                std::cerr << "\n";
+
+                for (int op_idx = 0; op_idx <= 4; ++op_idx) {
+                    const auto op = static_cast<CrudOperation>(op_idx);
+                    const auto* spec = entity_ac.find_spec(op);
+                    if (spec && !spec->is_empty()) {
+                        std::cerr << "    " << to_string(op);
+                        std::cerr << (spec->requires_resource() ? " (resource-aware)" : " (subject-only, fast path)");
+                        std::cerr << "\n";
+                    }
+                }
+            }
+        }
         // ─────────────────────────────────────────────────────
         // 3. Valider le schéma
         // ─────────────────────────────────────────────────────
@@ -319,6 +366,47 @@ int main(int argc, char** argv)
         } else {
             log_boot("[BOOT] Auth desactivee (type=none)");
         }
+        // ─────────────────────────────────────────────────────
+        // 11.5. PolicyEngine (Module 5 - Authorization)
+        // ─────────────────────────────────────────────────────
+        std::shared_ptr<sea::application::access_control::PolicyEngine>
+            policy_engine = nullptr;
+
+        if (service.access_control.enabled()) {
+            // Le OperatorRegistry contient toutes les strategies d'evaluation
+            // (equals, intersects, in, contains, etc.) initialisees au boot.
+            static const auto operator_registry =
+                sea::application::access_control::OperatorRegistry::create_default();
+
+            policy_engine =
+                std::make_shared<sea::application::access_control::PolicyEngine>(
+                    operator_registry
+                    );
+
+            if (is_main_shard()) {
+                std::cerr << "[BOOT] Authorization activee:"
+                          << " default_policy="
+                          << to_string(service.access_control.default_policy())
+                          << " admin_role=" << service.access_control.admin_role()
+                          << " abac_mode="
+                          << to_string(service.access_control.abac_mode())
+                          << "\n";
+            }
+        } else {
+            log_boot("[BOOT] Authorization desactivee");
+        }
+
+        // Section 11.6 (après PolicyEngine)
+        std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper>
+            resource_auth_helper = nullptr;
+
+        if (service.access_control.enabled() && policy_engine) {
+            resource_auth_helper = std::make_shared<sea::http::handlers::access_control::ResourceAuthorizationHelper>(
+                                       policy_engine,
+                                       &service.schema,
+                                       &service.access_control
+                                       );
+        }
 
         // ─────────────────────────────────────────────────────
         // 12. Auth source
@@ -348,7 +436,9 @@ int main(int argc, char** argv)
             .rate_limit_store = rate_limits_enabled
                                     ? rate_limit_store.get()
                                     : nullptr,
-            .blocking_executor = blocking_executor
+            .blocking_executor = blocking_executor,
+            .policy_engine = policy_engine,
+            .resource_auth_helper = resource_auth_helper
         };
 
         // ─────────────────────────────────────────────────────
@@ -412,7 +502,24 @@ int main(int argc, char** argv)
                         mw_context
                         ).release()
                     );
+                {
+                auto register_asset_route = [&](const std::string& path) {
+                    r.add(
+                        seastar::httpd::operation_type::GET,
+                        seastar::httpd::url(path),
+                        wrap_with_middlewares(
+                            std::make_unique<sea::http::handlers::misc::SwaggerAssetsHandler>(),
+                            false,  // pas d'auth
+                            mw_context
+                            ).release()
+                        );
+                };
 
+                register_asset_route("/assets/swagger-ui/swagger-ui.css");
+                register_asset_route("/assets/swagger-ui/swagger-ui-bundle.js");
+                register_asset_route("/assets/swagger-ui/swagger-ui-standalone-preset.js");
+                register_asset_route("/assets/swagger-ui/favicon-32x32.png");
+                }
                 // ─────────────────────────────────────────────
                 // Routes auth
                 // ─────────────────────────────────────────────
@@ -477,6 +584,13 @@ int main(int argc, char** argv)
                 }
 
                 // ─────────────────────────────────────────────
+                // Routes relationnelles
+                // ─────────────────────────────────────────────
+                register_has_many_routes(r, crud_engine, mw_context);
+                register_has_one_routes(r, crud_engine, mw_context);
+                register_many_to_many_routes(r, crud_engine, mw_context);
+
+                // ─────────────────────────────────────────────
                 // Routes CRUD item
                 // ─────────────────────────────────────────────
                 for (const auto& route : route_definitions) {
@@ -493,12 +607,7 @@ int main(int argc, char** argv)
                     }
                 }
 
-                // ─────────────────────────────────────────────
-                // Routes relationnelles
-                // ─────────────────────────────────────────────
-                register_has_many_routes(r, crud_engine, mw_context);
-                register_has_one_routes(r, crud_engine, mw_context);
-                register_many_to_many_routes(r, crud_engine, mw_context);
+
             });
 
             if (is_main_shard()) {

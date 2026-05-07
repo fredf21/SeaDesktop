@@ -72,10 +72,132 @@ ProtectedHandler::handle(const seastar::sstring& path,
      */
 
     /**
+     * Injection des claims dans la requête.
+     *
+     * 1. SÉCURITÉ : strip tous les X-User-* qui pourraient venir du client
+     *    (sinon un attaquant pourrait forger X-User-Role: admin)
+     *
+     * 2. Inject les vrais claims comme headers
+     *    (lus par AuthorizationMiddleware pour construire PolicySubject)
+     */
+    strip_user_headers(*req);
+    inject_claims_as_headers(*req, *claims);
+
+
+    /**
      * Passage au handler réel
      */
     co_return co_await inner_->handle(path, std::move(req), std::move(rep));
 }
+
+/**
+ * Strip les headers X-User-* venant du client.
+ *
+ * Implémentation case-insensitive : le client peut envoyer
+ * "x-user-role" ou "X-USER-ROLE", on les attrape tous.
+ */
+void ProtectedHandler::strip_user_headers(seastar::http::request& req) const
+{
+    // On collecte les clés à supprimer (modification en cours d'itération
+    // = comportement indéfini sur certaines maps).
+    std::vector<seastar::sstring> to_remove;
+    to_remove.reserve(8);
+
+    for (const auto& kv : req._headers) {
+        const auto& key = kv.first;
+
+        // Compare case-insensitive avec "X-User-"
+        if (key.size() < 7) {
+            continue;
+        }
+
+        bool matches = true;
+        static constexpr char prefix[] = "x-user-";
+        for (std::size_t i = 0; i < 7; ++i) {
+            const char c = static_cast<char>(
+                std::tolower(static_cast<unsigned char>(key[i])));
+            if (c != prefix[i]) {
+                matches = false;
+                break;
+            }
+        }
+
+        if (matches) {
+            to_remove.push_back(key);
+        }
+    }
+
+    for (const auto& key : to_remove) {
+        req._headers.erase(key);
+    }
+}
+
+/**
+ * Injecte les claims comme headers HTTP.
+ *
+ * Convention de nommage :
+ *   user_id        → X-User-Id
+ *   email          → X-User-Email
+ *   role           → X-User-Role
+ *   department_id  → X-User-Department-Id
+ *   manager_id     → X-User-Manager-Id
+ */
+void ProtectedHandler::inject_claims_as_headers(
+    seastar::http::request& req,
+    const sea::application::AuthUserClaims& claims) const
+{
+    // Claims standards
+    if (!claims.user_id.empty()) {
+        req._headers["X-User-Id"] = claims.user_id;
+    }
+    if (!claims.email.empty()) {
+        req._headers["X-User-Email"] = claims.email;
+    }
+    if (!claims.role.empty()) {
+        req._headers["X-User-Role"] = claims.role;
+    }
+
+    // Claims custom (department_id, manager_id, etc.)
+    for (const auto& [key, value] : claims.additional_claims) {
+        if (key.empty() || value.empty()) {
+            continue;
+        }
+        const std::string header_name = "X-User-" + to_header_case(key);
+        req._headers[header_name] = value;
+    }
+}
+
+/**
+ * Convertit un nom de claim snake_case en Header-Case.
+ *
+ * Exemples :
+ *   "department_id"  → "Department-Id"
+ *   "mfa_verified"   → "Mfa-Verified"
+ *   "tenant_id"      → "Tenant-Id"
+ */
+std::string ProtectedHandler::to_header_case(const std::string& claim_name)
+{
+    std::string result;
+    result.reserve(claim_name.size());
+
+    bool capitalize_next = true;
+
+    for (char c : claim_name) {
+        if (c == '_' || c == '-') {
+            result += '-';
+            capitalize_next = true;
+        } else if (capitalize_next) {
+            result += static_cast<char>(
+                std::toupper(static_cast<unsigned char>(c)));
+            capitalize_next = false;
+        } else {
+            result += c;
+        }
+    }
+
+    return result;
+}
+
 
 /**
  * Helper pour conditionnellement protéger une route

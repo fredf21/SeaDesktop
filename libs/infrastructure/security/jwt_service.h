@@ -4,6 +4,7 @@
 #include <chrono>
 #include <optional>
 #include <string>
+#include <unordered_map>
 
 namespace sea::infrastructure::security {
 
@@ -22,6 +23,7 @@ struct JwtClaims {
     TokenType token_type;       // claim "token_type"
     std::int64_t issued_at;     // claim "iat"
     std::int64_t expires_at;    // claim "exp"
+    std::unordered_map<std::string, std::string> additional_claims;
 };
 
 // Paramètres pour générer un token
@@ -33,6 +35,7 @@ struct GenerateTokenParams {
     std::string issuer;
     TokenType token_type;
     std::chrono::seconds ttl;
+    std::unordered_map<std::string, std::string> additional_claims;
 };
 
 // Paramètres pour vérifier un token

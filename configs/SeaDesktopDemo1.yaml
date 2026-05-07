@@ -5,7 +5,11 @@ services:
   - name: CCNBService
     port: 8081
 
+    # ═══════════════════════════════════════════════════════════════
+    # SÉCURITÉ
+    # ═══════════════════════════════════════════════════════════════
     security:
+      # ─── Authentification JWT ───
       authentication:
         type: jwt
         algorithm: HS256
@@ -15,24 +19,45 @@ services:
         access_token_ttl: "15m"
         refresh_token_ttl: "7d"
 
+      # ─── Autorisation RBAC + ABAC ───
+      authorization:
+        enabled: true
+        default_policy: deny
+        roles_claim_name: role
+        admin_role: admin
+        default_allow_admin: true
+        default_scope_field: department_id
+
+        # mode ABAC service-level
+        # - permissive (defaut) : laisse passer les regles resource-aware au handler/Module 6
+        # - strict : refuse 403 immediat les regles resource-aware
+        abac_mode: permissive
+
+        # Catalogue des roles declares
+        roles:
+          - admin
+          - manager
+          - user
+          - guest
+
+      # ─── CORS ───
       cors:
         allowed_origins:
           - "http://localhost:5173"
           - "http://localhost:3000"
-        allowed_methods:
-          - GET
-          - POST
-          - PUT
-          - DELETE
-          - OPTIONS
+          - "http://localhost:8081"
+          - "http://127.0.0.1:8081"
+        allowed_methods: [GET, POST, PUT, DELETE, OPTIONS]
         allow_credentials: true
         max_age: "1h"
 
+      # ─── Rate Limiting ───
       rate_limits:
         - scope: per_ip
           requests: 100
           window: "60s"
 
+      # ─── HTTP Limits ───
       http_limits:
         max_body_size: "10MB"
         max_header_size: "8KB"
@@ -43,9 +68,13 @@ services:
         keep_alive_timeout: "60s"
         max_connections_per_ip: 100
 
+      # ─── Security Headers ───
       headers:
         preset: recommended
 
+    # ═══════════════════════════════════════════════════════════════
+    # BASE DE DONNÉES
+    # ═══════════════════════════════════════════════════════════════
     database:
       type: mysql
       host: 127.0.0.1
@@ -54,9 +83,16 @@ services:
       username: root
       password: root
 
+    # ═══════════════════════════════════════════════════════════════
+    # ENTITÉS
+    # ═══════════════════════════════════════════════════════════════
     entities:
+      # ─────────────────────────────────────────────────────────────
+      # User : own_resource (mode service = permissive)
+      # ─────────────────────────────────────────────────────────────
       - name: User
         table_name: User
+        owner_field: id
         options:
           enable_crud: true
           is_auth_source: true
@@ -87,6 +123,32 @@ services:
             required: false
             default: user
 
+          - name: department_id
+            type: uuid
+            required: false
+
+        access_control:
+          # Pas de override → utilise le mode service-level (permissive)
+          list:
+            allow_roles: [admin]
+
+          get_by_id:
+            allow_roles: [admin, manager, user]
+            own_resource: true
+
+          create:
+            allow_roles: [admin]
+
+          update:
+            allow_roles: [admin, manager, user]
+            own_resource: true
+
+          delete:
+            allow_roles: [admin]
+
+      # ─────────────────────────────────────────────────────────────
+      # Department : RBAC pur (pas d'ABAC, mode n'a pas d'impact)
+      # ─────────────────────────────────────────────────────────────
       - name: Department
         table_name: Department
         options:
@@ -111,8 +173,29 @@ services:
             fk_column: department_id
             on_delete: cascade
 
+        access_control:
+          list:
+            allow_roles: [admin, manager, user]
+
+          get_by_id:
+            allow_roles: [admin, manager, user]
+
+          create:
+            allow_roles: [admin]
+
+          update:
+            allow_roles: [admin]
+
+          delete:
+            allow_roles: [admin]
+
+      # ─────────────────────────────────────────────────────────────
+      # Employee : same_scope (mode service = permissive)
+      # → Manager peut voir/modifier les employes de son departement
+      # ─────────────────────────────────────────────────────────────
       - name: Employee
         table_name: Employee
+        scope_field: department_id
         options:
           enable_crud: true
           public_routes: false
@@ -138,7 +221,7 @@ services:
 
           - name: department_id
             type: uuid
-            required: false
+            required: true
 
         relations:
           - name: department
@@ -147,6 +230,29 @@ services:
             fk_column: department_id
             on_delete: restrict
 
+        access_control:
+          list:
+            allow_roles: [admin, manager]
+            same_scope: true              # NOUVEAU : filtre par departement
+
+          get_by_id:
+            allow_roles: [admin, manager]
+            same_scope: true
+
+          create:
+            allow_roles: [admin, manager]
+            same_scope: true
+
+          update:
+            allow_roles: [admin, manager]
+            same_scope: true
+
+          delete:
+            allow_roles: [admin]
+
+      # ─────────────────────────────────────────────────────────────
+      # Student : RBAC simple
+      # ─────────────────────────────────────────────────────────────
       - name: Student
         table_name: Student
         options:
@@ -181,6 +287,25 @@ services:
             target_fk_column: program_id
             on_delete: cascade
 
+        access_control:
+          list:
+            allow_roles: [admin, manager, user]
+
+          get_by_id:
+            allow_roles: [admin, manager, user]
+
+          create:
+            allow_roles: [admin, manager]
+
+          update:
+            allow_roles: [admin, manager]
+
+          delete:
+            allow_roles: [admin]
+
+      # ─────────────────────────────────────────────────────────────
+      # Program : RBAC simple
+      # ─────────────────────────────────────────────────────────────
       - name: Program
         table_name: Program
         options:
@@ -207,6 +332,28 @@ services:
             target_fk_column: student_id
             on_delete: cascade
 
+        access_control:
+          list:
+            allow_roles: [admin, manager, user]
+
+          get_by_id:
+            allow_roles: [admin, manager, user]
+
+          create:
+            allow_roles: [admin]
+
+          update:
+            allow_roles: [admin]
+
+          delete:
+            allow_roles: [admin]
+
+      # ─────────────────────────────────────────────────────────────
+      # StudentProgram : table pivot
+      # abac_mode override = strict pour cette entite
+      # → Toute regle avec same_scope/own_resource sera 403
+      # → Sert a verifier que le parser lit bien le override
+      # ─────────────────────────────────────────────────────────────
       - name: StudentProgram
         table_name: StudentProgram
         options:
@@ -221,3 +368,22 @@ services:
           - name: program_id
             type: uuid
             required: true
+
+        access_control:
+          # Override : cette entite est en mode strict
+          abac_mode: strict
+
+          list:
+            allow_roles: [admin, manager, user]
+
+          get_by_id:
+            allow_roles: [admin, manager, user]
+
+          create:
+            allow_roles: [admin, manager]
+
+          update:
+            allow_roles: [admin]
+
+          delete:
+            allow_roles: [admin]

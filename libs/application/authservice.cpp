@@ -24,7 +24,8 @@ sea::infrastructure::security::GenerateTokenParams make_generate_params(
     const std::string& email,
     const std::string& role,
     sea::infrastructure::security::TokenType type,
-    std::chrono::seconds ttl)
+    std::chrono::seconds ttl,
+    const std::unordered_map<std::string, std::string>& additional_claims = {})
 {
     return sea::infrastructure::security::GenerateTokenParams{
         .user_id    = user_id,
@@ -33,7 +34,8 @@ sea::infrastructure::security::GenerateTokenParams make_generate_params(
         .secret     = cfg.jwt_secret(),
         .issuer     = issuer,
         .token_type = type,
-        .ttl        = ttl
+        .ttl        = ttl,
+        .additional_claims = additional_claims
     };
 }
 
@@ -171,6 +173,29 @@ std::string AuthService::generate_access_token(
      */
     return JwtService::generate_token(params);
 }
+// NOUVELLE SURCHARGE
+std::string AuthService::generate_access_token(
+    const std::string& user_id,
+    const std::string& email,
+    const std::string& role,
+    const std::unordered_map<std::string, std::string>& additional_claims) const
+{
+    using namespace sea::infrastructure::security;
+
+    const auto params = make_generate_params(
+        config_,
+        effective_issuer_,
+        user_id,
+        email,
+        role,
+        TokenType::Access,
+        config_.access_token_ttl(),
+        additional_claims
+        );
+
+    return JwtService::generate_token(params);
+}
+
 
 std::string AuthService::generate_refresh_token(
     const std::string& user_id) const
@@ -211,6 +236,7 @@ std::optional<AuthUserClaims> AuthService::verify_token(
     result.user_id = claims->user_id;
     result.email   = claims->email;
     result.role    = claims->role;
+    result.additional_claims = claims->additional_claims;
 
     return result;
 }
@@ -300,6 +326,22 @@ AuthService::generate_access_token_async(
         }
         );
 }
+// NOUVELLE SURCHARGE
+seastar::future<std::string>
+AuthService::generate_access_token_async(
+    const std::string& user_id,
+    const std::string& email,
+    const std::string& role,
+    const std::unordered_map<std::string, std::string>& additional_claims,
+    IBlockingExecutor& executor) const
+{
+    return executor.submit(
+        [this, user_id, email, role, additional_claims] {
+            return generate_access_token(user_id, email, role, additional_claims);
+        }
+        );
+}
+
 
 seastar::future<std::string>
 AuthService::generate_refresh_token_async(

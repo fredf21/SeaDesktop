@@ -65,8 +65,17 @@ add_executable(backend_seastar
     src/http/middlewares/cors_middleware.cpp
     src/http/middlewares/rate_limit_store.h src/http/middlewares/rate_limit_store.cpp
     src/http/middlewares/token_bucket.h src/http/middlewares/token_bucket.cpp
-
-
+    src/http/middlewares/policy_middleware/policy_types.h
+    src/http/utils/nonce_generator.h src/http/utils/nonce_generator.cpp
+    src/http/swagger/swagger_assets.h src/http/swagger/swagger_assets.cpp
+    src/http/swagger/generated/swagger_favicon.h
+    src/http/swagger/generated/swagger_ui_bundle_js.h
+    src/http/swagger/generated/swagger_ui_css.h
+    src/http/swagger/generated/swagger_ui_standalone_preset_js.h
+    src/http/handlers/misc_handlers/swagger_assets_handler.h src/http/handlers/misc_handlers/swagger_assets_handler.cpp
+    src/http/middlewares/route_authorization_resolver.h src/http/middlewares/route_authorization_resolver.cpp
+    src/http/middlewares/authorization_middleware.h src/http/middlewares/authorization_middleware.cpp
+    src/http/handlers/access_control/resource_authorization_helper.h src/http/handlers/access_control/resource_authorization_helper.cpp
 
 
 

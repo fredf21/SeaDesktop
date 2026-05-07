@@ -22,6 +22,10 @@ struct AuthUserClaims {
     std::string user_id;
     std::string email;
     std::string role;
+
+    // claims custom (department_id, manager_id, etc.)
+    // Utilisés par AuthorizationMiddleware pour construire le PolicySubject.
+    std::unordered_map<std::string, std::string> additional_claims;
 };
 
 /**
@@ -102,6 +106,20 @@ public:
         ) const;
 
     /**
+     * Génère un access token JWT avec claims custom.
+     *
+     * Utilisé pour l'autorisation ABAC : department_id, tenant_id, etc.
+     * sont injectés dans le JWT pour être lus par AuthorizationMiddleware.
+     */
+    [[nodiscard]]
+    std::string generate_access_token(
+        const std::string& user_id,
+        const std::string& email,
+        const std::string& role,
+        const std::unordered_map<std::string, std::string>& additional_claims
+        ) const;
+
+    /**
      * Génère un refresh token JWT.
      *
      * Utilisé pour renouveler un access token.
@@ -171,6 +189,19 @@ public:
         const std::string& user_id,
         const std::string& email,
         const std::string& role,
+        IBlockingExecutor& executor
+        ) const;
+
+
+    /**
+     * Version async avec claims custom.
+     */
+    [[nodiscard]]
+    seastar::future<std::string> generate_access_token_async(
+        const std::string& user_id,
+        const std::string& email,
+        const std::string& role,
+        const std::unordered_map<std::string, std::string>& additional_claims,
         IBlockingExecutor& executor
         ) const;
 

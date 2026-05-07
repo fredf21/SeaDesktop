@@ -1,15 +1,22 @@
 #include "list_by_fk_handler.h"
+#include "../access_control/resource_authorization_helper.h"
 #include "../../utils/http_utils.h"
+
+#include "access_control/crud_operation.h"
+
+#include <utility>
 
 using namespace sea::http::handlers::relation;
 
 ListByFkHandler::ListByFkHandler(
     std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
     std::string child_entity,
-    std::string fk_column)
+    std::string fk_column,
+    std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> auth_helper)
     : crud_engine_(std::move(crud_engine))
     , child_entity_(std::move(child_entity))
     , fk_column_(std::move(fk_column))
+    , auth_helper_(std::move(auth_helper))
 {
 }
 
@@ -39,7 +46,25 @@ ListByFkHandler::handle(const seastar::sstring&,
         }
     }
 
+    std::string final_json = utils::records_to_json(filtered);
+
+    // filter ABAC silencieux sur la collection
+    if (auth_helper_) {
+        const auto subject = auth_helper_->build_subject_from_headers(*req);
+
+        const std::string path_str(req->_url.data(), req->_url.size());
+        const auto context = auth_helper_->build_context(*req, path_str);
+
+        final_json = auth_helper_->filter_collection(
+            child_entity_,
+            sea::domain::access_control::CrudOperation::List,
+            subject,
+            final_json,
+            context
+            );
+    }
+
     rep->set_status(seastar::http::reply::status_type::ok);
-    rep->write_body("application/json", utils::records_to_json(filtered));
+    rep->write_body("application/json", final_json);
     co_return std::move(rep);
 }

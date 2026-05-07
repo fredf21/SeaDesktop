@@ -11,16 +11,25 @@ class GenericCrudEngine;
 class SchemaRuntimeRegistry;
 }
 
+// ✨ Module 6 : forward declaration
+namespace sea::http::handlers::access_control {
+class ResourceAuthorizationHelper;
+}
+
 namespace sea::http::handlers::crud {
 
 class CreateHandler final : public seastar::httpd::handler_base {
 public:
-    CreateHandler(std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
-                  std::shared_ptr<sea::infrastructure::runtime::SchemaRuntimeRegistry> registry,
-                  std::string entity_name,
-                  std::shared_ptr<sea::application::AuthService> auth_service,
-                  sea::domain::DatabaseType db_type,
-                  std::shared_ptr<IBlockingExecutor> blocking_executor);
+    CreateHandler(
+        std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
+        std::shared_ptr<sea::infrastructure::runtime::SchemaRuntimeRegistry> registry,
+        std::string entity_name,
+        std::shared_ptr<sea::application::AuthService> auth_service,
+        sea::domain::DatabaseType db_type,
+        std::shared_ptr<IBlockingExecutor> blocking_executor,
+        // helper ABAC resource-aware (optionnel)
+        std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> auth_helper = nullptr
+        );
 
     seastar::future<std::unique_ptr<seastar::http::reply>>
     handle(const seastar::sstring&,
@@ -34,6 +43,9 @@ private:
     std::shared_ptr<sea::application::AuthService> auth_service_;
     sea::domain::DatabaseType db_type_;
     std::shared_ptr<IBlockingExecutor> blocking_executor_;
+
+    // ✨ Module 6
+    std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> auth_helper_;
 };
 
 }

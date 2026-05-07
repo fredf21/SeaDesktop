@@ -15,7 +15,8 @@
 #include "../middlewares/rate_limit_middleware.h"
 #include "../middlewares/security_headers_middleware.h"
 #include "../utils/http_utils.h"
-
+#include "../middlewares/authorization_middleware.h"
+#include "http/handlers/relation_handlers/list_by_fk_field_handler.h"
 #include "relation.h"
 #include "service.h"
 #include "runtime/generic_crud_engine.h"
@@ -90,6 +91,20 @@ std::unique_ptr<seastar::httpd::handler_base> wrap_with_middlewares(
     // Plus une ligne est tardive, plus le middleware est extérieur,
     // donc plus il est exécuté tôt à l'arrivée d'une requête.
 
+    // 6e exécuté : AuthorizationMiddleware (Module 5)
+    // S'execute APRES ProtectedHandler (a besoin des X-User-* injectes)
+    // Verifie les regles RBAC + ABAC subject-only
+    if (requires_auth
+        && context.policy_engine
+        && context.service.access_control.enabled()) {
+        h = sea::http::middlewares::apply_authorization(
+            std::move(h),
+            context.service.schema,
+            context.service.access_control,
+            context.policy_engine
+            );
+    }
+
     // 5e exécuté : Rate limit (peut lire X-User-Id injecté par Auth)
     if (context.rate_limit_store != nullptr
         && !context.service.security.rate_limits().empty()) {
@@ -107,7 +122,6 @@ std::unique_ptr<seastar::httpd::handler_base> wrap_with_middlewares(
             requires_auth,
             context.auth_service,
             context.blocking_executor
-
             );
     }
 
@@ -165,7 +179,8 @@ void register_collection_route(
 
         auto handler = std::make_unique<sea::http::handlers::crud::ListHandler>(
             crud_engine,
-            route.entity_name
+            route.entity_name,
+            context.resource_auth_helper
             );
 
         auto wrapped = wrap_with_middlewares(
@@ -194,7 +209,8 @@ void register_collection_route(
             route.entity_name,
             context.auth_service,
             context.service.database_config.type,
-            context.blocking_executor
+            context.blocking_executor,
+            context.resource_auth_helper
             );
 
         auto wrapped = wrap_with_middlewares(
@@ -243,7 +259,8 @@ void register_item_route(
 
         auto handler = std::make_unique<sea::http::handlers::crud::GetByIdHandler>(
             crud_engine,
-            route.entity_name
+            route.entity_name,
+            context.resource_auth_helper
             );
 
         auto wrapped = wrap_with_middlewares(
@@ -271,7 +288,8 @@ void register_item_route(
             registry,
             context.auth_service,
             route.entity_name,
-            context.blocking_executor
+            context.blocking_executor,
+            context.resource_auth_helper
             );
 
         auto wrapped = wrap_with_middlewares(
@@ -297,7 +315,8 @@ void register_item_route(
 
         auto handler = std::make_unique<sea::http::handlers::crud::DeleteHandler>(
             crud_engine,
-            route.entity_name
+            route.entity_name,
+            context.resource_auth_helper
             );
 
         auto wrapped = wrap_with_middlewares(
@@ -336,31 +355,141 @@ void register_has_many_routes(
             const std::string base =
                 "/" + sea::http::utils::lower_first(entity.name) + "s";
 
-            const std::string child_path =
-                base + "/{id}/" + relation.name;
-            if (seastar::this_shard_id() == 0) {
-                std::cerr << "[ROUTE] GET " << child_path << " -> ListByFkHandler"
-                          << (requires_auth ? " 🔒" : " 🌐") << "\n";
+            // ───────────────────────────────────────────────────────────
+            // Route 1 : GET /<parent>s/{id}/<children>
+            //           → ListByFkHandler
+            //           Ex: /departments/{id}/employees
+            // ───────────────────────────────────────────────────────────
+            {
+                const std::string child_path =
+                    base + "/{id}/" + relation.name;
+
+                if (seastar::this_shard_id() == 0) {
+                    std::cerr << "[ROUTE] GET " << child_path << " -> ListByFkHandler"
+                              << (requires_auth ? " 🔒" : " 🌐") << "\n";
+                }
+
+                auto handler = std::make_unique<sea::http::handlers::relation::ListByFkHandler>(
+                    crud_engine,
+                    relation.target_entity,
+                    relation.fk_column,
+                    context.resource_auth_helper
+                    );
+
+                auto wrapped = wrap_with_middlewares(
+                    std::move(handler),
+                    requires_auth,
+                    context
+                    );
+
+                routes.add(
+                    seastar::httpd::operation_type::GET,
+                    seastar::httpd::url(base).remainder("id"),
+                    wrapped.release()
+                    );
             }
 
+            // ───────────────────────────────────────────────────────────
+            // Route 2 : GET /<parent>s_with_<children>/{id}
+            //             → GetWithChildrenHandler
+            //             Ex: /departments_with_employees/{id}
+            // ───────────────────────────────────────────────────────────
+            {
+                const std::string with_children_path =
+                    "/" + sea::http::utils::lower_first(entity.name) + "s_with_" +
+                    relation.name + "/{id}";
 
-            auto handler = std::make_unique<sea::http::handlers::relation::ListByFkHandler>(
-                crud_engine,
-                relation.target_entity,
-                relation.fk_column
-                );
+                if (seastar::this_shard_id() == 0) {
+                    std::cerr << "[ROUTE] GET " << with_children_path << " -> GetWithChildrenHandler"
+                              << (requires_auth ? " 🔒" : " 🌐") << "\n";
+                }
 
-            auto wrapped = wrap_with_middlewares(
-                std::move(handler),
-                requires_auth,
-                context
-                );
+                auto handler = std::make_unique<sea::http::handlers::relation::GetWithChildrenHandler>(
+                    crud_engine,
+                    entity.name,                      // parent_entity (Department)
+                    relation.target_entity,           // child_entity (Employee)
+                    relation.fk_column,               // fk_column (department_id)
+                    relation.name,                    // children_key (employees)
+                    context.resource_auth_helper
+                    );
 
-            routes.add(
-                seastar::httpd::operation_type::GET,
-                seastar::httpd::url(base).remainder("id"),
-                wrapped.release()
-                );
+                auto wrapped = wrap_with_middlewares(
+                    std::move(handler),
+                    requires_auth,
+                    context
+                    );
+
+                // URL builder : /<parent>s_with_<children>/{id}
+                const std::string with_children_base =
+                    "/" + sea::http::utils::lower_first(entity.name) + "s_with_" +
+                    relation.name;
+
+                routes.add(
+                    seastar::httpd::operation_type::GET,
+                    seastar::httpd::url(with_children_base).remainder("id"),
+                    wrapped.release()
+                    );
+            }
+
+            // ───────────────────────────────────────────────────────────
+            // Route 3 : GET /<children>/filter/with_<parent>_name?name=<value>
+            //             → ListByFkFieldHandler
+            //             Ex: /employees/filter/with_department_name?name=IT
+            //
+            // SKIP si le parent n'a pas de champ "name"
+            // ───────────────────────────────────────────────────────────
+            {
+                // Cherche le field "name" sur l'entite parent
+                const sea::domain::Field* name_field = nullptr;
+                for (const auto& field : entity.fields) {
+                    if (field.name == "name") {
+                        name_field = &field;
+                        break;
+                    }
+                }
+
+                if (name_field == nullptr) {
+                    // Le parent n'a pas de champ "name", on skip cette route
+                    if (seastar::this_shard_id() == 0) {
+                        std::cerr << "[ROUTE] SKIP filter/with_"
+                                  << sea::http::utils::lower_first(entity.name)
+                                  << "_name (no 'name' field on " << entity.name << ")\n";
+                    }
+                } else {
+                    // Construit le path : /<children>/filter/with_<parent>_name
+                    // Note : 'children' = relation.target_entity en lower + "s"
+                    const std::string filter_path =
+                        "/" + sea::http::utils::lower_first(relation.target_entity) + "s" +
+                        "/filter/with_" + sea::http::utils::lower_first(entity.name) + "_name";
+
+                    if (seastar::this_shard_id() == 0) {
+                        std::cerr << "[ROUTE] GET " << filter_path
+                                  << "?name=<value> -> ListByFkFieldHandler"
+                                  << (requires_auth ? " 🔒" : " 🌐") << "\n";
+                    }
+
+                    auto handler = std::make_unique<sea::http::handlers::relation::ListByFkFieldHandler>(
+                        crud_engine,
+                        relation.target_entity,           // child_entity (Employee)
+                        entity.name,                      // parent_entity (Department)
+                        relation.fk_column,               // fk_column (department_id)
+                        std::string("name"),              // search_field (convention)
+                        context.resource_auth_helper
+                        );
+
+                    auto wrapped = wrap_with_middlewares(
+                        std::move(handler),
+                        requires_auth,
+                        context
+                        );
+
+                    routes.add(
+                        seastar::httpd::operation_type::GET,
+                        seastar::httpd::url(filter_path).remainder("value"),
+                        wrapped.release()
+                        );
+                }
+            }
         }
     }
 }
@@ -392,7 +521,8 @@ void register_has_one_routes(
             auto handler = std::make_unique<sea::http::handlers::relation::GetOneByFkHandler>(
                 crud_engine,
                 relation.target_entity,
-                relation.fk_column
+                relation.fk_column,
+                context.resource_auth_helper
                 );
 
             auto wrapped = wrap_with_middlewares(
@@ -440,7 +570,8 @@ void register_many_to_many_routes(
                 relation.pivot_table,
                 relation.target_entity,
                 relation.source_fk_column,
-                relation.target_fk_column
+                relation.target_fk_column,
+                context.resource_auth_helper
                 );
 
             auto wrapped = wrap_with_middlewares(

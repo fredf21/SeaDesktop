@@ -1,5 +1,10 @@
 #include "list_by_fk_field_handler.h"
+#include "../access_control/resource_authorization_helper.h"
 #include "../../utils/http_utils.h"
+
+#include "access_control/crud_operation.h"
+
+#include <utility>
 
 using namespace sea::http::handlers::relation;
 
@@ -8,12 +13,14 @@ ListByFkFieldHandler::ListByFkFieldHandler(
     std::string child_entity,
     std::string parent_entity,
     std::string fk_column,
-    std::string search_field)
+    std::string search_field,
+    std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> auth_helper)
     : crud_engine_(std::move(crud_engine))
     , child_entity_(std::move(child_entity))
     , parent_entity_(std::move(parent_entity))
     , fk_column_(std::move(fk_column))
     , search_field_(std::move(search_field))
+    , auth_helper_(std::move(auth_helper))
 {
 }
 
@@ -22,10 +29,13 @@ ListByFkFieldHandler::handle(const seastar::sstring&,
                              std::unique_ptr<seastar::http::request> req,
                              std::unique_ptr<seastar::http::reply> rep)
 {
-    const auto value = req->get_query_param(search_field_);
+    // ✨ Path param "value" au lieu de query param
+    // Route : /<children>/filter/with_<parent>_<field>/{value}
+    // Ex: /employees/filter/with_department_name/IT
+    const auto value = req->get_path_param("value");
     if (value.empty()) {
         rep->set_status(seastar::http::reply::status_type::bad_request);
-        rep->write_body("application/json", R"({"error":"param manquant"})");
+        rep->write_body("application/json", R"({"error":"value manquant"})");
         co_return std::move(rep);
     }
 
@@ -39,7 +49,7 @@ ListByFkFieldHandler::handle(const seastar::sstring&,
             continue;
         }
 
-        if (!sea::http::utils::dynamic_value_matches_string(field_it->second, value)) {
+        if (!sea::http::utils::dynamic_value_matches_string(field_it->second, std::string(value))) {
             continue;
         }
 
@@ -72,7 +82,25 @@ ListByFkFieldHandler::handle(const seastar::sstring&,
         }
     }
 
+    std::string final_json = utils::records_to_json(result);
+
+    // filter ABAC silencieux sur la collection
+    if (auth_helper_) {
+        const auto subject = auth_helper_->build_subject_from_headers(*req);
+
+        const std::string path_str(req->_url.data(), req->_url.size());
+        const auto context = auth_helper_->build_context(*req, path_str);
+
+        final_json = auth_helper_->filter_collection(
+            child_entity_,
+            sea::domain::access_control::CrudOperation::List,
+            subject,
+            final_json,
+            context
+            );
+    }
+
     rep->set_status(seastar::http::reply::status_type::ok);
-    rep->write_body("application/json", utils::records_to_json(result));
+    rep->write_body("application/json", final_json);
     co_return std::move(rep);
 }

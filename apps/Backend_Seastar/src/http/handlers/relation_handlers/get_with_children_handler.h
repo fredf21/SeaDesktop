@@ -9,6 +9,11 @@ namespace sea::infrastructure::runtime {
 class GenericCrudEngine;
 }
 
+// forward declaration
+namespace sea::http::handlers::access_control {
+class ResourceAuthorizationHelper;
+}
+
 namespace sea::http::handlers::relation {
 
 class GetWithChildrenHandler final : public seastar::httpd::handler_base {
@@ -18,7 +23,10 @@ public:
         std::string parent_entity,
         std::string child_entity,
         std::string fk_column,
-        std::string children_key);
+        std::string children_key,
+        // helper ABAC resource-aware (optionnel)
+        std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> auth_helper = nullptr
+        );
 
     seastar::future<std::unique_ptr<seastar::http::reply>>
     handle(const seastar::sstring&,
@@ -31,6 +39,7 @@ private:
     std::string child_entity_;
     std::string fk_column_;
     std::string children_key_;
+    std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> auth_helper_;
 };
 
 } // namespace sea::http::handlers::relation

@@ -7,7 +7,10 @@ services:
 
     security:
       authentication:
-        type: none   # 👈 pas d'auth ici (important sinon ça casse sans User)
+        type: none   # pas d'auth (mode dev rapide)
+
+      # Pas d'authorization → toutes les routes ouvertes
+      # Pas de rate_limit, pas de CORS, pas de headers
 
     database:
       type: memory

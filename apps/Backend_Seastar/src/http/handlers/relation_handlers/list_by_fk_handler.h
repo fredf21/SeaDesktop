@@ -9,6 +9,11 @@ namespace sea::infrastructure::runtime {
 class GenericCrudEngine;
 }
 
+// forward declaration
+namespace sea::http::handlers::access_control {
+class ResourceAuthorizationHelper;
+}
+
 namespace sea::http::handlers::relation {
 
 class ListByFkHandler final : public seastar::httpd::handler_base {
@@ -16,7 +21,10 @@ public:
     ListByFkHandler(
         std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
         std::string child_entity,
-        std::string fk_column);
+        std::string fk_column,
+        // helper ABAC resource-aware (optionnel)
+        std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> auth_helper = nullptr
+        );
 
     seastar::future<std::unique_ptr<seastar::http::reply>>
     handle(const seastar::sstring&,
@@ -27,6 +35,7 @@ private:
     std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine_;
     std::string child_entity_;
     std::string fk_column_;
+    std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> auth_helper_;
 };
 
 } // namespace sea::http::handlers::relation
