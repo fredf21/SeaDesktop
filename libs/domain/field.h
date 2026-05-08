@@ -72,9 +72,26 @@ struct Field {
 
     std::optional<NativeDbType> native_type; // Pas compatible avec les base de donnees NoSQL
 
+    // annotation explicite pour rename de colonne
+    //
+    // Si renseigne, le bootstrapper saura qu'il s'agit d'un rename
+    // (et non d'un drop + add) et utilisera ALTER TABLE CHANGE COLUMN
+    // pour preserver les donnees.
+    //
+    // Exemple :
+    //   - name: phone_number
+    //     type: string
+    //     previous_name: phone     ← NEW
+    std::optional<std::string> previous_name;
+
     [[nodiscard]] bool has_default() const noexcept {
         return !std::holds_alternative<std::monostate>(default_val);
     }
+
+    [[nodiscard]] bool has_previous_name() const noexcept {
+        return previous_name.has_value() && !previous_name->empty();
+    }
+
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -151,6 +168,10 @@ inline Field& default_value(Field& f, double v) {
 
 inline Field& default_value(Field& f, bool v) {
     f.default_val = v;
+    return f;
+}
+inline Field& renamed_from(Field& f, std::string old_name) {
+    f.previous_name = std::move(old_name);
     return f;
 }
 

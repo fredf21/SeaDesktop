@@ -13,16 +13,15 @@ namespace sea::infrastructure::persistence::mysql {
 // Type de changement detecte sur une colonne ou un index
 // ─────────────────────────────────────────────────────────────
 enum class ColumnDiffKind {
-    Added,                  // Field absent en MySQL, present dans YAML  (Phase A)
-    TypeChanged,            // Type MySQL ≠ type YAML                   (Phase B.1)
-    NullabilityChanged,     // NULL/NOT NULL different                  (Phase B.1)
-    DefaultChanged,         // DEFAULT different                        (Phase B.1)
-
-    //indexes
-    IndexAdded,             // Field.indexed=true, pas d'INDEX en MySQL
-    IndexRemoved,           // INDEX en MySQL, Field.indexed=false
-    UniqueAdded,            // Field.unique=true, pas de UNIQUE en MySQL
-    UniqueRemoved,          // UNIQUE en MySQL, Field.unique=false
+    Added,
+    TypeChanged,
+    NullabilityChanged,
+    DefaultChanged,
+    IndexAdded,
+    IndexRemoved,
+    UniqueAdded,
+    UniqueRemoved,
+    Renamed,
 };
 
 constexpr std::string_view to_string(ColumnDiffKind k) noexcept {
@@ -35,6 +34,7 @@ constexpr std::string_view to_string(ColumnDiffKind k) noexcept {
     case ColumnDiffKind::IndexRemoved:        return "index_removed";
     case ColumnDiffKind::UniqueAdded:         return "unique_added";
     case ColumnDiffKind::UniqueRemoved:       return "unique_removed";
+    case ColumnDiffKind::Renamed:             return "renamed";
     }
     return "unknown";
 }
@@ -45,52 +45,93 @@ constexpr std::string_view to_string(ColumnDiffKind k) noexcept {
 struct ColumnDiff {
     ColumnDiffKind kind;
     std::string table_name;
-    std::string column_name;
+    std::string column_name;        // nom NEW (ou name si non-rename)
 
     // Pour TypeChanged
     std::string current_type;
     std::string target_type;
 
-    // Pour Added : description du field a ajouter
-    // Pour les autres : reference vers le field YAML cible
+    // Pour Added/Modified : reference vers le field YAML cible
     const sea::domain::Field* target_field = nullptr;
 
     // Pour IndexRemoved/UniqueRemoved : nom de l'index a supprimer
     std::string index_name_to_drop;
 
-    // Indique si le changement est "safe"
-    bool is_safe = true;
+    // Pour Renamed : ancien nom de la colonne
+    std::string previous_name;
 
-    // Description humaine pour les logs
+    // Pour Renamed : score de confiance (100 = annotation explicite, < 100 = heuristique)
+    int rename_confidence_score = 0;
+
+    bool is_safe = true;
     std::string description;
 };
 
 // ─────────────────────────────────────────────────────────────
 // SchemaDiffer
 //
-// Compare le schema YAML d'une entite avec l'etat actuel de MySQL
-// et produit une liste de differences.
-//
-// Phase B.1 : Added + TypeChanged + NullabilityChanged + DefaultChanged
+// Phase A   : Added
+// Phase B.1 : TypeChanged + NullabilityChanged + DefaultChanged
 // Phase B.2 : IndexAdded + IndexRemoved + UniqueAdded + UniqueRemoved
+// Phase B.3 : Renamed (annotation explicite + heuristique)
 // ─────────────────────────────────────────────────────────────
 class SchemaDiffer {
 public:
-    // Compare une entity YAML avec une TableInfo MySQL pour les COLONNES.
+    // ── Phase A + B.1 ──
     [[nodiscard]] static std::vector<ColumnDiff>
     compute_column_diffs(
         const sea::domain::Entity& entity,
         const TableInfo& table_info
         );
 
-    // Compare les INDEXES (INDEX + UNIQUE).
+    // ── Phase B.2 ──
     [[nodiscard]] static std::vector<ColumnDiff>
     compute_index_diffs(
         const sea::domain::Entity& entity,
         const TableInfo& table_info
         );
 
-    // Indique si un changement de type est "safe"
+    // Detecte les renames de colonnes en 2 phases :
+    //
+    // Phase 1 (annotations explicites, score = 100) :
+    //   Pour chaque field YAML avec previous_name :
+    //     Si MySQL a la colonne previous_name ET pas le current_name
+    //     → Rename explicite
+    //
+    // Phase 2 (heuristique automatique, score < 100) :
+    //   Pour chaque colonne MySQL "orpheline" (pas dans le YAML
+    //   et pas deja matchee par une annotation) :
+    //     Cherche un field YAML "non-matche" avec score eleve :
+    //       - meme type (+50)
+    //       - position similaire (+30)
+    //       - meme nullability (+10)
+    //       - meme default (+5)
+    //       - meme indexed/unique (+5)
+    //     Si meilleur score >= 90 → rename heuristique
+    //
+    // Le bootstrapper decide d'appliquer ou non selon le mode :
+    //   - score = 100 (explicite) : applique en mode modified+aggressive
+    //   - score < 100 (heuristique) : applique uniquement en mode aggressive
+    [[nodiscard]] static std::vector<ColumnDiff>
+    compute_renames(
+        const sea::domain::Entity& entity,
+        const TableInfo& table_info
+        );
+
+    // Helpers publics (utilises par compute_column_diffs pour exclure
+    // les colonnes deja renommees)
+    [[nodiscard]] static bool
+    field_was_renamed(
+        const std::string& field_name,
+        const std::vector<ColumnDiff>& renames
+        );
+
+    [[nodiscard]] static bool
+    column_was_renamed_from(
+        const std::string& mysql_column_name,
+        const std::vector<ColumnDiff>& renames
+        );
+
     [[nodiscard]] static bool
     is_type_change_safe(
         const std::string& current_mysql_type,
@@ -107,31 +148,25 @@ private:
         const std::string& target_mysql_type
         );
 
-    // helpers pour les indexes
     [[nodiscard]] static bool
-    column_has_simple_index(
-        const TableInfo& table_info,
-        const std::string& column_name
-        );
+    column_has_simple_index(const TableInfo&, const std::string&);
 
     [[nodiscard]] static bool
-    column_has_unique_index(
-        const TableInfo& table_info,
-        const std::string& column_name
-        );
+    column_has_unique_index(const TableInfo&, const std::string&);
 
     [[nodiscard]] static std::string
-    find_index_name_for_column(
-        const TableInfo& table_info,
-        const std::string& column_name,
-        bool look_for_unique
-        );
+    find_index_name_for_column(const TableInfo&, const std::string&, bool);
 
-    // Indique si une FK pointe vers une colonne (l'INDEX FK est auto-genere)
     [[nodiscard]] static bool
-    column_is_fk(
-        const sea::domain::Entity& entity,
-        const std::string& column_name
+    column_is_fk(const sea::domain::Entity&, const std::string&);
+
+    // helpers
+    [[nodiscard]] static int
+    score_rename_candidate(
+        const sea::domain::Field& yaml_field,
+        std::size_t yaml_position,
+        const ColumnInfo& mysql_column,
+        std::size_t mysql_position
         );
 };
 

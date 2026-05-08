@@ -213,12 +213,22 @@ MysqlBootstrapper::execute_sql_without_database(const std::string& sql)
 // ─────────────────────────────────────────────────────────────
 // compute_and_apply_diff
 // ─────────────────────────────────────────────────────────────
+//
+// ORDRE D'APPLICATION (critique) :
+// 1. Renames (CHANGE COLUMN) - en premier pour que les autres diffs
+//    voient le NOUVEAU schema apres rename
+// 2. Column diffs (ADD/MODIFY)
+// 3. Index diffs (ADD/DROP INDEX/UNIQUE)
+// 4. Pivot tables M2M
+// ═══════════════════════════════════════════════════════════════════════
+
+
 seastar::future<>
 MysqlBootstrapper::compute_and_apply_diff(
     const SchemaSnapshot& snapshot,
     BootstrapResult& result)
 {
-    // ── 1. Tri topologique ────────────────────────────
+    // ── 1. Tri topologique (Phase A) ────────────────────────────
     const auto sorted_entities = MysqlSchemaGenerator::topological_sort(_schema.entities);
 
     std::cerr << "[BOOTSTRAP] Topological order:\n";
@@ -234,7 +244,7 @@ MysqlBootstrapper::compute_and_apply_diff(
             !entity->table_name.empty() ? entity->table_name : entity->name;
 
         if (!snapshot.has_table(table_name)) {
-            // Table manquante : CREATE TABLE
+            // Table manquante : CREATE TABLE (Phase A)
             std::cerr << "[BOOTSTRAP] CREATE TABLE: " << table_name << "\n";
             const auto sql = MysqlSchemaGenerator::generate_create_table_sql(*entity);
             const bool ok = co_await execute_sql(sql);
@@ -248,10 +258,74 @@ MysqlBootstrapper::compute_and_apply_diff(
 
         const auto* table_info = snapshot.find_table(table_name);
 
-        // ── Compute column diffs ────────────
+        // ════════════════════════════════════════════════════════
+        // RENAMES EN PREMIER
+        // ════════════════════════════════════════════════════════
+        const auto rename_diffs = SchemaDiffer::compute_renames(*entity, *table_info);
+
+        for (const auto& diff : rename_diffs) {
+            std::cerr << "[BOOTSTRAP] " << table_name << ": " << diff.description << "\n";
+
+            // Decision selon le mode et le type de rename :
+            // - Score = 100 (annotation explicite) : applique en modified+aggressive
+            // - Score < 100 (heuristique) : applique uniquement en aggressive
+            bool should_apply = false;
+            std::string skip_reason;
+
+            const bool is_explicit = (diff.rename_confidence_score == 100);
+
+            if (mode == sea::domain::MigrationMode::Conservative) {
+                skip_reason = "conservative mode (use 'modified' or 'aggressive' to apply)";
+            } else if (mode == sea::domain::MigrationMode::Modified) {
+                if (is_explicit) {
+                    should_apply = true;  // annotation explicite est safe
+                } else {
+                    skip_reason = "heuristic rename in modified mode (use 'aggressive')";
+                }
+            } else if (mode == sea::domain::MigrationMode::Aggressive) {
+                should_apply = true;  // tout est applique en aggressive
+            }
+
+            if (!should_apply) {
+                std::cerr << "[BOOTSTRAP]   SKIP: " << skip_reason << "\n";
+                result.warnings.push_back(diff.description + " skipped: " + skip_reason);
+                continue;
+            }
+
+            // Applique le RENAME
+            const auto sql = MysqlSchemaGenerator::generate_rename_column_sql(
+                *entity, diff.previous_name, *diff.target_field
+                );
+
+            const bool ok = co_await execute_sql(sql);
+            if (ok) {
+                std::ostringstream entry;
+                entry << table_name << "." << diff.previous_name
+                      << " → " << table_name << "." << diff.column_name
+                      << " (" << (is_explicit ? "explicit" : "heuristic")
+                      << " score=" << diff.rename_confidence_score << ")";
+                result.columns_renamed.push_back(entry.str());
+            } else {
+                result.errors.push_back(
+                    "Failed to rename column " + diff.previous_name +
+                    " → " + diff.column_name + " in " + table_name
+                    );
+            }
+        }
+
+        // Re-introspecter la table apres les renames pour avoir l'etat a jour ?
+        // Pour V1 : on utilise le snapshot original mais on saute les fields/colonnes
+        // deja gerees par les renames. Plus simple et evite un round-trip MySQL.
+
+        // ── 2a. Compute column diffs (Phase A + B.1) ────────────
         const auto column_diffs = SchemaDiffer::compute_column_diffs(*entity, *table_info);
 
         for (const auto& diff : column_diffs) {
+            // ✨ Skip si le field a ete renomme (deja gere)
+            if (SchemaDiffer::field_was_renamed(diff.column_name, rename_diffs)) {
+                continue;
+            }
+
             std::cerr << "[BOOTSTRAP] " << table_name << ": " << diff.description << "\n";
 
             switch (diff.kind) {
@@ -311,25 +385,30 @@ MysqlBootstrapper::compute_and_apply_diff(
                 break;
             }
 
-            // Index kinds non gérés ici (gérés par compute_index_diffs ci-dessous)
             case ColumnDiffKind::IndexAdded:
             case ColumnDiffKind::IndexRemoved:
             case ColumnDiffKind::UniqueAdded:
             case ColumnDiffKind::UniqueRemoved:
+            case ColumnDiffKind::Renamed:
                 break;
             }
         }
 
-        // ── Compute index diffs ──────────────
+        // ── 2b. Compute index diffs (Phase B.2) ─────────────────
         const auto index_diffs = SchemaDiffer::compute_index_diffs(*entity, *table_info);
 
         for (const auto& diff : index_diffs) {
+            // ✨ Skip si le field a ete renomme (l'index sera recalcule au prochain boot)
+            if (SchemaDiffer::field_was_renamed(diff.column_name, rename_diffs)) {
+                continue;
+            }
+            // ✨ Skip si l'index pointe vers une colonne deja renommee
+            if (SchemaDiffer::column_was_renamed_from(diff.column_name, rename_diffs)) {
+                continue;
+            }
+
             std::cerr << "[BOOTSTRAP] " << table_name << ": " << diff.description << "\n";
 
-            // Decision selon le mode
-            // INDEX : toujours safe → applique en Modified+Aggressive
-            // UNIQUE add : pas safe (peut echouer si doublons) → uniquement Aggressive
-            // UNIQUE drop : safe → applique en Modified+Aggressive
             bool should_apply = false;
             std::string skip_reason;
 
@@ -351,35 +430,22 @@ MysqlBootstrapper::compute_and_apply_diff(
                 continue;
             }
 
-            // Genere le SQL approprie
             std::string sql;
             switch (diff.kind) {
             case ColumnDiffKind::IndexAdded:
-                sql = MysqlSchemaGenerator::generate_add_index_sql(
-                    table_name, diff.column_name
-                    );
+                sql = MysqlSchemaGenerator::generate_add_index_sql(table_name, diff.column_name);
                 break;
-
             case ColumnDiffKind::IndexRemoved:
-                sql = MysqlSchemaGenerator::generate_drop_index_sql(
-                    table_name, diff.index_name_to_drop
-                    );
+                sql = MysqlSchemaGenerator::generate_drop_index_sql(table_name, diff.index_name_to_drop);
                 break;
-
             case ColumnDiffKind::UniqueAdded:
-                sql = MysqlSchemaGenerator::generate_add_unique_sql(
-                    table_name, diff.column_name
-                    );
+                sql = MysqlSchemaGenerator::generate_add_unique_sql(table_name, diff.column_name);
                 break;
-
             case ColumnDiffKind::UniqueRemoved:
-                sql = MysqlSchemaGenerator::generate_drop_unique_sql(
-                    table_name, diff.index_name_to_drop
-                    );
+                sql = MysqlSchemaGenerator::generate_drop_unique_sql(table_name, diff.index_name_to_drop);
                 break;
-
             default:
-                continue;  // pas un index diff
+                continue;
             }
 
             const bool ok = co_await execute_sql(sql);
@@ -487,6 +553,11 @@ MysqlBootstrapper::bootstrap()
     for (const auto& c : result.columns_added) {
         std::cerr << "  + " << c << "\n";
     }
+    std::cerr << "[BOOTSTRAP] Columns renamed: " << result.columns_renamed.size() << "\n";
+    for (const auto& r : result.columns_renamed) {
+        std::cerr << "  ↻ " << r << "\n";
+    }
+
     std::cerr << "[BOOTSTRAP] Columns modified: " << result.columns_modified.size() << "\n";
     for (const auto& c : result.columns_modified) {
         std::cerr << "  ~ " << c << "\n";

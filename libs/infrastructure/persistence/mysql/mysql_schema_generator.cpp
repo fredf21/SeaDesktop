@@ -283,7 +283,7 @@ std::string MysqlSchemaGenerator::generate_add_unique_sql(
 }
 
 // ─────────────────────────────────────────────────────────────
-// generate_drop_unique_sql (Phase B.2)
+// generate_drop_unique_sql
 //
 // Note : MySQL traite UNIQUE comme un INDEX, donc DROP INDEX
 //        marche aussi pour les UNIQUE.
@@ -297,6 +297,31 @@ std::string MysqlSchemaGenerator::generate_drop_unique_sql(
         << "DROP INDEX `" << constraint_name << "`";
     return sql.str();
 }
+// ─────────────────────────────────────────────────────────────
+// generate_rename_column_sql (Phase B.3)
+//
+// Genere :
+//   ALTER TABLE `table` CHANGE COLUMN `old_name` `new_name` <type> [NOT NULL] [DEFAULT ...]
+//
+// Le CHANGE COLUMN reecrit la definition complete (type/null/default)
+// donc on reutilise column_definition().
+// ─────────────────────────────────────────────────────────────
+std::string MysqlSchemaGenerator::generate_rename_column_sql(
+    const sea::domain::Entity& entity,
+    const std::string& old_column_name,
+    const sea::domain::Field& new_field)
+{
+    const std::string table_name = resolve_table_name(entity);
+    const bool is_id = (new_field.name == "id");
+
+    std::ostringstream sql;
+    sql << "ALTER TABLE `" << table_name << "` "
+        << "CHANGE COLUMN `" << old_column_name << "` "
+        << column_definition(new_field, is_id);
+
+    return sql.str();
+}
+
 
 // ─────────────────────────────────────────────────────────────
 // generate_pivot_table_sql

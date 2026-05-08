@@ -82,6 +82,21 @@ public:
         const std::string& constraint_name
         );
 
+    // RENAME COLUMN
+    //
+    // Genere "ALTER TABLE x CHANGE COLUMN old_name new_name type [NOT NULL] [DEFAULT ...]"
+    //
+    // Utilise CHANGE COLUMN (et non RENAME COLUMN) pour 2 raisons :
+    // 1. Compatible MySQL 5.7+ (RENAME COLUMN est MySQL 8+)
+    // 2. Permet de modifier le type au passage si necessaire
+    //
+    // IMPORTANT : preserve TOUTES les donnees (juste un rename).
+    [[nodiscard]] static std::string
+    generate_rename_column_sql(
+        const sea::domain::Entity& entity,
+        const std::string& old_column_name,
+        const sea::domain::Field& new_field
+        );
 
     // Genere "CREATE TABLE IF NOT EXISTS pivot_name (..)" pour M2M.
     // pivot_table_name : ex "StudentProgram"

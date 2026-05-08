@@ -334,7 +334,13 @@ sea::domain::Field YamlSchemaParser::parse_field_node(const YAML::Node& node) co
     sea::domain::Field field{};
 
     field.name = require_string(node, "name", "field");
-
+    // previous_name pour rename explicite
+    if (auto prev_name_node = node["previous_name"]; prev_name_node) {
+        const auto prev_name = prev_name_node.as<std::string>("");
+        if (!prev_name.empty()) {
+            field.previous_name = prev_name;
+        }
+    }
     const std::string type_str = require_string(node, "type", "field");
     const auto field_type = sea::domain::field_type_from_string(type_str);
     if (!field_type.has_value()) {

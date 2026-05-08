@@ -220,7 +220,7 @@ services:
             required: true
             unique: true
 
-          - name: name
+          - name: full_name
             type: string
             required: true
 

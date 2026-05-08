@@ -23,12 +23,15 @@ struct BootstrapResult {
 
     bool database_was_created = false;
     std::vector<std::string> tables_created;
-    std::vector<std::string> columns_added;     // format "Table.column"
+    std::vector<std::string> columns_added; // format "Table.column"
+    std::vector<std::string> columns_modified;
+    std::vector<std::string> columns_renamed;      // ✨ NEW (Phase B.3)
+    std::vector<std::string> indexes_changed;
     std::vector<std::string> pivots_created;
     std::vector<std::string> errors;
     std::vector<std::string> warnings;
-    std::vector<std::string> columns_modified;
-    std::vector<std::string> indexes_changed;
+
+
 
 };
 

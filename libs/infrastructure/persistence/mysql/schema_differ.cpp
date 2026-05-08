@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <iostream>
 #include <sstream>
+#include <unordered_set>
 #include <variant>
 
 namespace sea::infrastructure::persistence::mysql {
@@ -79,9 +81,6 @@ std::string SchemaDiffer::field_to_target_type(const sea::domain::Field& field)
     }
 }
 
-// ─────────────────────────────────────────────────────────────
-// types_are_compatible
-// ─────────────────────────────────────────────────────────────
 bool SchemaDiffer::types_are_compatible(
     const std::string& current_mysql_type,
     const std::string& target_mysql_type)
@@ -95,9 +94,6 @@ bool SchemaDiffer::types_are_compatible(
     return normalize(current_mysql_type) == normalize(target_mysql_type);
 }
 
-// ─────────────────────────────────────────────────────────────
-// is_type_change_safe
-// ─────────────────────────────────────────────────────────────
 bool SchemaDiffer::is_type_change_safe(
     const std::string& current_mysql_type,
     const sea::domain::Field& target_field)
@@ -133,8 +129,61 @@ bool SchemaDiffer::is_type_change_safe(
     return false;
 }
 
+bool SchemaDiffer::column_is_fk(
+    const sea::domain::Entity& entity,
+    const std::string& column_name)
+{
+    for (const auto& relation : entity.relations) {
+        if (relation.kind == sea::domain::RelationKind::BelongsTo
+            && relation.fk_column == column_name) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool SchemaDiffer::column_has_simple_index(
+    const TableInfo& table_info,
+    const std::string& column_name)
+{
+    for (const auto& idx : table_info.indexes) {
+        if (idx.is_primary) continue;
+        if (idx.is_unique) continue;
+        if (idx.columns.size() != 1) continue;
+        if (idx.columns[0] == column_name) return true;
+    }
+    return false;
+}
+
+bool SchemaDiffer::column_has_unique_index(
+    const TableInfo& table_info,
+    const std::string& column_name)
+{
+    for (const auto& idx : table_info.indexes) {
+        if (idx.is_primary) continue;
+        if (!idx.is_unique) continue;
+        if (idx.columns.size() != 1) continue;
+        if (idx.columns[0] == column_name) return true;
+    }
+    return false;
+}
+
+std::string SchemaDiffer::find_index_name_for_column(
+    const TableInfo& table_info,
+    const std::string& column_name,
+    bool look_for_unique)
+{
+    for (const auto& idx : table_info.indexes) {
+        if (idx.is_primary) continue;
+        if (idx.is_unique != look_for_unique) continue;
+        if (idx.columns.size() != 1) continue;
+        if (idx.columns[0] == column_name) return idx.name;
+    }
+    return "";
+}
+
 // ─────────────────────────────────────────────────────────────
-// compute_column_diffs (Phase B.1)
+// compute_column_diffs (Phase A + B.1)
 // ─────────────────────────────────────────────────────────────
 std::vector<ColumnDiff>
 SchemaDiffer::compute_column_diffs(
@@ -226,103 +275,8 @@ SchemaDiffer::compute_column_diffs(
     return diffs;
 }
 
-// ═════════════════════════════════════════════════════════════
-// ✨ PHASE B.2 : compute_index_diffs et helpers
-// ═════════════════════════════════════════════════════════════
-
 // ─────────────────────────────────────────────────────────────
-// column_is_fk : la colonne est-elle une FK BelongsTo ?
-//
-// Si oui, MySQL a deja un INDEX implicite, on ne le DROP jamais
-// pour eviter de casser la FK.
-// ─────────────────────────────────────────────────────────────
-bool SchemaDiffer::column_is_fk(
-    const sea::domain::Entity& entity,
-    const std::string& column_name)
-{
-    for (const auto& relation : entity.relations) {
-        if (relation.kind == sea::domain::RelationKind::BelongsTo
-            && relation.fk_column == column_name) {
-            return true;
-        }
-    }
-    return false;
-}
-
-// ─────────────────────────────────────────────────────────────
-// column_has_simple_index : la colonne a-t-elle un INDEX non-unique ?
-//
-// On exclut PRIMARY (= PK) et les indexes UNIQUE.
-// On regarde uniquement les indexes simple-colonne (pas multi-colonnes).
-// ─────────────────────────────────────────────────────────────
-bool SchemaDiffer::column_has_simple_index(
-    const TableInfo& table_info,
-    const std::string& column_name)
-{
-    for (const auto& idx : table_info.indexes) {
-        if (idx.is_primary) continue;
-        if (idx.is_unique) continue;
-        if (idx.columns.size() != 1) continue;
-        if (idx.columns[0] == column_name) {
-            return true;
-        }
-    }
-    return false;
-}
-
-// ─────────────────────────────────────────────────────────────
-// column_has_unique_index : la colonne a-t-elle une contrainte UNIQUE ?
-//
-// On regarde les indexes non-PK avec NON_UNIQUE=0 sur cette colonne.
-// ─────────────────────────────────────────────────────────────
-bool SchemaDiffer::column_has_unique_index(
-    const TableInfo& table_info,
-    const std::string& column_name)
-{
-    for (const auto& idx : table_info.indexes) {
-        if (idx.is_primary) continue;
-        if (!idx.is_unique) continue;
-        if (idx.columns.size() != 1) continue;
-        if (idx.columns[0] == column_name) {
-            return true;
-        }
-    }
-    return false;
-}
-
-// ─────────────────────────────────────────────────────────────
-// find_index_name_for_column : retrouve le nom de l'index sur cette colonne
-//
-// look_for_unique=true : cherche un index UNIQUE
-// look_for_unique=false : cherche un INDEX simple non-unique
-// ─────────────────────────────────────────────────────────────
-std::string SchemaDiffer::find_index_name_for_column(
-    const TableInfo& table_info,
-    const std::string& column_name,
-    bool look_for_unique)
-{
-    for (const auto& idx : table_info.indexes) {
-        if (idx.is_primary) continue;
-        if (idx.is_unique != look_for_unique) continue;
-        if (idx.columns.size() != 1) continue;
-        if (idx.columns[0] == column_name) {
-            return idx.name;
-        }
-    }
-    return "";
-}
-
-// ─────────────────────────────────────────────────────────────
-// compute_index_diffs (Phase B.2)
-//
-// Pour chaque field YAML, compare :
-// - field.indexed avec presence d'un INDEX en MySQL
-// - field.unique avec presence d'un UNIQUE en MySQL
-//
-// IMPORTANT :
-// - On ne touche JAMAIS aux indexes des FK (auto-generes par MySQL,
-//   les supprimer casserait la contrainte FK).
-// - On ne touche JAMAIS au PRIMARY KEY (= la colonne id).
+// compute_index_diffs (Phase B.2) - inchange depuis B.2
 // ─────────────────────────────────────────────────────────────
 std::vector<ColumnDiff>
 SchemaDiffer::compute_index_diffs(
@@ -335,16 +289,10 @@ SchemaDiffer::compute_index_diffs(
         !entity.table_name.empty() ? entity.table_name : entity.name;
 
     for (const auto& field : entity.fields) {
-        // Skip 'id' (gere par PRIMARY KEY)
         if (field.name == "id") continue;
-
-        // Skip si pas en MySQL (Added sera traite par column_diffs)
         if (!table_info.has_column(field.name)) continue;
-
-        // Skip si c'est une FK (l'index est auto-genere par MySQL)
         if (column_is_fk(entity, field.name)) continue;
 
-        // ─── Detection UNIQUE ───
         const bool yaml_unique = field.unique;
         const bool mysql_unique = column_has_unique_index(table_info, field.name);
 
@@ -354,7 +302,7 @@ SchemaDiffer::compute_index_diffs(
             diff.table_name = table_name;
             diff.column_name = field.name;
             diff.target_field = &field;
-            diff.is_safe = false;  // Peut echouer si doublons existent
+            diff.is_safe = false;
 
             std::ostringstream desc;
             desc << "ADD UNIQUE: " << field.name << " (UNSAFE if duplicates exist)";
@@ -368,7 +316,7 @@ SchemaDiffer::compute_index_diffs(
             diff.column_name = field.name;
             diff.target_field = &field;
             diff.index_name_to_drop = find_index_name_for_column(table_info, field.name, true);
-            diff.is_safe = true;  // Drop UNIQUE est toujours safe
+            diff.is_safe = true;
 
             std::ostringstream desc;
             desc << "DROP UNIQUE: " << field.name
@@ -377,13 +325,7 @@ SchemaDiffer::compute_index_diffs(
             diffs.push_back(std::move(diff));
         }
 
-        // ─── Detection INDEX (non-unique) ───
-        // Note : si la colonne a un UNIQUE, on ne genere pas en plus un INDEX
-        // (UNIQUE est deja un index).
-        if (yaml_unique || mysql_unique) {
-            // On a deja gere le UNIQUE, on skip la detection INDEX
-            continue;
-        }
+        if (yaml_unique || mysql_unique) continue;
 
         const bool yaml_indexed = field.indexed;
         const bool mysql_indexed = column_has_simple_index(table_info, field.name);
@@ -394,7 +336,7 @@ SchemaDiffer::compute_index_diffs(
             diff.table_name = table_name;
             diff.column_name = field.name;
             diff.target_field = &field;
-            diff.is_safe = true;  // Ajouter un INDEX est toujours safe
+            diff.is_safe = true;
 
             std::ostringstream desc;
             desc << "ADD INDEX: " << field.name << " (safe)";
@@ -408,7 +350,7 @@ SchemaDiffer::compute_index_diffs(
             diff.column_name = field.name;
             diff.target_field = &field;
             diff.index_name_to_drop = find_index_name_for_column(table_info, field.name, false);
-            diff.is_safe = true;  // Drop INDEX est toujours safe
+            diff.is_safe = true;
 
             std::ostringstream desc;
             desc << "DROP INDEX: " << field.name
@@ -419,6 +361,252 @@ SchemaDiffer::compute_index_diffs(
     }
 
     return diffs;
+}
+
+// ═════════════════════════════════════════════════════════════
+// ✨ PHASE B.3 : compute_renames + heuristique
+// ═════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────
+// score_rename_candidate (heuristique)
+//
+// Calcule un score de confiance (0-100) pour un candidat rename.
+// Plus le score est haut, plus le rename est probable.
+//
+// Criteres (score additif) :
+// - Type identique             : +50
+// - Position similaire (+/-1)  : +30
+// - Position identique         : bonus +5
+// - Nullability identique      : +10
+// - Default identique          : +5
+// - Indexed/Unique identique   : +5
+//
+// Seuil pour rename automatique : 90+ (sinon traite comme drop+add).
+// ─────────────────────────────────────────────────────────────
+int SchemaDiffer::score_rename_candidate(
+    const sea::domain::Field& yaml_field,
+    std::size_t yaml_position,
+    const ColumnInfo& mysql_column,
+    std::size_t mysql_position)
+{
+    int score = 0;
+
+    // ── Type (+50) ──
+    const auto target_type = field_to_target_type(yaml_field);
+    if (types_are_compatible(mysql_column.column_type, target_type)) {
+        score += 50;
+    } else {
+        // Type compatible (ex: VARCHAR(50) → VARCHAR(255)) ?
+        if (is_type_change_safe(mysql_column.column_type, yaml_field)) {
+            score += 30;  // moins de poids car type a change
+        }
+        // Type vraiment different : pas de bonus du tout
+    }
+
+    // ── Position (+30 max) ──
+    const auto pos_diff =
+        (yaml_position > mysql_position)
+            ? (yaml_position - mysql_position)
+            : (mysql_position - yaml_position);
+
+    if (pos_diff == 0) {
+        score += 35;  // position EXACTE = bonus max
+    } else if (pos_diff == 1) {
+        score += 25;
+    } else if (pos_diff == 2) {
+        score += 15;
+    }
+    // pos_diff > 2 : pas de bonus
+
+    // ── Nullability (+10) ──
+    const bool yaml_nullable = !(yaml_field.required || yaml_field.name == "id");
+    if (yaml_nullable == mysql_column.is_nullable) {
+        score += 10;
+    }
+
+    // ── Default (+5) ──
+    const std::string yaml_default = yaml_default_to_string(yaml_field.default_val);
+    const std::string mysql_default = mysql_column.default_value.value_or("");
+    if (yaml_default == mysql_default) {
+        score += 5;
+    }
+
+    return score;
+}
+
+// ─────────────────────────────────────────────────────────────
+// compute_renames
+//
+// Phase 1 : annotations explicites (previous_name)
+// Phase 2 : heuristique automatique
+// ─────────────────────────────────────────────────────────────
+std::vector<ColumnDiff>
+SchemaDiffer::compute_renames(
+    const sea::domain::Entity& entity,
+    const TableInfo& table_info)
+{
+    std::vector<ColumnDiff> renames;
+
+    const std::string table_name =
+        !entity.table_name.empty() ? entity.table_name : entity.name;
+
+    // Tracking des colonnes deja matchees pour eviter les conflits
+    std::unordered_set<std::string> matched_mysql_columns;
+    std::unordered_set<std::string> matched_yaml_fields;
+
+    // ════════════════════════════════════════════════════════
+    // PHASE 1 : Annotations explicites (previous_name)
+    // ════════════════════════════════════════════════════════
+    for (const auto& field : entity.fields) {
+        if (!field.has_previous_name()) continue;
+
+        const std::string& old_name = *field.previous_name;
+        const std::string& new_name = field.name;
+
+        // Si la colonne old_name n'existe pas en MySQL, ignore silencieusement
+        // (le rename a peut-etre deja ete applique)
+        if (!table_info.has_column(old_name)) {
+            std::cerr << "[DIFF] " << table_name << ": rename annotation "
+                      << old_name << " → " << new_name
+                      << " skipped (old column not found)\n";
+            continue;
+        }
+
+        // Si la colonne new_name existe deja en MySQL → conflit
+        if (table_info.has_column(new_name)) {
+            std::cerr << "[DIFF] " << table_name << ": rename annotation "
+                      << old_name << " → " << new_name
+                      << " skipped (new column already exists, conflict)\n";
+            continue;
+        }
+
+        ColumnDiff diff;
+        diff.kind = ColumnDiffKind::Renamed;
+        diff.table_name = table_name;
+        diff.column_name = new_name;
+        diff.previous_name = old_name;
+        diff.target_field = &field;
+        diff.rename_confidence_score = 100;  // explicite
+        diff.is_safe = true;  // annotation explicite est toujours safe
+
+        std::ostringstream desc;
+        desc << "RENAME COLUMN " << old_name << " → " << new_name
+             << " (explicit, safe)";
+        diff.description = desc.str();
+
+        renames.push_back(std::move(diff));
+        matched_mysql_columns.insert(old_name);
+        matched_yaml_fields.insert(new_name);
+    }
+
+    // ════════════════════════════════════════════════════════
+    // PHASE 2 : Heuristique automatique
+    // ════════════════════════════════════════════════════════
+
+    // Trouve les colonnes MySQL "orphelines" (pas dans le YAML, pas matchees)
+    std::vector<std::pair<std::size_t, const ColumnInfo*>> orphan_columns;
+    for (std::size_t i = 0; i < table_info.columns.size(); ++i) {
+        const auto& col = table_info.columns[i];
+        if (matched_mysql_columns.count(col.name)) continue;
+
+        // Verifie si un field YAML porte ce nom
+        bool found_in_yaml = false;
+        for (const auto& field : entity.fields) {
+            if (field.name == col.name) {
+                found_in_yaml = true;
+                break;
+            }
+        }
+        if (!found_in_yaml) {
+            orphan_columns.emplace_back(i, &col);
+        }
+    }
+
+    // Trouve les fields YAML "non-matches" (pas en MySQL, pas deja renames)
+    std::vector<std::pair<std::size_t, const sea::domain::Field*>> unmatched_fields;
+    for (std::size_t i = 0; i < entity.fields.size(); ++i) {
+        const auto& field = entity.fields[i];
+        if (matched_yaml_fields.count(field.name)) continue;
+        if (table_info.has_column(field.name)) continue;
+        unmatched_fields.emplace_back(i, &field);
+    }
+
+    // Pour chaque colonne orpheline, cherche le meilleur match dans les fields non-matches
+    constexpr int RENAME_THRESHOLD = 90;
+
+    for (const auto& [mysql_pos, mysql_col] : orphan_columns) {
+        int best_score = 0;
+        const sea::domain::Field* best_field = nullptr;
+        std::size_t best_field_pos = 0;
+
+        for (const auto& [yaml_pos, yaml_field] : unmatched_fields) {
+            // Skip si deja matche
+            if (matched_yaml_fields.count(yaml_field->name)) continue;
+
+            const int score = score_rename_candidate(
+                *yaml_field, yaml_pos, *mysql_col, mysql_pos
+                );
+
+            if (score > best_score) {
+                best_score = score;
+                best_field = yaml_field;
+                best_field_pos = yaml_pos;
+            }
+        }
+
+        // Si meilleur score >= seuil → rename heuristique
+        if (best_score >= RENAME_THRESHOLD && best_field != nullptr) {
+            ColumnDiff diff;
+            diff.kind = ColumnDiffKind::Renamed;
+            diff.table_name = table_name;
+            diff.column_name = best_field->name;
+            diff.previous_name = mysql_col->name;
+            diff.target_field = best_field;
+            diff.rename_confidence_score = best_score;
+            diff.is_safe = false;  // heuristique = pas safe (incertain)
+
+            std::ostringstream desc;
+            desc << "RENAME COLUMN " << mysql_col->name
+                 << " → " << best_field->name
+                 << " (heuristic, score=" << best_score << "/100, UNSAFE)";
+            diff.description = desc.str();
+
+            renames.push_back(std::move(diff));
+            matched_mysql_columns.insert(mysql_col->name);
+            matched_yaml_fields.insert(best_field->name);
+        }
+    }
+
+    return renames;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Helpers publics : verifie si un field/column a ete renomme
+// (pour que compute_column_diffs et compute_index_diffs ignorent
+//  les colonnes deja gerees par le rename)
+// ─────────────────────────────────────────────────────────────
+bool SchemaDiffer::field_was_renamed(
+    const std::string& field_name,
+    const std::vector<ColumnDiff>& renames)
+{
+    for (const auto& r : renames) {
+        if (r.kind == ColumnDiffKind::Renamed && r.column_name == field_name) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool SchemaDiffer::column_was_renamed_from(
+    const std::string& mysql_column_name,
+    const std::vector<ColumnDiff>& renames)
+{
+    for (const auto& r : renames) {
+        if (r.kind == ColumnDiffKind::Renamed && r.previous_name == mysql_column_name) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace sea::infrastructure::persistence::mysql
