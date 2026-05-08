@@ -90,6 +90,16 @@ private:
     [[nodiscard]] sea::domain::DatabaseDialect parse_database_dialect_node(const std::string& value) const;
     [[nodiscard]] sea::domain::Relation parse_relation_node(const YAML::Node& node) const;
     [[nodiscard]] sea::domain::DatabaseConfig parse_database_config_node(const YAML::Node& node) const;
+    // parse le bloc 'seeds:' dans la config database
+    [[nodiscard]] sea::domain::SeedsConfig
+    parse_seeds_config_node(const YAML::Node& node) const;
+
+    // parse un seul seed record dans une entity
+    [[nodiscard]] sea::domain::SeedRecord
+    parse_seed_record_node(
+        const YAML::Node& seed_node,
+        const sea::domain::Entity& entity
+        ) const;
 
     [[nodiscard]] sea::domain::RelationKind parse_relation_kind(const std::string& value) const;
     [[nodiscard]] sea::domain::OnDelete parse_on_delete(const std::string& value) const;
@@ -105,6 +115,9 @@ private:
     // =====================================================================
     std::chrono::seconds  parse_duration(const std::string& s) const;
     std::uint64_t parse_size(const std::string& s) const;
+    // convertit un YAML scalar en SeedValue
+    [[nodiscard]] sea::domain::SeedValue
+    yaml_node_to_seed_value(const YAML::Node& node) const;
 };
 
 } // namespace sea::infrastructure::yaml

@@ -320,6 +320,19 @@ sea::domain::Entity YamlSchemaParser::parse_entity_node(const YAML::Node& node, 
             entity.relations.push_back(parse_relation_node(relation_node));
         }
     }
+    // parser le bloc 'seeds:' de l'entite
+    if (has_key(node, "seeds")) {
+        const YAML::Node seeds_node = node["seeds"];
+        if (!seeds_node.IsSequence()) {
+            throw std::runtime_error(
+                "'seeds' doit être une liste dans l'entité '" + entity.name + "'."
+                );
+        }
+        for (const auto& seed_node : seeds_node) {
+            entity.seeds.push_back(parse_seed_record_node(seed_node, entity));
+        }
+    }
+
     // access_control pour cette entité (Module 5)
     entity.access_control = parse_entity_access_control_node(node, entity, global_config);
 
@@ -341,6 +354,7 @@ sea::domain::Field YamlSchemaParser::parse_field_node(const YAML::Node& node) co
             field.previous_name = prev_name;
         }
     }
+
     const std::string type_str = require_string(node, "type", "field");
     const auto field_type = sea::domain::field_type_from_string(type_str);
     if (!field_type.has_value()) {
@@ -899,16 +913,29 @@ YamlSchemaParser::parse_database_config_node(const YAML::Node& node) const {
     if (const YAML::Node preset = node["migrations"]) {
 
     }
+
     if (has_key(node, "migrations")) {
         const YAML::Node migration_node = node["migrations"];
-
         if (!migration_node.IsMap()) {
             throw std::runtime_error("'migrations' doit être un objet.");
         }
-        config.migrations.create_database_if_missing =  get_or_default<bool>(migration_node, "create_database_if_missing", config.migrations.create_database_if_missing);
-        config.migrations.enabled = get_or_default<bool>(migration_node, "enabled", config.migrations.enabled);
-        config.migrations.mode = get_or_default<domain::MigrationMode>(migration_node, "mode", config.migrations.mode);
+        config.migrations.create_database_if_missing = get_or_default<bool>(
+            migration_node, "create_database_if_missing",
+            config.migrations.create_database_if_missing
+            );
+        config.migrations.enabled = get_or_default<bool>(
+            migration_node, "enabled", config.migrations.enabled
+            );
+        config.migrations.mode = get_or_default<domain::MigrationMode>(
+            migration_node, "mode", config.migrations.mode
+            );
+
+        // parser le sous-bloc 'seeds'
+        if (has_key(migration_node, "seeds")) {
+            config.migrations.seeds = parse_seeds_config_node(migration_node["seeds"]);
+        }
     }
+
 
     return config;
 }
@@ -1283,6 +1310,157 @@ YamlSchemaParser::compile_allow_roles_shortcut(
         );
 
     return PolicyCondition(std::move(pred));
+}
+// ─────────────────────────────────────────────────────────────
+// parse_seeds_config_node
+// ─────────────────────────────────────────────────────────────
+sea::domain::SeedsConfig
+YamlSchemaParser::parse_seeds_config_node(const YAML::Node& node) const
+{
+    sea::domain::SeedsConfig config;
+
+    if (!node || !node.IsMap()) {
+        return config;
+    }
+
+    config.enabled = get_or_default<bool>(node, "enabled", false);
+
+    if (has_key(node, "mode")) {
+        const auto mode_str = node["mode"].as<std::string>();
+        const auto parsed = sea::domain::seeds_mode_from_string(mode_str);
+        if (parsed.has_value()) {
+            config.mode = *parsed;
+        } else {
+            throw std::runtime_error(
+                "seeds.mode: invalid value '" + mode_str +
+                "'. Valid values: once, always"
+                );
+        }
+    }
+
+    if (has_key(node, "on_error")) {
+        const auto policy_str = node["on_error"].as<std::string>();
+        if (policy_str == "abort") {
+            config.on_error = sea::domain::SeedsErrorPolicy::Abort;
+        } else if (policy_str == "continue") {
+            config.on_error = sea::domain::SeedsErrorPolicy::Continue;
+        } else {
+            throw std::runtime_error(
+                "seeds.on_error: invalid value '" + policy_str +
+                "'. Valid values: continue, abort"
+                );
+        }
+    }
+
+    return config;
+}
+
+// ─────────────────────────────────────────────────────────────
+// yaml_node_to_seed_value
+//
+// Convertit un YAML scalar en SeedValue (variant).
+// Pour V1 : on stocke tout en string (le SeedOrchestrator fera
+// la conversion en runtime::DynamicValue selon le type du field).
+// Plus simple et evite les ambiguites de parsing YAML.
+// ─────────────────────────────────────────────────────────────
+sea::domain::SeedValue
+YamlSchemaParser::yaml_node_to_seed_value(const YAML::Node& node) const
+{
+    if (!node || node.IsNull()) {
+        return std::monostate{};
+    }
+
+    if (!node.IsScalar()) {
+        // Pas de support pour les structures imbriquees
+        return std::monostate{};
+    }
+
+    // Tente bool en premier (true/false)
+    try {
+        const auto s = node.as<std::string>();
+        if (s == "true" || s == "false" || s == "True" || s == "False"
+            || s == "TRUE" || s == "FALSE") {
+            return s == "true" || s == "True" || s == "TRUE";
+        }
+    } catch (...) {}
+
+    // Tente int
+    try {
+        return node.as<std::int64_t>();
+    } catch (...) {}
+
+    // Tente double
+    try {
+        return node.as<double>();
+    } catch (...) {}
+
+    // Fallback : string (cas le plus frequent pour les seeds)
+    try {
+        return node.as<std::string>();
+    } catch (...) {}
+
+    return std::monostate{};
+}
+
+// ─────────────────────────────────────────────────────────────
+// parse_seed_record_node
+//
+// Parse un seul seed record d'une entity.
+// Detecte automatiquement les champs M2M (basés sur entity.relations)
+// et les met dans seed.m2m_relations au lieu de seed.values.
+// ─────────────────────────────────────────────────────────────
+sea::domain::SeedRecord
+YamlSchemaParser::parse_seed_record_node(
+    const YAML::Node& seed_node,
+    const sea::domain::Entity& entity) const
+{
+    sea::domain::SeedRecord record;
+
+    if (!seed_node || !seed_node.IsMap()) {
+        throw std::runtime_error(
+            "Un seed de l'entite '" + entity.name + "' doit etre un objet."
+            );
+    }
+
+    // Construire le set des noms de relations M2M de l'entity
+    std::set<std::string> m2m_relation_names;
+    for (const auto& rel : entity.relations) {
+        if (rel.kind == sea::domain::RelationKind::ManyToMany) {
+            m2m_relation_names.insert(rel.name);
+        }
+    }
+
+    for (auto it = seed_node.begin(); it != seed_node.end(); ++it) {
+        const auto key = it->first.as<std::string>();
+        const auto& value_node = it->second;
+
+        // ── Cas 1 : alias (special) ──
+        if (key == "alias") {
+            record.alias = value_node.as<std::string>("");
+            continue;
+        }
+
+        // ── Cas 2 : relation M2M (sequence d'aliases) ──
+        if (m2m_relation_names.count(key)) {
+            if (!value_node.IsSequence()) {
+                throw std::runtime_error(
+                    "Le champ M2M '" + key + "' dans seed de '" + entity.name +
+                    "' doit etre une liste d'aliases"
+                    );
+            }
+            std::vector<std::string> aliases;
+            for (const auto& alias_node : value_node) {
+                aliases.push_back(alias_node.as<std::string>(""));
+            }
+            record.m2m_relations[key] = std::move(aliases);
+            continue;
+        }
+
+        // ── Cas 3 : champ simple (FK ou attribute) ──
+        record.values[key] = yaml_node_to_seed_value(value_node);
+    }
+
+    return record;
 }
 
 sea::domain::access_control::PolicyCondition

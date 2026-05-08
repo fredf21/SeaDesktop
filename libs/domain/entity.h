@@ -19,6 +19,40 @@ struct EntityOptions {
     bool public_routes    = false;   // Defini si une route est protege par le middleware de securitE
 };
 
+
+// ─────────────────────────────────────────────────────────────
+// SeedRecord : un enregistrement a inserer comme seed
+//
+// Contient :
+// - alias : optionnel, sert a referencer ce record depuis d'autres seeds
+//           via ${REF:alias}
+// - values : map cle/valeur des champs (resolus par le SeedOrchestrator)
+// - m2m_relations : map nom_relation → liste d'aliases cibles
+//                   (Phase Seeds.3 : pour la table pivot)
+//
+// Les valeurs peuvent contenir des macros :
+// - ${REF:alias}     → resolu a l'UUID de l'entite avec cet alias
+// - {{hash:value}}   → bcrypt du value (pour les fields Password)
+// ─────────────────────────────────────────────────────────────
+using SeedValue = std::variant<
+    std::monostate,
+    std::string,
+    std::int64_t,
+    double,
+    bool
+    >;
+
+struct SeedRecord {
+    std::string alias;                              // optionnel
+    std::map<std::string, SeedValue> values;        // champs simples
+    std::map<std::string, std::vector<std::string>> m2m_relations;
+    // ↑ key = nom de relation (ex: "programs"), value = liste d'aliases
+
+    [[nodiscard]] bool has_alias() const noexcept {
+        return !alias.empty();
+    }
+};
+
 struct Entity {
     std::string            name;        // ex: "User"  (FredericCase)
     std::string            table_name;  // ex: "users" (calculé si vide)
@@ -26,6 +60,9 @@ struct Entity {
     std::vector<Relation>  relations;
     EntityOptions          options;
     access_control::EntityAccessControl access_control;
+    // Seeds.1 : seeds optionnels
+    std::vector<SeedRecord> seeds;
+
     // ── helpers ────────────────────────────────────────────────
 
     [[nodiscard]] std::string route_prefix() const {
@@ -59,6 +96,24 @@ struct Entity {
             if (f.serializable) out.push_back(f);
         return out;
     }
+
+    [[nodiscard]] bool has_seeds() const noexcept {
+        return !seeds.empty();
+    }
+
+    // trouve une relation par nom
+    [[nodiscard]] const Relation* find_relation(std::string_view n) const {
+        auto it = std::find_if(relations.begin(), relations.end(),
+                               [&](const Relation& r) { return r.name == n; });
+        if (it == relations.end()) return nullptr;
+        return &(*it);
+    }
+
+    [[nodiscard]] bool has_relation(std::string_view n) const {
+        return find_relation(n) != nullptr;
+    }
+
+
 
 };
 

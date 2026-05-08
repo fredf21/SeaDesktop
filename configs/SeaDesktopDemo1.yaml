@@ -95,6 +95,10 @@ services:
         mode: modified                  # conservative | modified | aggressive
         create_database_if_missing: true    # CREATE DATABASE si absente
         dry_run: false                      # true = affiche les SQL sans les executer
+        seeds:
+          enabled: true
+          mode: once
+          on_error: continue
 
     # ═══════════════════════════════════════════════════════════════
     # ENTITÉS
@@ -186,7 +190,11 @@ services:
             target_entity: Employee
             fk_column: department_id
             on_delete: cascade
-
+        seeds:              # ← NEW
+          - alias: dept_ac
+            name: ACC
+          - alias: dept_com
+            name: COMM
         access_control:
           list:
             allow_roles: [admin, manager, user]
@@ -301,7 +309,13 @@ services:
             source_fk_column: student_id
             target_fk_column: program_id
             on_delete: cascade
-
+        seeds:
+          - alias: yann
+            name: Yann
+            email: yann@school.ca
+            age: 20
+            programs: [prog_cs, prog_eng]
+            
         access_control:
           list:
             allow_roles: [admin, manager, user]
@@ -346,7 +360,13 @@ services:
             source_fk_column: program_id
             target_fk_column: student_id
             on_delete: cascade
-
+            
+        seeds:
+          - alias: prog_cs
+            name: Computer Science
+          - alias: prog_eng
+            name: Engineering
+            
         access_control:
           list:
             allow_roles: [admin, manager, user]

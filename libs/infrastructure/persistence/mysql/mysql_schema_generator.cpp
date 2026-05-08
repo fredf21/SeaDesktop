@@ -298,7 +298,7 @@ std::string MysqlSchemaGenerator::generate_drop_unique_sql(
     return sql.str();
 }
 // ─────────────────────────────────────────────────────────────
-// generate_rename_column_sql (Phase B.3)
+// generate_rename_column_sql
 //
 // Genere :
 //   ALTER TABLE `table` CHANGE COLUMN `old_name` `new_name` <type> [NOT NULL] [DEFAULT ...]

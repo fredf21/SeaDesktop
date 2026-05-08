@@ -56,6 +56,7 @@ add_library(sea_infrastructure STATIC
     persistence/mysql/mysql_schema_generator.h persistence/mysql/mysql_schema_generator.cpp
     persistence/mysql/mysql_bootstrapper.h persistence/mysql/mysql_bootstrapper.cpp
     persistence/mysql/schema_differ.h persistence/mysql/schema_differ.cpp
+    persistence/mysql/seed_orchestrator.h persistence/mysql/seed_orchestrator.cpp
 )
 
 add_library(Sea::infrastructure ALIAS sea_infrastructure)

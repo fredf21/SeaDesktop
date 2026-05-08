@@ -64,6 +64,52 @@ constexpr std::string_view to_string(MigrationMode mode) noexcept {
 
 inline std::optional<MigrationMode>
 migration_mode_from_string(std::string_view s) noexcept;
+// ─────────────────────────────────────────────────────────────
+// Mode de seeds
+//
+// Once    : insere uniquement si la table est vide
+// Always  : insere a chaque boot avec UPSERT (ON DUPLICATE KEY UPDATE)
+// ─────────────────────────────────────────────────────────────
+enum class SeedsMode {
+    Once,
+    Always
+};
+
+constexpr std::string_view to_string(SeedsMode mode) noexcept {
+    switch (mode) {
+    case SeedsMode::Once:   return "once";
+    case SeedsMode::Always: return "always";
+    default:                return "unknown";
+    }
+}
+
+inline std::optional<SeedsMode>
+seeds_mode_from_string(std::string_view s) noexcept;
+
+// ─────────────────────────────────────────────────────────────
+// Comportement en cas d'erreur de seed
+// ─────────────────────────────────────────────────────────────
+enum class SeedsErrorPolicy {
+    Continue,   // log l'erreur et continue les autres seeds
+    Abort       // arrete le serveur
+};
+
+constexpr std::string_view to_string(SeedsErrorPolicy policy) noexcept {
+    switch (policy) {
+    case SeedsErrorPolicy::Continue: return "continue";
+    case SeedsErrorPolicy::Abort:    return "abort";
+    default:                         return "unknown";
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// ✨ Configuration des seeds
+// ─────────────────────────────────────────────────────────────
+struct SeedsConfig {
+    bool enabled = false;
+    SeedsMode mode = SeedsMode::Once;
+    SeedsErrorPolicy on_error = SeedsErrorPolicy::Continue;
+};
 
 // ─────────────────────────────────────────────────────────────
 //  Configuration des migrations automatiques
@@ -82,6 +128,8 @@ struct MigrationsConfig {
     // Si true, lance le serveur en mode 'dry_run' :
     // affiche les SQL qui seraient executes sans les appliquer.
     bool dry_run = false;
+
+    SeedsConfig seeds;
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -158,6 +206,21 @@ migration_mode_from_string(std::string_view s) noexcept
     if (lower == "conservative") return MigrationMode::Conservative;
     if (lower == "modified")     return MigrationMode::Modified;
     if (lower == "aggressive")   return MigrationMode::Aggressive;
+
+    return std::nullopt;
+}
+
+
+inline std::optional<SeedsMode>
+seeds_mode_from_string(std::string_view s) noexcept
+{
+    std::string lower{s};
+    for (auto& c : lower) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+
+    if (lower == "once")   return SeedsMode::Once;
+    if (lower == "always") return SeedsMode::Always;
 
     return std::nullopt;
 }

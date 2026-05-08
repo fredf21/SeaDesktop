@@ -18,7 +18,12 @@ namespace sea::domain {
 using DefaultValue = std::variant<
     std::monostate,
     std::string,
-    int64_t,
+    std::int64_t,
+    std::uint64_t,
+    std::int32_t,
+    std::uint32_t,
+    std::int16_t,
+    std::uint16_t,
     double,
     bool
     >;
@@ -39,7 +44,7 @@ struct NativeDbType {
 // Contraintes numériques génériques
 // Permet de supporter à la fois Int et Float
 // ─────────────────────────────────────────────────────────────
-using NumericConstraint = std::variant<int64_t, double>;
+using NumericConstraint = std::variant<std::int64_t, std::uint64_t, double>;
 
 // ─────────────────────────────────────────────────────────────
 // Représente un champ appartenant à une entité métier
@@ -135,7 +140,10 @@ inline Field& min_value(Field& f, int64_t v) {
     f.min_value = v;
     return f;
 }
-
+inline Field& min_value(Field& f, uint64_t v) {
+    f.min_value = v;
+    return f;
+}
 inline Field& min_value(Field& f, double v) {
     f.min_value = v;
     return f;
@@ -145,7 +153,10 @@ inline Field& max_value(Field& f, int64_t v) {
     f.max_value = v;
     return f;
 }
-
+inline Field& max_value(Field& f, uint64_t v) {
+    f.max_value = v;
+    return f;
+}
 inline Field& max_value(Field& f, double v) {
     f.max_value = v;
     return f;
@@ -160,7 +171,26 @@ inline Field& default_value(Field& f, int64_t v) {
     f.default_val = v;
     return f;
 }
-
+inline Field& default_value(Field& f, uint64_t v) {
+    f.default_val = v;
+    return f;
+}
+inline Field& default_value(Field& f, int32_t v) {
+    f.default_val = v;
+    return f;
+}
+inline Field& default_value(Field& f, uint32_t v) {
+    f.default_val = v;
+    return f;
+}
+inline Field& default_value(Field& f, int16_t v) {
+    f.default_val = v;
+    return f;
+}
+inline Field& default_value(Field& f, uint16_t v) {
+    f.default_val = v;
+    return f;
+}
 inline Field& default_value(Field& f, double v) {
     f.default_val = v;
     return f;

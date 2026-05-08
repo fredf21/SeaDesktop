@@ -31,6 +31,7 @@ services:
             required: true
             unique: true
 
+
         relations:
           - name: employees
             kind: has_many
@@ -94,7 +95,13 @@ services:
           - name: age
             type: int
             required: false
-
+        seeds:
+          - alias: yann
+            name: Yann
+            email: yann@school.ca
+            age: 20
+            programs: [prog_cs, prog_eng]
+            
       - name: Program
         options:
           enable_crud: true
@@ -109,3 +116,8 @@ services:
             type: string
             required: true
             unique: true
+        seeds:
+          - alias: prog_cs
+            name: Computer Science
+          - alias: prog_eng
+            name: Engineering

@@ -17,6 +17,7 @@
 #include "authservice.h"
 #include "import_yaml_schema_usecase.h"
 #include "openapigenerator.h"
+#include "persistence/mysql/seed_orchestrator.h"
 #include "route_generator.h"
 #include "validate_schema_usecase.h"
 
@@ -230,7 +231,7 @@ int main(int argc, char** argv)
 
         if (service.database_config.type == sea::domain::DatabaseType::MySQL) {
 
-            // ✨ ETAPE 7.A : Ensure database exists (AVANT le pool)
+            // Ensure database exists (AVANT le pool)
             //
             // Le pool ne peut pas demarrer si la database n'existe pas.
             // On utilise une connexion ad-hoc (sans database_name) pour
@@ -363,6 +364,49 @@ int main(int argc, char** argv)
                 runtime_validator,
                 repository
                 );
+
+
+        // ─────────────────────────────────────────────────────
+        // 9.5. Phase Seeds : insertion des donnees initiales
+        // ─────────────────────────────────────────────────────
+        if (service.database_config.is_mysql()
+            && service.database_config.migrations.seeds.enabled) {
+
+            if (is_main_shard()) {
+                std::cerr << "\n═══════════════════════════════════════════════\n";
+                std::cerr << " PHASE C : seed initial data\n";
+                std::cerr << "═══════════════════════════════════════════════\n";
+            }
+
+            auto seed_introspector =
+                std::make_shared<sea::infrastructure::persistence::mysql::MysqlIntrospector>(
+                    *mysql_pool,
+                    blocking_executor
+                    );
+
+            sea::infrastructure::persistence::mysql::SeedOrchestrator orchestrator(
+                service.database_config,
+                service.schema,
+                crud_engine,
+                seed_introspector,
+                blocking_executor,      // Pour BCrypt async
+                repository
+                );
+
+            const auto seed_result = co_await orchestrator.seed_all();
+
+            if (!seed_result.success) {
+                if (service.database_config.migrations.seeds.on_error
+                    == sea::domain::SeedsErrorPolicy::Abort) {
+                    throw std::runtime_error("Seeds failed and on_error=abort");
+                }
+                if (is_main_shard()) {
+                    std::cerr << "[BOOT] WARNING: Seeds had errors, continuing\n";
+                }
+            }
+        }
+
+
 
         // ─────────────────────────────────────────────────────
         // 10. Routes + OpenAPI

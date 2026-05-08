@@ -31,7 +31,10 @@ DynamicRecord JsonRecordParser::parse(const sea::domain::Entity& entity,
         if (!j.contains(field.name)) {
             continue;
         }
-
+        bool unsignedvalue = false;
+        if(field.unsigned_value){
+            unsignedvalue = true;
+        }
         const auto& value = j[field.name];
 
         if (value.is_null()) {
@@ -57,18 +60,59 @@ DynamicRecord JsonRecordParser::parse(const sea::domain::Entity& entity,
             record[field.name] = value;
             break;
         }
-        case sea::domain::FieldType::Int:
         case sea::domain::FieldType::BigInt:
+        {
+            if (!value.is_number_integer()) {
+                throw std::runtime_error("Le champ '" + field.name + "' doit etre un entier.");
+            }
+            if(unsignedvalue)
+                record[field.name] = static_cast<std::uint64_t>(value.get<std::uint64_t>());
+            else record[field.name] = static_cast<std::int64_t>(value.get<std::int64_t>());
+            break;
+        }
         case sea::domain::FieldType::SmallInt:
 
         {
             if (!value.is_number_integer()) {
                 throw std::runtime_error("Le champ '" + field.name + "' doit etre un entier.");
             }
-            record[field.name] = static_cast<std::int64_t>(value.get<std::int64_t>());
+            if(unsignedvalue){
+                if(value.get<std::uint16_t>() < std::numeric_limits<std::uint16_t>::min() ||  value.get<std::uint16_t>() > std::numeric_limits<std::uint16_t>::max()){
+                    throw std::runtime_error("Le champ '" + field.name + "' n'est pas dans la plage des tailles d'un SMALLINT Non Signé.");
+                }
+
+                else record[field.name] = static_cast<std::uint16_t>(value.get<std::uint16_t>());
+            }
+            else{
+                if(value.get<std::int16_t>() < std::numeric_limits<std::int16_t>::min() ||  value.get<std::int16_t>() > std::numeric_limits<std::int16_t>::max()){
+                    throw std::runtime_error("Le champ '" + field.name + "' n'est pas dans la plage des tailles d'un SMALLINT.");
+                }
+                else record[field.name] = static_cast<std::int16_t>(value.get<std::int16_t>());
+            }
             break;
         }
 
+        case sea::domain::FieldType::Int:
+
+            {
+                if (!value.is_number_integer()) {
+                    throw std::runtime_error("Le champ '" + field.name + "' doit etre un entier.");
+                }
+                if(unsignedvalue){
+                    if(value.get<std::uint32_t>() < std::numeric_limits<std::uint32_t>::min() ||  value.get<std::uint32_t>() > std::numeric_limits<std::uint32_t>::max()){
+                        throw std::runtime_error("Le champ '" + field.name + "' n'est pas dans la plage des tailles d'un INT Non Signé.");
+                    }
+
+                    else record[field.name] = static_cast<std::uint32_t>(value.get<std::uint32_t>());
+                }
+                else{
+                    if(value.get<std::int32_t>() < std::numeric_limits<std::int32_t>::min() ||  value.get<std::int32_t>() > std::numeric_limits<std::int32_t>::max()){
+                        throw std::runtime_error("Le champ '" + field.name + "' n'est pas dans la plage des tailles d'un INT.");
+                    }
+                    else record[field.name] = static_cast<std::int64_t>(value.get<std::int32_t>());
+                }
+                break;
+            }
         case sea::domain::FieldType::Float: {
             if (!value.is_number()) {
                 throw std::runtime_error("Le champ '" + field.name + "' doit etre un nombre.");

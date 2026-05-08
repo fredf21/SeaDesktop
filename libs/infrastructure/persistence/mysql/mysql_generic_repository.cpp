@@ -18,7 +18,7 @@ namespace {
 runtime::DynamicValue read_typed_value(
     sql::ResultSet* rs,
     const std::string& field_name,
-    sea::domain::FieldType field_type)
+    sea::domain::FieldType field_type, bool unsigned_value = false)
 {
     if (rs->isNull(field_name)) {
         return std::monostate{};
@@ -31,14 +31,50 @@ runtime::DynamicValue read_typed_value(
     case FieldType::Password:
     case FieldType::Email:
     case FieldType::Timestamp:
+    case FieldType::Decimal:
         return std::string(rs->getString(field_name));
     case FieldType::Int:
-        return static_cast<std::int64_t>(rs->getInt64(field_name));
+    case FieldType::SmallInt:
+    {
+        if(unsigned_value)
+            return static_cast<std::uint32_t>(rs->getUInt(field_name));
+        else return static_cast<std::int32_t>(rs->getInt(field_name));
+    }
+    case FieldType::BigInt:
+    {
+        if(unsigned_value)
+            return static_cast<std::uint64_t>(rs->getUInt64(field_name));
+        else return static_cast<std::int64_t>(rs->getInt64(field_name));
+    }
     case FieldType::Float:
         return static_cast<double>(rs->getDouble(field_name));
     case FieldType::Bool:
         return rs->getBoolean(field_name);
+    case FieldType::Json:
+        return std::string(rs->getString(field_name));
+    case FieldType::Binary:
+    {
+        std::istream* stream = rs->getBlob(field_name);
+
+        std::vector<std::uint8_t> data(
+            (std::istreambuf_iterator<char>(*stream)),
+            std::istreambuf_iterator<char>()
+            );
+
+        return data;
     }
+    case FieldType::Native:
+    {
+        auto* meta = rs->getMetaData();
+        int column_index = rs->findColumn(field_name);
+        return sea::infrastructure::runtime::NativeValue{
+            .dialect = "mysql",
+            .sql_type = meta->getColumnTypeName(column_index),
+            .value = std::string(rs->getString(field_name))
+        };
+    }
+    }
+
     return std::monostate{};
 }
 
@@ -48,7 +84,11 @@ runtime::DynamicRecord resultset_to_record(
 {
     runtime::DynamicRecord record;
     for (const auto& field : entity.fields) {
-        record[field.name] = read_typed_value(rs, field.name, field.type);
+        if(field.unsigned_value)
+        {
+            record[field.name] = read_typed_value(rs, field.name, field.type, field.unsigned_value);
+        }
+        else  record[field.name] = read_typed_value(rs, field.name, field.type);
     }
     return record;
 }
@@ -60,19 +100,60 @@ void bindValue(
 {
     if (std::holds_alternative<std::monostate>(value)) {
         stmt->setNull(index, 0);
-    } else if (std::holds_alternative<std::string>(value)) {
+    }
+    else if (std::holds_alternative<std::string>(value)) {
         stmt->setString(index, std::get<std::string>(value));
-    } else if (std::holds_alternative<std::int64_t>(value)) {
+    }
+    else if (std::holds_alternative<std::int16_t>(value)) {
+        stmt->setInt(index, std::get<std::int16_t>(value));
+    }
+    else if (std::holds_alternative<std::uint16_t>(value)) {
+        stmt->setUInt(index, std::get<std::uint16_t>(value));
+    }
+    else if (std::holds_alternative<std::uint32_t>(value)) {
+        stmt->setUInt(index, std::get<std::uint32_t>(value));
+    }
+    else if (std::holds_alternative<std::int32_t>(value)) {
+        stmt->setInt(index, std::get<std::int32_t>(value));
+    }
+    else if (std::holds_alternative<std::uint64_t>(value)) {
+        stmt->setUInt64(index, std::get<std::uint64_t>(value));
+    }
+    else if (std::holds_alternative<std::int64_t>(value)) {
         stmt->setInt64(index, std::get<std::int64_t>(value));
-    } else if (std::holds_alternative<double>(value)) {
+    }
+    else if (std::holds_alternative<double>(value)) {
         stmt->setDouble(index, std::get<double>(value));
-    } else if (std::holds_alternative<bool>(value)) {
+    }
+    else if (std::holds_alternative<bool>(value)) {
         stmt->setBoolean(index, std::get<bool>(value));
-    } else {
-        throw std::runtime_error("Impossible de binder un tableau sur une colonne SQL simple");
+    }
+    else if (std::holds_alternative<nlohmann::json>(value)) {
+        stmt->setString(index, std::get<nlohmann::json>(value).dump());
+    }
+    else if (std::holds_alternative<std::vector<std::uint8_t>>(value)) {
+        const auto& bytes = std::get<std::vector<std::uint8_t>>(value);
+
+        std::string binaryData(
+            reinterpret_cast<const char*>(bytes.data()),
+            bytes.size()
+            );
+
+        stmt->setString(index, binaryData);
+    }
+    else if (std::holds_alternative<runtime::NativeValue>(value)) {
+        const auto& native = std::get<runtime::NativeValue>(value);
+
+        if (native.value.is_string()) {
+            stmt->setString(index, native.value.get<std::string>());
+        } else {
+            stmt->setString(index, native.value.dump());
+        }
+    }
+    else {
+        throw std::runtime_error("Impossible de binder cette valeur sur une colonne SQL simple");
     }
 }
-
 const sea::domain::Field* find_field_by_name(
     const sea::domain::Entity& entity,
     const std::string& field_name)
@@ -587,13 +668,16 @@ MySQLGenericRepository::insert_pivot(
     runtime::DynamicRecord values)
 {
     using namespace sea::infrastructure::persistence::utilities;
+
     if (values.empty()) {
         throw std::runtime_error("insert_pivot: aucune valeur fournie");
     }
+
     ValidationResult validation_result;
     if (!validate_sql_identifier(pivot_table, validation_result)) {
         throw std::runtime_error("insert_pivot: nom de table pivot invalide");
     }
+
     auto& pool = _pool.local();
     co_return co_await run_blocking_mysql<bool>(
         pool,
@@ -605,10 +689,21 @@ MySQLGenericRepository::insert_pivot(
                 std::vector<runtime::DynamicValue> bind_values;
                 columns.reserve(values.size());
                 bind_values.reserve(values.size());
+
                 for (auto& [key, value] : values) {
                     columns.push_back(key);
                     bind_values.push_back(value);
                 }
+
+                // Helper pour detecter si une string est un UUID
+                // Format : "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" (36 chars avec 4 tirets)
+                auto is_uuid_string = [](const runtime::DynamicValue& v) -> bool {
+                    if (!std::holds_alternative<std::string>(v)) return false;
+                    const auto& s = std::get<std::string>(v);
+                    if (s.size() != 36) return false;
+                    return s[8] == '-' && s[13] == '-' && s[18] == '-' && s[23] == '-';
+                };
+
                 std::ostringstream query;
                 query << "INSERT INTO `" << pivot_table << "` (";
                 for (std::size_t i = 0; i < columns.size(); ++i) {
@@ -622,23 +717,41 @@ MySQLGenericRepository::insert_pivot(
                     if (i > 0) {
                         query << ", ";
                     }
-                    query << "?";
+                    // ✨ Si c'est un UUID, wrap avec UUID_TO_BIN(?, 1)
+                    if (is_uuid_string(bind_values[i])) {
+                        query << "UUID_TO_BIN(?, 1)";
+                    } else {
+                        query << "?";
+                    }
                 }
                 query << ")";
+
                 auto stmt = std::unique_ptr<sql::PreparedStatement>(
                     conn->prepareStatement(query.str())
                     );
+
                 for (std::size_t i = 0; i < bind_values.size(); ++i) {
                     bindValue(stmt.get(), static_cast<int>(i + 1), bind_values[i]);
                 }
+
                 stmt->execute();
                 return true;
-            } catch (const sql::SQLException&) {
+
+            } catch (const sql::SQLException& e) {
+                // l'erreur pour faciliter le debug
+                std::cerr << "[REPOSITORY] insert_pivot SQL error: "
+                          << e.what()
+                          << " (code=" << e.getErrorCode() << ")\n";
+                return false;
+            } catch (const std::exception& e) {
+                std::cerr << "[REPOSITORY] insert_pivot error: "
+                          << e.what() << "\n";
                 return false;
             }
         }
         );
 }
+
 
 // ────────────────────────────────────────────────────────────────────────
 // ✨ in_transaction
