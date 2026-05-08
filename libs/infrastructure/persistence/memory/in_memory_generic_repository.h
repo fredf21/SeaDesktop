@@ -9,7 +9,7 @@
 namespace sea::infrastructure::persistence {
 
 /**
- * 🧠 InMemoryGenericRepository
+ * InMemoryGenericRepository
  *
  * Implémentation simple en mémoire (RAM).
  *
@@ -83,6 +83,12 @@ public:
     seastar::future<bool>
     insert_pivot(const std::string& pivot_table,
                  runtime::DynamicRecord values) override;
+
+    seastar::future<sea::infrastructure::persistence::TransactionResult>
+    in_transaction(
+        std::function<seastar::future<bool>()> work
+        ) override;
+
 
 private:
 

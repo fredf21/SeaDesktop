@@ -36,6 +36,7 @@
 #include "persistence/repository_factory.h"
 #include "persistence/mysql/mysql_connector.h"
 #include "persistence/mysql/mysqlconnexionpool.h"
+#include "persistence/mysql/mysql_bootstrapper.h"  // ✨ Module Migrations Phase A
 
 // Blocking executor
 #include "thread_pool_execution/std_thread_pool_executor.h"
@@ -216,7 +217,7 @@ int main(int argc, char** argv)
             std::make_shared<StdThreadPoolExecutor>(4);
 
         // ─────────────────────────────────────────────────────
-        // 7. Pool MySQL
+        // 7. Pool MySQL + Bootstrap (Phase A)
         // ─────────────────────────────────────────────────────
         auto mysql_pool =
             std::make_shared<
@@ -228,6 +229,38 @@ int main(int argc, char** argv)
         sea::infrastructure::persistence::RepositoryFactory::DatabaseResources resources;
 
         if (service.database_config.type == sea::domain::DatabaseType::MySQL) {
+
+            // ✨ ETAPE 7.A : Ensure database exists (AVANT le pool)
+            //
+            // Le pool ne peut pas demarrer si la database n'existe pas.
+            // On utilise une connexion ad-hoc (sans database_name) pour
+            // executer CREATE DATABASE IF NOT EXISTS.
+            if (service.database_config.migrations.enabled
+                && service.database_config.migrations.create_database_if_missing) {
+
+                if (is_main_shard()) {
+                    std::cerr << "\n═══════════════════════════════════════════════\n";
+                    std::cerr << " PHASE A : ensure database exists\n";
+                    std::cerr << "═══════════════════════════════════════════════\n";
+                }
+
+                sea::infrastructure::persistence::mysql::MysqlBootstrapper db_bootstrapper(
+                    service.database_config,
+                    service.schema,
+                    *mysql_pool,        // pas utilise dans ensure_database_exists()
+                    blocking_executor
+                    );
+
+                const bool db_ok = co_await db_bootstrapper.ensure_database_exists();
+                if (!db_ok) {
+                    throw std::runtime_error(
+                        "Bootstrap: impossible de creer la database '" +
+                        service.database_config.database_name + "'"
+                        );
+                }
+            }
+
+            // ETAPE 7.B : Demarrer le pool (la DB existe maintenant)
             sea::infrastructure::persistence::mysql::MySQLConnector connector(
                 service.database_config.host,
                 service.database_config.username,
@@ -255,6 +288,38 @@ int main(int argc, char** argv)
             resources.mysql_pool = mysql_pool.get();
 
             log_boot("[BOOT] MySQL pool demarre");
+
+            // ✨ ETAPE 7.C : Bootstrap complet (introspect + CREATE TABLE + ADD COLUMN)
+            //
+            // Maintenant que le pool est demarre, on peut introspect MySQL
+            // et appliquer les migrations.
+            if (service.database_config.migrations.enabled) {
+
+                if (is_main_shard()) {
+                    std::cerr << "\n═══════════════════════════════════════════════\n";
+                    std::cerr << " PHASE A : bootstrap schema (CREATE TABLE / ADD COLUMN)\n";
+                    std::cerr << "═══════════════════════════════════════════════\n";
+                }
+
+                sea::infrastructure::persistence::mysql::MysqlBootstrapper bootstrapper(
+                    service.database_config,
+                    service.schema,
+                    *mysql_pool,
+                    blocking_executor
+                    );
+
+                const auto result = co_await bootstrapper.bootstrap();
+
+                if (!result.success) {
+                    if (is_main_shard()) {
+                        std::cerr << "[BOOT] WARNING: Bootstrap a echoue avec "
+                                  << result.errors.size() << " erreur(s)\n";
+                        std::cerr << "[BOOT] Le serveur va tenter de demarrer quand meme\n";
+                        // Decision V1 : on continue quand meme.
+                        // Pour PROD strict : throw std::runtime_error("Bootstrap failed");
+                    }
+                }
+            }
         }
 
         // ─────────────────────────────────────────────────────
@@ -402,10 +467,10 @@ int main(int argc, char** argv)
 
         if (service.access_control.enabled() && policy_engine) {
             resource_auth_helper = std::make_shared<sea::http::handlers::access_control::ResourceAuthorizationHelper>(
-                                       policy_engine,
-                                       &service.schema,
-                                       &service.access_control
-                                       );
+                policy_engine,
+                &service.schema,
+                &service.access_control
+                );
         }
 
         // ─────────────────────────────────────────────────────
@@ -503,22 +568,22 @@ int main(int argc, char** argv)
                         ).release()
                     );
                 {
-                auto register_asset_route = [&](const std::string& path) {
-                    r.add(
-                        seastar::httpd::operation_type::GET,
-                        seastar::httpd::url(path),
-                        wrap_with_middlewares(
-                            std::make_unique<sea::http::handlers::misc::SwaggerAssetsHandler>(),
-                            false,  // pas d'auth
-                            mw_context
-                            ).release()
-                        );
-                };
+                    auto register_asset_route = [&](const std::string& path) {
+                        r.add(
+                            seastar::httpd::operation_type::GET,
+                            seastar::httpd::url(path),
+                            wrap_with_middlewares(
+                                std::make_unique<sea::http::handlers::misc::SwaggerAssetsHandler>(),
+                                false,  // pas d'auth
+                                mw_context
+                                ).release()
+                            );
+                    };
 
-                register_asset_route("/assets/swagger-ui/swagger-ui.css");
-                register_asset_route("/assets/swagger-ui/swagger-ui-bundle.js");
-                register_asset_route("/assets/swagger-ui/swagger-ui-standalone-preset.js");
-                register_asset_route("/assets/swagger-ui/favicon-32x32.png");
+                    register_asset_route("/assets/swagger-ui/swagger-ui.css");
+                    register_asset_route("/assets/swagger-ui/swagger-ui-bundle.js");
+                    register_asset_route("/assets/swagger-ui/swagger-ui-standalone-preset.js");
+                    register_asset_route("/assets/swagger-ui/favicon-32x32.png");
                 }
                 // ─────────────────────────────────────────────
                 // Routes auth

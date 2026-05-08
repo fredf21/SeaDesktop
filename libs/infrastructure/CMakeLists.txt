@@ -52,6 +52,10 @@ add_library(sea_infrastructure STATIC
     persistence/mysql/mysqlconnexionpool.h persistence/mysql/mysqlconnexionpool.cpp
     thread_pool_execution/i_blocking_executor.h
     thread_pool_execution/std_thread_pool_executor.h
+    persistence/mysql/mysql_introspector.h persistence/mysql/mysql_introspector.cpp
+    persistence/mysql/mysql_schema_generator.h persistence/mysql/mysql_schema_generator.cpp
+    persistence/mysql/mysql_bootstrapper.h persistence/mysql/mysql_bootstrapper.cpp
+    persistence/mysql/schema_differ.h persistence/mysql/schema_differ.cpp
 )
 
 add_library(Sea::infrastructure ALIAS sea_infrastructure)

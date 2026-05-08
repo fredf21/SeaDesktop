@@ -29,6 +29,14 @@ struct UpdateResponse {
     runtime::DynamicRecord record = {};     // la donnEes modifiEe
 };
 
+// ─────────────────────────────────────────────────────────────
+// Resultat d'une transaction
+// ─────────────────────────────────────────────────────────────
+struct TransactionResult {
+    bool committed = false;  // true si COMMIT execute, false si ROLLBACK
+    std::string error_message;  // message d'erreur si rollback
+};
+
 class IGenericRepository {
 public:
     virtual ~IGenericRepository() = default;
@@ -64,6 +72,42 @@ public:
     virtual seastar::future<bool>
     insert_pivot(const std::string& pivot_table,
                  runtime::DynamicRecord values) = 0;
+
+    // ─────────────────────────────────────────────────────────
+    // Transactions (ACID)
+    //
+    // Execute la lambda 'work' dans une transaction MySQL.
+    //
+    // Comportement :
+    // - Si la lambda retourne future<true>  → COMMIT
+    // - Si la lambda retourne future<false> → ROLLBACK
+    // - Si la lambda lance une exception    → ROLLBACK + rethrow
+    //
+    // Les operations CRUD appelees DANS la lambda partagent la
+    // meme connexion MySQL et donc la meme transaction.
+    //
+    // Exemple d'usage :
+    //
+    //   const auto tx_result = co_await repo->in_transaction(
+    //       [&]() -> seastar::future<bool> {
+    //           const auto order = co_await repo->create("Order", order_data);
+    //           if (!order.has_value()) co_return false;  // rollback
+    //
+    //           const auto line = co_await repo->create("OrderLine", line_data);
+    //           if (!line.has_value()) co_return false;   // rollback
+    //
+    //           co_return true;  // commit
+    //       }
+    //   );
+    //
+    // Note : les transactions ne sont pas reentrantes. Imbriquer un
+    // in_transaction dans un autre n'a aucun effet (la lambda interne
+    // s'execute dans la transaction externe).
+    // ─────────────────────────────────────────────────────────
+    virtual seastar::future<TransactionResult> in_transaction(
+        std::function<seastar::future<bool>()> work
+        ) = 0;
+
 };
 
 } // namespace sea::infrastructure::persistence

@@ -179,4 +179,78 @@ inline std::vector<std::string> collect_columns_in_schema_order(
 
     return columns;
 }
+
+static const std::string BASE64_CHARS =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "abcdefghijklmnopqrstuvwxyz"
+    "0123456789+/";
+
+inline std::string base64_encode(const std::vector<std::uint8_t>& data)
+{
+    std::string result;
+
+    int val = 0;
+    int valb = -6;
+
+    for (std::uint8_t c : data) {
+        val = (val << 8) + c;
+        valb += 8;
+
+        while (valb >= 0) {
+            result.push_back(
+                BASE64_CHARS[(val >> valb) & 0x3F]
+                );
+
+            valb -= 6;
+        }
+    }
+
+    if (valb > -6) {
+        result.push_back(
+            BASE64_CHARS[((val << 8) >> (valb + 8)) & 0x3F]
+            );
+    }
+
+    while (result.size() % 4) {
+        result.push_back('=');
+    }
+
+    return result;
+}
+inline std::vector<std::uint8_t> base64_decode(const std::string& input)
+{
+    std::array<int, 256> table{};
+
+    table.fill(-1);
+
+    for (int i = 0; i < 64; ++i) {
+        table[BASE64_CHARS[i]] = i;
+    }
+
+    std::vector<std::uint8_t> result;
+
+    int val = 0;
+    int valb = -8;
+
+    for (unsigned char c : input) {
+
+        if (table[c] == -1) {
+            break;
+        }
+
+        val = (val << 6) + table[c];
+        valb += 6;
+
+        if (valb >= 0) {
+
+            result.push_back(
+                static_cast<std::uint8_t>((val >> valb) & 0xFF)
+                );
+
+            valb -= 8;
+        }
+    }
+
+    return result;
+}
 }

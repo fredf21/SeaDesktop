@@ -1,4 +1,5 @@
 #include "generic_validator.h"
+#include "runtime/dynamic_value.h"
 
 #include <regex>
 #include <variant>
@@ -14,9 +15,13 @@ bool GenericValidator::matches_type(sea::domain::FieldType type,
     case sea::domain::FieldType::Password:
     case sea::domain::FieldType::Email:
     case sea::domain::FieldType::Timestamp:
+    case sea::domain::FieldType::Decimal:
         return std::holds_alternative<std::string>(value);
 
     case sea::domain::FieldType::Int:
+    case sea::domain::FieldType::BigInt:
+    case sea::domain::FieldType::SmallInt:
+
         return std::holds_alternative<std::int64_t>(value);
 
     case sea::domain::FieldType::Float:
@@ -24,6 +29,13 @@ bool GenericValidator::matches_type(sea::domain::FieldType type,
 
     case sea::domain::FieldType::Bool:
         return std::holds_alternative<bool>(value);
+
+    case sea::domain::FieldType::Binary:
+        return std::holds_alternative<std::vector<std::uint8_t>>(value);
+    case sea::domain::FieldType::Json:
+        return std::holds_alternative<nlohmann::json>(value);
+    case sea::domain::FieldType::Native:
+        return std::holds_alternative<NativeValue>(value);
     }
 
     return false;

@@ -91,6 +91,14 @@ void SchemaValidator::validate_fields(const Entity& entity,
                              "' ne peut pas avoir de valeur par defaut.");
         }
 
+        // Ce champ de type Bynary ne devrait pas avoir de valeur par défaut
+        if (field.type == FieldType::Binary && field.has_default()) {
+            errors.push_back("Le champ '" + field.name +
+                             "' de type binary dans l'entite '" + entity.name +
+                             "' ne peut pas avoir de valeur par defaut.");
+        }
+
+
         // max_length doit rester réservé aux String/Text
         if (field.max_length.has_value()) {
             if (field.type != FieldType::String && field.type != FieldType::Text) {

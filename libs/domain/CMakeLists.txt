@@ -48,6 +48,8 @@ add_library(sea_domain STATIC
     access_control/policy_engine.h access_control/policy_engine.cpp
     access_control/policy_compiler.h access_control/policy_compiler.cpp
     security_scheme/abac_mode.h security_scheme/abac_mode.cpp
+    database_mappings/mysql_type_mapping.h
+    database_mappings/postgres_type_mapping.h
 
 
 )

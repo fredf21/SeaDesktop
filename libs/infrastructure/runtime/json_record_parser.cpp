@@ -1,4 +1,5 @@
 #include "json_record_parser.h"
+#include "persistence/utilities.h"
 
 #include <cstdint>
 #include <stdexcept>
@@ -44,15 +45,23 @@ DynamicRecord JsonRecordParser::parse(const sea::domain::Entity& entity,
         case sea::domain::FieldType::UUID:
         case sea::domain::FieldType::Password:
         case sea::domain::FieldType::Email:
-        case sea::domain::FieldType::Timestamp: {
+        case sea::domain::FieldType::Timestamp:
+        case sea::domain::FieldType::Decimal:{
             if (!value.is_string()) {
                 throw std::runtime_error("Le champ '" + field.name + "' doit etre une chaine.");
             }
             record[field.name] = value.get<std::string>();
             break;
         }
+        case sea::domain::FieldType::Json: {
+            record[field.name] = value;
+            break;
+        }
+        case sea::domain::FieldType::Int:
+        case sea::domain::FieldType::BigInt:
+        case sea::domain::FieldType::SmallInt:
 
-        case sea::domain::FieldType::Int: {
+        {
             if (!value.is_number_integer()) {
                 throw std::runtime_error("Le champ '" + field.name + "' doit etre un entier.");
             }
@@ -73,6 +82,25 @@ DynamicRecord JsonRecordParser::parse(const sea::domain::Entity& entity,
                 throw std::runtime_error("Le champ '" + field.name + "' doit etre un booleen.");
             }
             record[field.name] = value.get<bool>();
+            break;
+        }
+        case sea::domain::FieldType::Binary: {
+            if (!value.is_string()) {
+                throw std::runtime_error(
+                    "Le champ '" + field.name + "' doit etre une chaine base64."
+                    );
+            }
+
+            const auto encoded = value.get<std::string>();
+
+            auto bytes =
+                sea::infrastructure::persistence::utilities::base64_decode(encoded);
+
+            record[field.name] = bytes;
+            break;
+        }
+        case sea::domain::FieldType::Native: {
+            record[field.name] = NativeValue{value};
             break;
         }
         }

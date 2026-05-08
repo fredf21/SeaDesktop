@@ -23,6 +23,18 @@ using DefaultValue = std::variant<
     bool
     >;
 
+enum class DatabaseDialect {
+    MySQL,
+    PostgreSQL,
+    SQLite,
+    SQLServer
+};
+
+struct NativeDbType {
+    DatabaseDialect dialect;
+    std::string type_name; // ex: "MEDIUMINT UNSIGNED", "JSONB", "MONEY"
+};
+
 // ─────────────────────────────────────────────────────────────
 // Contraintes numériques génériques
 // Permet de supporter à la fois Int et Float
@@ -39,6 +51,7 @@ using NumericConstraint = std::variant<int64_t, double>;
 struct Field {
     std::string name;            // ex: "email"
     FieldType   type;            // ex: FieldType::Email
+    bool unsigned_value = false; // pour les type numeric
 
     // Contraintes principales
     bool required     = true;    // champ obligatoire
@@ -56,6 +69,8 @@ struct Field {
     // Indique si le champ peut apparaître dans les réponses JSON
     // Exemple : password → false
     bool serializable = true;
+
+    std::optional<NativeDbType> native_type; // Pas compatible avec les base de donnees NoSQL
 
     [[nodiscard]] bool has_default() const noexcept {
         return !std::holds_alternative<std::monostate>(default_val);

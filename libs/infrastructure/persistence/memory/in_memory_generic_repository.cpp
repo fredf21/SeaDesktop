@@ -1,8 +1,8 @@
 #include "in_memory_generic_repository.h"
 
 #include <variant>
-#include <iostream>
 #include <algorithm>
+#include <seastar/core/coroutine.hh>
 
 namespace sea::infrastructure::persistence {
 
@@ -277,6 +277,40 @@ InMemoryGenericRepository::insert_pivot(const std::string& pivot_table,
     pivot_storage[synthetic_id] = std::move(values);
 
     return seastar::make_ready_future<bool>(true);
+}
+
+/**
+ * Pour le backend Memory, "in_transaction" est essentiellement un no-op :
+ * - Pas de vraie ACID en memoire
+ * - Mais on respecte le contrat : execute la lambda et retourne le resultat
+ *
+ * Note : si la lambda retourne false ou throw, on NE peut PAS rollback les
+ * modifications deja faites (pas de snapshot). C'est une limitation acceptable
+ * pour un backend de dev/test.
+ */
+seastar::future<sea::infrastructure::persistence::TransactionResult>
+InMemoryGenericRepository::in_transaction(std::function<seastar::future<bool>()> work)
+{
+    bool committed = false;
+    std::string error_message;
+
+    try {
+        committed = co_await work();
+        if (!committed) {
+            error_message = "Transaction returned false (no real rollback in Memory backend)";
+        }
+    } catch (const std::exception& e) {
+        committed = false;
+        error_message = std::string("Exception in Memory transaction: ") + e.what();
+    } catch (...) {
+        committed = false;
+        error_message = "Unknown exception in Memory transaction";
+    }
+
+    co_return sea::infrastructure::persistence::TransactionResult{
+        .committed = committed,
+        .error_message = std::move(error_message)
+    };
 }
 
 } // namespace sea::infrastructure::persistence

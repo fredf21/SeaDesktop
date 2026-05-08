@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -36,6 +37,54 @@ constexpr std::string_view to_string(DatabaseType type) noexcept {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Mode de migration
+//
+// Conservative : ne fait que ADD (CREATE TABLE, ADD COLUMN).
+//                Jamais DROP. Safe en production.
+//
+// Modified     : Conservative + MODIFY COLUMN + RENAME (V2).
+//
+// Aggressive   : Tout : ADD/DROP/MODIFY columns + DROP tables.
+//                DANGER : peut perdre des donnees.
+// ─────────────────────────────────────────────────────────────
+enum class MigrationMode {
+    Conservative,
+    Modified,
+    Aggressive
+};
+
+constexpr std::string_view to_string(MigrationMode mode) noexcept {
+    switch (mode) {
+    case MigrationMode::Conservative: return "conservative";
+    case MigrationMode::Modified:     return "modified";
+    case MigrationMode::Aggressive:   return "aggressive";
+    default:                          return "unknown";
+    }
+}
+
+inline std::optional<MigrationMode>
+migration_mode_from_string(std::string_view s) noexcept;
+
+// ─────────────────────────────────────────────────────────────
+//  Configuration des migrations automatiques
+// ─────────────────────────────────────────────────────────────
+struct MigrationsConfig {
+    // Active/desactive le bootstrapping au demarrage du serveur
+    bool enabled = false;
+
+    // Mode de migration (defaut : Conservative)
+    MigrationMode mode = MigrationMode::Conservative;
+
+    // Cree automatiquement la base de donnees si absente
+    // (necessite une connexion sans 'database_name' specifie)
+    bool create_database_if_missing = true;
+
+    // Si true, lance le serveur en mode 'dry_run' :
+    // affiche les SQL qui seraient executes sans les appliquer.
+    bool dry_run = false;
+};
+
+// ─────────────────────────────────────────────────────────────
 // Configuration de base de données d’un Service
 //
 // Cette structure est volontairement générale.
@@ -54,6 +103,9 @@ struct DatabaseConfig {
     std::string database_name;
     std::string username;
     std::string password;
+
+    // Configuration des migrations automatiques (Phase A : CREATE TABLE + ADD COLUMN)
+    MigrationsConfig migrations;
 
     // ── helpers ─────────────────────────────────────────────
 
@@ -90,5 +142,24 @@ struct DatabaseConfig {
                && !database_name.empty();
     }
 };
+
+// ─────────────────────────────────────────────────────────────
+// Implementation de migration_mode_from_string
+// (apres struct pour eviter forward declaration)
+// ─────────────────────────────────────────────────────────────
+inline std::optional<MigrationMode>
+migration_mode_from_string(std::string_view s) noexcept
+{
+    std::string lower{s};
+    for (auto& c : lower) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+
+    if (lower == "conservative") return MigrationMode::Conservative;
+    if (lower == "modified")     return MigrationMode::Modified;
+    if (lower == "aggressive")   return MigrationMode::Aggressive;
+
+    return std::nullopt;
+}
 
 } // namespace sea::domain

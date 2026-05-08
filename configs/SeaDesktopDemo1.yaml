@@ -83,6 +83,19 @@ services:
       username: root
       password: root
 
+      # ─── Migrations automatiques (Phase A) ───
+      # Au demarrage du serveur :
+      # 1. CREATE DATABASE IF NOT EXISTS
+      # 2. Compare le schema YAML avec MySQL
+      # 3. CREATE TABLE pour les tables manquantes
+      # 4. ADD COLUMN pour les colonnes manquantes
+      # 5. CREATE des tables pivot pour les relations many_to_many
+      migrations:
+        enabled: true                       # Active le bootstrap au demarrage
+        mode: modified                  # conservative | modified | aggressive
+        create_database_if_missing: true    # CREATE DATABASE si absente
+        dry_run: false                      # true = affiche les SQL sans les executer
+
     # ═══════════════════════════════════════════════════════════════
     # ENTITÉS
     # ═══════════════════════════════════════════════════════════════
@@ -165,6 +178,7 @@ services:
             type: string
             required: true
             unique: true
+            #max_length: 100
 
         relations:
           - name: employees
@@ -210,6 +224,7 @@ services:
             type: string
             required: true
 
+
           - name: email
             type: email
             required: true
@@ -233,7 +248,7 @@ services:
         access_control:
           list:
             allow_roles: [admin, manager]
-            same_scope: true              # NOUVEAU : filtre par departement
+            same_scope: true              # filtre par departement
 
           get_by_id:
             allow_roles: [admin, manager]

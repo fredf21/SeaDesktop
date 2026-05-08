@@ -6,6 +6,32 @@
 #include <stdexcept>
 #include <string>
 
+namespace YAML {
+template<>
+struct convert<sea::domain::MigrationMode> {
+    static bool decode(const Node& node, sea::domain::MigrationMode& mode) {
+        if (!node.IsScalar()) return false;
+
+        std::string value = node.as<std::string>();
+
+        if (value == "conservative") {
+            mode = sea::domain::MigrationMode::Conservative;
+            return true;
+        }
+        if (value == "modified") {
+            mode = sea::domain::MigrationMode::Modified;
+            return true;
+        }
+
+        if (value == "aggressive") {
+            mode = sea::domain::MigrationMode::Aggressive;
+            return true;
+        }
+
+        return false;
+    }
+};
+}
 namespace sea::infrastructure::yaml {
 
 namespace {
@@ -36,6 +62,11 @@ template <typename T>
             );
     }
 }
+/*    case MigrationMode::Conservative: return "conservative";
+    case MigrationMode::Modified:     return "modified";
+    case MigrationMode::Aggressive:   return "aggressive";
+    default:
+                         return "unknown";*/
 
 } // namespace
 
@@ -311,10 +342,48 @@ sea::domain::Field YamlSchemaParser::parse_field_node(const YAML::Node& node) co
     }
     field.type = *field_type;
 
-    field.required     = get_or_default<bool>(node, "required", field.required);
-    field.unique       = get_or_default<bool>(node, "unique", field.unique);
-    field.indexed      = get_or_default<bool>(node, "indexed", field.indexed);
-    field.serializable = get_or_default<bool>(node, "serializable", field.serializable);
+    if (field.type != domain::FieldType::Native && has_key(node, "native")) {
+        throw std::runtime_error(
+            "Le noeud 'native' est autorisé uniquement avec type=native"
+            );
+    }
+
+    if (field.type == domain::FieldType::Native) {
+        if(!has_key(node, "native"))
+        throw std::runtime_error(
+            "Le noeud 'native' est autorisé uniquement avec type=native"
+            );
+        const auto native_node = node["native"];
+
+
+        if (!has_key(native_node, "dialect")) {
+            throw std::runtime_error(
+                "Le noeud native du champ '" + field.name +
+                "' doit contenir 'dialect'"
+                );
+        }
+        if (!has_key(native_node, "type")) {
+            throw std::runtime_error(
+                "Le noeud native du champ '" + field.name +
+                "' doit contenir 'type'"
+                );
+        }
+        sea::domain::NativeDbType native_type;
+
+        native_type.dialect =
+            parse_database_dialect_node(native_node["dialect"].as<std::string>());
+
+        native_type.type_name =
+            native_node["type"].as<std::string>();
+
+        field.native_type = native_type;
+    }
+
+    field.required          = get_or_default<bool>(node, "required", field.required);
+    field.unique            = get_or_default<bool>(node, "unique", field.unique);
+    field.indexed           = get_or_default<bool>(node, "indexed", field.indexed);
+    field.serializable      = get_or_default<bool>(node, "serializable", field.serializable);
+    field.unsigned_value    = get_or_default<bool>(node, "unsigned_value", field.unsigned_value);
 
     // Contrainte utile : password non sérialisable par défaut si rien n'est précisé
     if (field.type == sea::domain::FieldType::Password && !has_key(node, "serializable")) {
@@ -372,10 +441,15 @@ sea::domain::Field YamlSchemaParser::parse_field_node(const YAML::Node& node) co
             case sea::domain::FieldType::Password:
             case sea::domain::FieldType::Email:
             case sea::domain::FieldType::Timestamp:
+            case sea::domain::FieldType::Decimal:
+            case sea::domain::FieldType::Json:
+            case sea::domain::FieldType::Native:
                 field.default_val = node["default"].as<std::string>();
                 break;
 
             case sea::domain::FieldType::Int:
+            case sea::domain::FieldType::SmallInt:
+            case sea::domain::FieldType::BigInt:
                 field.default_val = node["default"].as<std::int64_t>();
                 break;
 
@@ -386,6 +460,11 @@ sea::domain::Field YamlSchemaParser::parse_field_node(const YAML::Node& node) co
             case sea::domain::FieldType::Bool:
                 field.default_val = node["default"].as<bool>();
                 break;
+
+            case sea::domain::FieldType::Binary:
+                throw std::runtime_error(
+                    "Le champ '" + field.name + "' est de type Binary et ne peut pas avoir de valeur par défaut"
+                    );
             }
         } catch (const YAML::Exception& e) {
             throw std::runtime_error(
@@ -395,6 +474,23 @@ sea::domain::Field YamlSchemaParser::parse_field_node(const YAML::Node& node) co
     }
 
     return field;
+}
+
+domain::DatabaseDialect YamlSchemaParser::parse_database_dialect_node(const std::string& value) const
+{
+    if (value == "mysql")
+        return domain::DatabaseDialect::MySQL;
+
+    if (value == "postgresql")
+        return domain::DatabaseDialect::PostgreSQL;
+
+    if (value == "sqlite")
+        return domain::DatabaseDialect::SQLite;
+
+    if (value == "sqlserver")
+        return domain::DatabaseDialect::SQLServer;
+
+    throw std::runtime_error("Dialecte SQL inconnu: " + value);
 }
 
 sea::domain::Relation YamlSchemaParser::parse_relation_node(const YAML::Node& node) const {
@@ -794,6 +890,19 @@ YamlSchemaParser::parse_database_config_node(const YAML::Node& node) const {
     config.database_name = get_or_default<std::string>(node, "database_name", "");
     config.username      = get_or_default<std::string>(node, "username", "");
     config.password      = get_or_default<std::string>(node, "password", "");
+    if (const YAML::Node preset = node["migrations"]) {
+
+    }
+    if (has_key(node, "migrations")) {
+        const YAML::Node migration_node = node["migrations"];
+
+        if (!migration_node.IsMap()) {
+            throw std::runtime_error("'migrations' doit être un objet.");
+        }
+        config.migrations.create_database_if_missing =  get_or_default<bool>(migration_node, "create_database_if_missing", config.migrations.create_database_if_missing);
+        config.migrations.enabled = get_or_default<bool>(migration_node, "enabled", config.migrations.enabled);
+        config.migrations.mode = get_or_default<domain::MigrationMode>(migration_node, "mode", config.migrations.mode);
+    }
 
     return config;
 }

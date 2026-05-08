@@ -87,6 +87,7 @@ private:
         const sea::domain::access_control::AccessControlConfig& global_config
         ) const;
     [[nodiscard]] sea::domain::Field parse_field_node(const YAML::Node& node) const;
+    [[nodiscard]] sea::domain::DatabaseDialect parse_database_dialect_node(const std::string& value) const;
     [[nodiscard]] sea::domain::Relation parse_relation_node(const YAML::Node& node) const;
     [[nodiscard]] sea::domain::DatabaseConfig parse_database_config_node(const YAML::Node& node) const;
 
