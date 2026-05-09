@@ -1,4 +1,8 @@
 # SeaDesktop
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![Commercial License Available](https://img.shields.io/badge/Commercial-Available-green.svg)](COMMERCIAL-LICENSE.md)
+[![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
+[![Seastar](https://img.shields.io/badge/Seastar-shared--nothing-orange.svg)](https://seastar.io/)
 
 > **Une plateforme low-code C++ qui transforme un fichier YAML en serveur ultra rapide API REST + GUI desktop, avec sécurité intégrée.**
 
