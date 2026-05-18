@@ -103,7 +103,7 @@ constexpr std::string_view to_string(SeedsErrorPolicy policy) noexcept {
 }
 
 // ─────────────────────────────────────────────────────────────
-// ✨ Configuration des seeds
+// Configuration des seeds
 // ─────────────────────────────────────────────────────────────
 struct SeedsConfig {
     bool enabled = false;

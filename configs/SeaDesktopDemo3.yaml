@@ -1,0 +1,502 @@
+project:
+  name: SeaDesktopDemo3
+
+services:
+  - name: SchoolManager2
+    port: 8081
+
+    # ═══════════════════════════════════════════════════════════════
+    # LOGGING (Sujet 2)
+    #
+    # Configuration du logging spdlog pour ce service.
+    # Si la section est absente, defauts : console texte info, async actif.
+    # ═══════════════════════════════════════════════════════════════
+    logging:
+      # Niveau global par defaut (utilise si pas d'override par module)
+      level: info                    # trace | debug | info | warn | error | critical | off
+
+      # Niveau par module (override le global)
+      # Les modules disponibles : sea.boot, sea.http, sea.application,
+      # sea.persistence, sea.runtime, sea.security, seastar
+      modules:
+        sea.http: debug              # voir tous les logs HTTP (handlers, autorisation)
+        sea.persistence: info        # logs DB normaux
+        seastar: warn                # masquer les logs verbeux internes Seastar
+
+      # Sinks (destinations des logs)
+      # On peut declarer plusieurs sinks, chaque log est envoye dans tous.
+      sinks:
+        # Sink 1 : console (stderr) avec format texte lisible
+        - type: console
+          format: text
+          enabled: true
+
+        # Sink 2 : fichier JSON avec rotation
+        # Utile pour ingestion dans Loki, ELK, ou simple tail -f
+        - type: file
+          format: json
+          enabled: true
+          path: "./logs/ccnb.log"
+          rotation:
+            max_size: "100MB"        # rotation quand le fichier depasse cette taille
+            time_pattern: daily      # rotation egalement chaque jour a minuit
+            max_files: 10            # garde 10 archives max
+            compress: false          # pas de gzip pour l'instant
+
+      # Niveau au-dela duquel on flush immediatement sur disque
+      # (sinon les async loggers bufferisent et on perd les logs si crash)
+      flush_level: error
+
+      # Async logging : decharge les ecritures dans un thread dedie
+      # pour ne pas bloquer le reactor Seastar
+      async:
+        enabled: false
+        queue_size: 8192             # taille du buffer en messages
+        overflow_policy: overrun_oldest   # block | overrun_oldest
+
+    # ═══════════════════════════════════════════════════════════════
+    # SÉCURITÉ
+    # ═══════════════════════════════════════════════════════════════
+    security:
+      # ─── Authentification JWT ───
+      authentication:
+        type: jwt
+        algorithm: HS256
+        secret: "${SEA_DESKTOP_JWT_SECRET}"
+        issuer: "CCNBService"
+        audience: "seadesktop-client"
+        access_token_ttl: "15m"
+        refresh_token_ttl: "7d"
+
+        # ─── [ETAPE 1.4] Livraison des tokens ─────────────────────────
+        # body   : JWT dans le corps JSON (compatible CLI/API)
+        # cookie : JWT dans cookies HttpOnly (compatible navigateur, anti-XSS)
+        # both   : les deux (defaut recommande pour SeaUI + futur frontend web)
+        token_delivery: both
+
+        # ─── Configuration des cookies HttpOnly ───────────────────────
+        cookie:
+          path: "/"
+          # secure : cookie envoye uniquement en HTTPS
+          # Pour le dev local en HTTP, passer a false
+          secure: true
+          # same_site : politique anti-CSRF (lax | strict | none)
+          same_site: lax
+          access_token_name:  "sea_access"
+          refresh_token_name: "sea_refresh"
+          # domain : vide en dev (deduit du host)
+
+        # ─── Token tracking (persistence des tokens) ──────────────────
+        # Architecture Auth0-like :
+        #   - access  : stateless + denylist (table RevokedToken) + cache shard-local
+        #   - refresh : allowlist stricte (table RefreshToken)
+        token_tracking:
+          enabled: true
+          refresh_table: RefreshToken
+          revoked_table: RevokedToken
+
+          # Cache shard-local pour la denylist
+          cache:
+            enabled: true
+            ttl: "60s"
+            max_size: 10000
+
+          # Rotation des refresh : l'ancien revoke + nouveau emis
+          rotation:
+            enabled: true
+
+          # Cleanup periodique des tokens expires
+          auto_cleanup:
+            enabled: true
+            interval: "1h"
+            keep_revoked_for: "30d"
+
+      # ─── Autorisation RBAC + ABAC ───
+      authorization:
+        enabled: true
+        default_policy: deny
+        roles_claim_name: role
+        admin_role: admin
+        default_allow_admin: true
+        default_scope_field: department_id
+        abac_mode: permissive
+        roles:
+          - admin
+          - manager
+          - user
+          - guest
+
+      # ─── CORS ───
+      cors:
+        allowed_origins:
+          - "http://localhost:5173"
+          - "http://localhost:3000"
+          - "http://localhost:8081"
+          - "http://127.0.0.1:8081"
+        allowed_methods: [GET, POST, PUT, DELETE, OPTIONS]
+        allow_credentials: true
+        max_age: "1h"
+
+      # ─── Rate Limiting ───
+      rate_limits:
+        - scope: per_ip
+          requests: 100
+          window: "60s"
+
+      # ─── HTTP Limits ───
+      http_limits:
+        max_body_size: "10MB"
+        max_header_size: "8KB"
+        max_headers_count: 100
+        max_url_length: "2KB"
+        max_query_params: 100
+        request_timeout: "30s"
+        keep_alive_timeout: "60s"
+        max_connections_per_ip: 100
+
+      # ─── Security Headers ───
+      headers:
+        preset: recommended
+
+    # ═══════════════════════════════════════════════════════════════
+    # BASE DE DONNÉES
+    # ═══════════════════════════════════════════════════════════════
+    database:
+      type: mysql
+      host: 127.0.0.1
+      port: 3306
+      database_name: seadesktop
+      username: root
+      password: root
+
+      migrations:
+        enabled: true
+        mode: modified
+        create_database_if_missing: true
+        dry_run: false
+        seeds:
+          enabled: true
+          mode: once
+          on_error: continue
+
+    # ═══════════════════════════════════════════════════════════════
+    # ENTITÉS
+    # ═══════════════════════════════════════════════════════════════
+    entities:
+
+      # ─────────────────────────────────────────────────────────────
+      # User : own_resource (mode service = permissive)
+      # Pagination : page + offset
+      # ─────────────────────────────────────────────────────────────
+      - name: User
+        table_name: User
+        owner_field: id
+        options:
+          enable_crud: true
+          is_auth_source: true
+          public_routes: false
+
+        fields:
+          - { name: id,            type: uuid,     required: false, unique: true }
+          - { name: email,         type: email,    required: true,  unique: true }
+          - { name: password,      type: password, required: true,  serializable: false }
+          - { name: full_name,     type: string,   required: true }
+          - { name: role,          type: string,   required: false, default: user }
+          - { name: department_id, type: uuid,     required: false }
+
+        pagination:
+          page:
+            default_page_size: 20
+            max_page_size: 100
+            default_sort: email:asc
+            sortable_fields: [email, full_name, id]
+          offset:
+            default_limit: 20
+            max_limit: 100
+            default_sort: email:asc
+            sortable_fields: [email, full_name, id]
+
+        access_control:
+          list:      { allow_roles: [admin] }
+          get_by_id: { allow_roles: [admin, manager, user], own_resource: true }
+          create:    { allow_roles: [admin] }
+          update:    { allow_roles: [admin, manager, user], own_resource: true }
+          delete:    { allow_roles: [admin] }
+
+      # ─────────────────────────────────────────────────────────────
+      # Department : RBAC pur
+      # Pagination : page seul
+      # ─────────────────────────────────────────────────────────────
+      - name: Department
+        table_name: Department
+        options:
+          enable_crud: true
+          public_routes: false
+
+        fields:
+          - { name: id,   type: uuid,   required: true, unique: true }
+          - { name: name, type: string, required: true, unique: true }
+
+        relations:
+          - name: employees
+            kind: has_many
+            target_entity: Employee
+            fk_column: department_id
+            on_delete: cascade
+
+        seeds:
+          - { alias: dept_ac,  name: ACC }
+          - { alias: dept_com, name: COMM }
+
+        pagination:
+          page:
+            default_page_size: 10
+            max_page_size: 50
+            default_sort: name:asc
+            sortable_fields: [name, id]
+
+        access_control:
+          list:      { allow_roles: [admin, manager, user] }
+          get_by_id: { allow_roles: [admin, manager, user] }
+          create:    { allow_roles: [admin] }
+          update:    { allow_roles: [admin] }
+          delete:    { allow_roles: [admin] }
+
+      # ─────────────────────────────────────────────────────────────
+      # Employee : same_scope
+      # Pagination : page + cursor
+      # ─────────────────────────────────────────────────────────────
+      - name: Employee
+        table_name: Employee
+        scope_field: department_id
+        options:
+          enable_crud: true
+          public_routes: false
+
+        fields:
+          - { name: id,            type: uuid,   required: true, unique: true }
+          - { name: full_name,     type: string, required: true }
+          - { name: email,         type: email,  required: true, unique: true }
+          - { name: age,           type: int,    required: false }
+          - { name: department_id, type: uuid,   required: true }
+
+        relations:
+          - name: department
+            kind: belongs_to
+            target_entity: Department
+            fk_column: department_id
+            on_delete: restrict
+
+        pagination:
+          page:
+            default_page_size: 25
+            max_page_size: 100
+            default_sort: full_name:asc
+            sortable_fields: [full_name, email, age, id]
+          cursor:
+            default_limit: 50
+            max_limit: 200
+            cursor_field: id
+            sort: id:asc
+
+        access_control:
+          list:      { allow_roles: [admin, manager], same_scope: true }
+          get_by_id: { allow_roles: [admin, manager], same_scope: true }
+          create:    { allow_roles: [admin, manager], same_scope: true }
+          update:    { allow_roles: [admin, manager], same_scope: true }
+          delete:    { allow_roles: [admin] }
+
+      # ─────────────────────────────────────────────────────────────
+      # Student : RBAC simple
+      # Pagination : showcase 3 modes
+      # ─────────────────────────────────────────────────────────────
+      - name: Student
+        table_name: Student
+        options:
+          enable_crud: true
+          public_routes: false
+
+        fields:
+          - { name: id,    type: uuid,   required: true, unique: true }
+          - { name: name,  type: string, required: true }
+          - { name: email, type: email,  required: true, unique: true }
+          - { name: age,   type: int,    required: false }
+
+        relations:
+          - name: programs
+            kind: many_to_many
+            target_entity: Program
+            pivot_table: StudentProgram
+            source_fk_column: student_id
+            target_fk_column: program_id
+            on_delete: cascade
+
+        seeds:
+          - alias: yann
+            name: Yann
+            email: yann@school.ca
+            age: 20
+            programs: [prog_cs, prog_eng]
+
+        pagination:
+          page:
+            default_page_size: 20
+            max_page_size: 100
+            default_sort: name:asc
+            sortable_fields: [name, email, age, id]
+          offset:
+            default_limit: 20
+            max_limit: 100
+            default_sort: name:asc
+            sortable_fields: [name, email, age, id]
+          cursor:
+            default_limit: 30
+            max_limit: 100
+            cursor_field: id
+            sort: id:asc
+
+        access_control:
+          list:      { allow_roles: [admin, manager, user] }
+          get_by_id: { allow_roles: [admin, manager, user] }
+          create:    { allow_roles: [admin, manager] }
+          update:    { allow_roles: [admin, manager] }
+          delete:    { allow_roles: [admin] }
+
+      # ─────────────────────────────────────────────────────────────
+      # Program : pas de pagination
+      # ─────────────────────────────────────────────────────────────
+      - name: Program
+        table_name: Program
+        options:
+          enable_crud: true
+          public_routes: false
+
+        fields:
+          - { name: id,   type: uuid,   required: true, unique: true }
+          - { name: name, type: string, required: true, unique: true }
+
+        relations:
+          - name: students
+            kind: many_to_many
+            target_entity: Student
+            pivot_table: StudentProgram
+            source_fk_column: program_id
+            target_fk_column: student_id
+            on_delete: cascade
+
+        seeds:
+          - { alias: prog_cs,  name: Computer Science }
+          - { alias: prog_eng, name: Engineering }
+
+        access_control:
+          list:      { allow_roles: [admin, manager, user] }
+          get_by_id: { allow_roles: [admin, manager, user] }
+          create:    { allow_roles: [admin] }
+          update:    { allow_roles: [admin] }
+          delete:    { allow_roles: [admin] }
+
+      # ─────────────────────────────────────────────────────────────
+      # StudentProgram : table pivot
+      # ─────────────────────────────────────────────────────────────
+      - name: StudentProgram
+        table_name: StudentProgram
+        options:
+          enable_crud: true
+          public_routes: false
+
+        fields:
+          - { name: student_id, type: uuid, required: true }
+          - { name: program_id, type: uuid, required: true }
+
+        access_control:
+          abac_mode: strict
+          list:      { allow_roles: [admin, manager, user] }
+          get_by_id: { allow_roles: [admin, manager, user] }
+          create:    { allow_roles: [admin, manager] }
+          update:    { allow_roles: [admin] }
+          delete:    { allow_roles: [admin] }
+
+      # ═════════════════════════════════════════════════════════════
+      # [ETAPE 1.4] Token tracking — Tables systeme
+      #
+      # Ces deux entites sont les tables backing du TokenTrackingService.
+      # Declarees comme entites YAML normales pour reutiliser toute
+      # l'infra SeaDesktop : migration auto, repository generique,
+      # validation des types, etc.
+      #
+      # Acces ABAC : admin uniquement (donnees sensibles d'audit).
+      # CRUD expose pour debug et future UI d'admin des sessions.
+      # ═════════════════════════════════════════════════════════════
+
+      # ─────────────────────────────────────────────────────────────
+      # RefreshToken — allowlist des refresh tokens emis
+      #
+      # Un refresh token n'est valide que s'il est dans cette table
+      # avec revoked_at = null et expires_at > now().
+      #
+      # La rotation insere une nouvelle ligne et marque l'ancienne
+      # avec revoked_at + replaced_by_jti.
+      # ─────────────────────────────────────────────────────────────
+      - name: RefreshToken
+        table_name: RefreshToken
+        options:
+          enable_crud: true
+          public_routes: false
+
+        fields:
+          # Identifiant interne (PK SeaDesktop)
+          - { name: id,              type: uuid,      required: true, unique: true }
+          # jti = JWT ID (claim "jti"). Cle fonctionnelle.
+          - { name: jti,             type: string,    required: true, unique: true, max_length: 64 }
+          # User a qui le token appartient
+          - { name: user_id,         type: uuid,      required: true }
+          # Quand emis
+          - { name: issued_at,       type: timestamp, required: true }
+          # Quand expire naturellement
+          - { name: expires_at,      type: timestamp, required: true }
+          # Quand revoque (null = encore actif)
+          - { name: revoked_at,      type: timestamp, required: false }
+          # Si revoque par rotation, jti du nouveau qui remplace
+          - { name: replaced_by_jti, type: string,    required: false, max_length: 64 }
+          # User-Agent pour audit
+          - { name: device_info,     type: text,      required: false }
+          # IP source pour audit
+          - { name: ip_address,      type: string,    required: false, max_length: 64 }
+
+        access_control:
+          list:      { allow_roles: [admin] }
+          get_by_id: { allow_roles: [admin] }
+          create:    { allow_roles: [admin] }
+          update:    { allow_roles: [admin] }
+          delete:    { allow_roles: [admin] }
+
+      # ─────────────────────────────────────────────────────────────
+      # RevokedToken — denylist des access tokens revoques
+      #
+      # Un access token est rejete par le middleware si son jti est
+      # dans cette table avec expires_at > now() (sinon obsolete).
+      #
+      # Le cleanup periodique supprime les entrees dont l'expiration
+      # naturelle + keep_revoked_for est passee.
+      # ─────────────────────────────────────────────────────────────
+      - name: RevokedToken
+        table_name: RevokedToken
+        options:
+          enable_crud: true
+          public_routes: false
+
+        fields:
+          - { name: id,         type: uuid,      required: true, unique: true }
+          - { name: jti,        type: string,    required: true, unique: true, max_length: 64 }
+          - { name: user_id,    type: uuid,      required: true }
+          - { name: revoked_at, type: timestamp, required: true }
+          - { name: expires_at, type: timestamp, required: true }
+          # Raison ("logout", "banned", "compromised", ...)
+          - { name: reason,     type: string,    required: false, max_length: 32 }
+
+        access_control:
+          list:      { allow_roles: [admin] }
+          get_by_id: { allow_roles: [admin] }
+          create:    { allow_roles: [admin] }
+          update:    { allow_roles: [admin] }
+          delete:    { allow_roles: [admin] }

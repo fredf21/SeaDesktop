@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "routelistitemdelegate.h"
 #include "ui_mainwindow.h"
 
 #include "../../libs/infrastructure/yaml/yaml_schema_parser.h"
@@ -164,6 +165,23 @@ MainWindow::MainWindow(QWidget *parent)
     ui->entityListView->setModel(_entityModel);
     ui->fieldListView->setModel(_fieldModel);
     ui->routeListView->setModel(_routeModel);
+    // Delegate de rendu personnalise : affiche les routes avec
+    // methode HTTP coloree et badge colore pour les routes paginees
+    // (PAGE / OFFSET / CURSOR).
+    //
+    // Le delegate est ownership-transferred a la view (parent Qt).
+    ui->routeListView->setItemDelegate(new RouteListItemDelegate(ui->routeListView));
+    // Lignes alternees pour meilleure lisibilite
+    ui->routeListView->setAlternatingRowColors(true);
+
+    // Largeur uniforme des items (si la view supporte le wrap, eviter)
+    ui->routeListView->setUniformItemSizes(true);
+
+    // Hauteur calculee par le delegate (pas necessaire si sizeHint OK)
+    // ui->routeListView->setSpacing(2);
+
+    // Active le mouse tracking pour le rendu hover du delegate
+    ui->routeListView->setMouseTracking(true);
 
     ui->startServiceButton->setEnabled(false);
     ui->stopServiceButton->setEnabled(false);
@@ -175,14 +193,6 @@ MainWindow::MainWindow(QWidget *parent)
     ui->serviceAuthStatusLabel->setStyleSheet("color: #e74c3c; font-weight: bold;");
 
     updateAuthUi();
-    connect(ui->projectListView, &QListView::clicked,
-            this, &MainWindow::on_projectListView_clicked);
-    connect(ui->serviceListView, &QListView::clicked,
-            this, &MainWindow::on_serviceListView_clicked);
-    connect(ui->entityListView, &QListView::clicked,
-            this, &MainWindow::on_entityListView_clicked);
-    connect(ui->fieldListView, &QListView::clicked,
-            this, &MainWindow::on_fieldListView_clicked);
 
     loadProjects();
 
@@ -580,7 +590,6 @@ void MainWindow::on_entityListView_clicked(const QModelIndex &index)
                  << "entity_name:" << QString::fromStdString(route.entity_name)
                  << "operation:" << QString::fromStdString(route.operation_name);
     }
-
     _routeModel->setRoutes(std::move(filteredRoutes));
 }
 

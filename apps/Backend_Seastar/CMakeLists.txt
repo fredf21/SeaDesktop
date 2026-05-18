@@ -76,6 +76,22 @@ add_executable(backend_seastar
     src/http/middlewares/route_authorization_resolver.h src/http/middlewares/route_authorization_resolver.cpp
     src/http/middlewares/authorization_middleware.h src/http/middlewares/authorization_middleware.cpp
     src/http/handlers/access_control/resource_authorization_helper.h src/http/handlers/access_control/resource_authorization_helper.cpp
+    src/http/errors/http_exception.h
+    src/http/errors/error_response_factory.h
+    src/http/utils/pagination_query.h src/http/utils/pagination_query.cpp
+    src/http/handlers/pagination_handler/page_handler.h src/http/handlers/pagination_handler/page_handler.cpp
+    src/http/handlers/pagination_handler/offset_handlers.h src/http/handlers/pagination_handler/offset_handlers.cpp
+    src/http/handlers/pagination_handler/cursor_handlers.h src/http/handlers/pagination_handler/cursor_handlers.cpp
+    src/http/routing/paginated_match_rule.h src/http/routing/paginated_match_rule.cpp
+    src/http/routing/pagination_routes.h src/http/routing/pagination_routes.cpp
+    src/http/utils/cookie_helper.h src/http/utils/cookie_helper.cpp
+    src/http/handlers/auth_handlers/refresh_handler.h src/http/handlers/auth_handlers/refresh_handler.cpp
+    src/http/handlers/auth_handlers/logout_handler.h src/http/handlers/auth_handlers/logout_handler.cpp
+    src/http/handlers/logs_handlers/logs_handler.h src/http/handlers/logs_handlers/logs_handler.cpp
+    src/http/utils/multipart_parser.h src/http/utils/multipart_parser.cpp
+    src/http/handlers/file_handlers/file_upload_extractor.h src/http/handlers/file_handlers/file_upload_extractor.cpp
+    src/http/handlers/file_handlers/file_download_by_field_handler.h src/http/handlers/file_handlers/file_download_by_field_handler.cpp
+
 
 
 
@@ -88,6 +104,7 @@ target_link_libraries(backend_seastar
         Sea::application
         Sea::infrastructure
         bcrypt
+        spdlog::spdlog_header_only
 )
 
 target_include_directories(backend_seastar PRIVATE

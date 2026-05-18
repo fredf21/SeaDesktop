@@ -361,4 +361,40 @@ GenericCrudEngine::create_many_to_many_links(
             return seastar::make_ready_future<std::vector<std::string>>(std::move(errors));
         });
 }
+
+seastar::future<sea::infrastructure::persistence::PageResult>
+GenericCrudEngine::list_page(
+    const std::string& entity_name,
+    const sea::infrastructure::persistence::PageRequest& request) const
+{
+    return repository_->list_page(entity_name, request);
+}
+
+seastar::future<sea::infrastructure::persistence::OffsetResult>
+GenericCrudEngine::list_offset(
+    const std::string& entity_name,
+    const sea::infrastructure::persistence::OffsetRequest& request) const
+{
+    return repository_->list_offset(entity_name, request);
+}
+
+seastar::future<sea::infrastructure::persistence::CursorResult>
+GenericCrudEngine::list_cursor(
+    const std::string& entity_name,
+    const sea::infrastructure::persistence::CursorRequest& request) const
+{
+    return repository_->list_cursor(entity_name, request);
+}
+// ═══════════════════════════════════════════════════════════════════
+// C'est tout. Le passthrough est volontairement minimaliste :
+//
+// - Pas de validation (deja faite cote handler via pagination_query)
+// - Pas de transformation (le repo retourne directement le bon type)
+// - Pas de count() ici (on l'a deja dans le repo et il est appele
+//   implicitement par list_page/list_offset pour calculer 'total')
+//
+// Si demain on veut faire du caching ou de l'audit log sur les listings
+// pagines, c'est ici qu'on l'ajoutera.
+// ═══════════════════════════════════════════════════════════════════
+
 } // namespace sea::infrastructure::runtime

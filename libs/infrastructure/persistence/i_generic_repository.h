@@ -2,6 +2,8 @@
 
 #include "runtime/dynamic_record.h"
 
+#include <cstddef>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -37,13 +39,65 @@ struct TransactionResult {
     std::string error_message;  // message d'erreur si rollback
 };
 
+// ─────────────────────────────────────────────────────────────────────
+// Pagination - types de requete et de resultat
+//
+// Trois modes independants, un type par mode. Chaque mode est demande
+// par sa propre methode dans IGenericRepository (list_page, list_offset,
+// list_cursor). Le repository ne valide PAS les bornes (limit, page) :
+// c'est le role du handler HTTP, qui dispose de la PaginationConfig du
+// schema. Le repository reçoit des valeurs deja normalisees.
+// ─────────────────────────────────────────────────────────────────────
+
+// Page-based : page 1-indexee + page_size.
+struct PageRequest {
+    std::size_t                page       = 1;   // 1-indexee (1 = premiere page)
+    std::size_t                page_size  = 20;
+    std::optional<std::string> sort_field;        // ex: "created_at"
+    bool                       sort_desc  = false;
+};
+
+struct PageResult {
+    std::vector<runtime::DynamicRecord> items;
+    std::size_t                         total = 0;   // COUNT(*) global
+};
+
+// Offset/limit : offset 0-indexe + limit.
+struct OffsetRequest {
+    std::size_t                offset    = 0;
+    std::size_t                limit     = 20;
+    std::optional<std::string> sort_field;
+    bool                       sort_desc = false;
+};
+
+struct OffsetResult {
+    std::vector<runtime::DynamicRecord> items;
+    std::size_t                         total = 0;   // COUNT(*) global
+};
+
+// Cursor : token opaque côté client (= valeur du cursor_field du dernier
+// element vu). Le repository traduit en WHERE cursor_field > ? (ou <).
+// Le tri est figé : impose par le schema, transmis ici tel quel.
+struct CursorRequest {
+    std::optional<std::string> after;          // nullopt = premiere page
+    std::size_t                limit = 20;
+    std::string                cursor_field;   // ex: "id"
+    bool                       sort_desc = false;
+};
+
+struct CursorResult {
+    std::vector<runtime::DynamicRecord> items;
+    std::optional<std::string>          next_cursor;   // nullopt = derniere page
+};
+
+
 class IGenericRepository {
 public:
     virtual ~IGenericRepository() = default;
 
     // Insère ou remplace un record dans une entité logique
     virtual seastar::future<std::optional<runtime::DynamicRecord>> create(const std::string& entity_name,
-                        runtime::DynamicRecord record) = 0;
+                                                                          runtime::DynamicRecord record) = 0;
 
     // Retourne tous les records d’une entité
     virtual seastar::future<std::vector<runtime::DynamicRecord>>
@@ -61,17 +115,45 @@ public:
 
     // Supprime un record par identifiant
     virtual seastar::future<bool> remove(const std::string& entity_name,
-                        const std::string& id) = 0;
+                                         const std::string& id) = 0;
 
     // Met à jour/remplace un record existant
     virtual seastar::future<UpdateResponse> update(const std::string& entity_name,
-                        const std::string& id,
-                        runtime::DynamicRecord record) = 0;
+                                                   const std::string& id,
+                                                   runtime::DynamicRecord record) = 0;
 
-    // Nouveau : insertion dans une table pivot many-to-many
+    // insertion dans une table pivot many-to-many
     virtual seastar::future<bool>
     insert_pivot(const std::string& pivot_table,
                  runtime::DynamicRecord values) = 0;
+
+    // ─────────────────────────────────────────────────────────
+    // Pagination
+    //
+    // Chaque mode a sa propre methode. Le handler HTTP appelle
+    // celle qui correspond au mode demande dans le YAML.
+    //
+    // - list_page   : retourne PageResult { items, total }
+    // - list_offset : retourne OffsetResult { items, total }
+    // - list_cursor : retourne CursorResult { items, next_cursor }
+    // - count       : utilitaire (utilise par list_page et list_offset
+    //                 pour calculer 'total' ; expose au cas ou un appelant
+    //                 voudrait juste compter).
+    // ─────────────────────────────────────────────────────────
+    virtual seastar::future<PageResult>
+    list_page(const std::string& entity_name,
+              const PageRequest& request) = 0;
+
+    virtual seastar::future<OffsetResult>
+    list_offset(const std::string& entity_name,
+                const OffsetRequest& request) = 0;
+
+    virtual seastar::future<CursorResult>
+    list_cursor(const std::string& entity_name,
+                const CursorRequest& request) = 0;
+
+    virtual seastar::future<std::size_t>
+    count(const std::string& entity_name) = 0;
 
     // ─────────────────────────────────────────────────────────
     // Transactions (ACID)
@@ -107,7 +189,11 @@ public:
     virtual seastar::future<TransactionResult> in_transaction(
         std::function<seastar::future<bool>()> work
         ) = 0;
-
+    virtual seastar::future<bool>
+    increment_field(const std::string& entity_name,
+                    const std::string& id,
+                    const std::string& field_name,
+                    std::int64_t delta) = 0;
 };
 
 } // namespace sea::infrastructure::persistence

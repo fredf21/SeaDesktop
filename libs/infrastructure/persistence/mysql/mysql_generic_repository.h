@@ -34,10 +34,34 @@ public:
                       const std::string& field_name,
                       const std::string& value) override;
 
+    // Pagination — 3 modes + count
+    seastar::future<PageResult>
+    list_page(const std::string& entity_name,
+              const PageRequest& request) override;
+
+    seastar::future<OffsetResult>
+    list_offset(const std::string& entity_name,
+                const OffsetRequest& request) override;
+
+    seastar::future<CursorResult>
+    list_cursor(const std::string& entity_name,
+                const CursorRequest& request) override;
+
+    seastar::future<std::size_t>
+    count(const std::string& entity_name) override;
+
     // Transactions ACID
     seastar::future<TransactionResult> in_transaction(
         std::function<seastar::future<bool>()> work
         ) override;
+    // increment_field : atomique en mode mono-shard (Seastar shared-nothing
+    // garantit qu'un shard est mono-thread). Cf. IGenericRepository pour la
+    // doc complète.
+    seastar::future<bool>
+    increment_field(const std::string& entity_name,
+                    const std::string& id,
+                    const std::string& field_name,
+                    std::int64_t delta) override;
 
 private:
     seastar::sharded<MysqlConnexionPool>& _pool;

@@ -1,4 +1,5 @@
 #include "mysqlconnexionpool.h"
+#include "exception_handling.h"
 
 #include <stdexcept>
 #include <utility>
@@ -22,34 +23,38 @@ MysqlConnexionPool::MysqlConnexionPool(
 seastar::future<>
 MysqlConnexionPool::start()
 {
-    if (_pool_size == 0) {
-        throw std::runtime_error("MysqlConnexionPool: pool_size must be > 0");
+    try{
+        if (_pool_size == 0) {
+            throw sea::sea_errors_handling::PersistenceException("MysqlConnexionPool: pool_size must be > 0");
+        }
+
+        /**
+         * On crée les connexions une par une.
+         *
+         * La création réelle est faite dans le thread pool parce que :
+         * - MySQL Connector/C++ est bloquant
+         * - la négociation TCP/SSL peut passer par libcrypto
+         * - cela peut provoquer des reactor stalls si exécuté dans Seastar
+         */
+        for (std::size_t i = 0; i < _pool_size; ++i) {
+            auto conn = co_await _executor->submit([this] {
+                return _connector.createConnection();
+            });
+
+            _available.push(conn.get());
+            _connections.push_back(std::move(conn));
+        }
+
+        /**
+         * Maintenant que toutes les connexions sont disponibles,
+         * on libère le sémaphore.
+         */
+        _sem.signal(_pool_size);
+
+        co_return;
+    } catch(const sea::sea_errors_handling::PersistenceException& e){
+
     }
-
-    /**
-     * On crée les connexions une par une.
-     *
-     * La création réelle est faite dans le thread pool parce que :
-     * - MySQL Connector/C++ est bloquant
-     * - la négociation TCP/SSL peut passer par libcrypto
-     * - cela peut provoquer des reactor stalls si exécuté dans Seastar
-     */
-    for (std::size_t i = 0; i < _pool_size; ++i) {
-        auto conn = co_await _executor->submit([this] {
-            return _connector.createConnection();
-        });
-
-        _available.push(conn.get());
-        _connections.push_back(std::move(conn));
-    }
-
-    /**
-     * Maintenant que toutes les connexions sont disponibles,
-     * on libère le sémaphore.
-     */
-    _sem.signal(_pool_size);
-
-    co_return;
 }
 
 seastar::future<>

@@ -6,6 +6,7 @@
 #include "../handlers/crud_handlers/get_by_id_handler.h"
 #include "../handlers/crud_handlers/list_handler.h"
 #include "../handlers/crud_handlers/update_handler.h"
+#include "../handlers/file_handlers/file_download_by_field_handler.h"
 #include "../handlers/relation_handlers/get_one_by_fk_handler.h"
 #include "../handlers/relation_handlers/get_with_children_handler.h"
 #include "../handlers/relation_handlers/list_by_fk_handler.h"
@@ -21,8 +22,8 @@
 #include "service.h"
 #include "runtime/generic_crud_engine.h"
 #include "runtime/schema_runtime_registry.h"
+#include "spdlog/spdlog.h"
 
-#include <iostream>
 #include <optional>
 
 namespace sea::http::routing {
@@ -121,8 +122,11 @@ std::unique_ptr<seastar::httpd::handler_base> wrap_with_middlewares(
             std::move(h),
             requires_auth,
             context.auth_service,
-            context.blocking_executor
+            context.token_tracking,
+            context.blocking_executor,
+            context.cookie_config
             );
+
     }
 
     // 3e exécuté : CORS (preflight, validation origin, headers)
@@ -172,10 +176,11 @@ void register_collection_route(
     const bool requires_auth = service_has_auth(context.service);
 
     if (route.operation_name == "list") {
-        if (seastar::this_shard_id() == 0) {
-            std::cerr << "[ROUTE] GET " << route.path << " -> ListHandler"
-                      << (requires_auth ? " 🔒" : " 🌐") << "\n";
-        }
+        spdlog::get("sea.boot")->info(
+            "[ROUTE] GET {} -> ListHandler {} ",
+            route.path,
+            requires_auth ? " 🔒" : "🌐"
+            );
 
         auto handler = std::make_unique<sea::http::handlers::crud::ListHandler>(
             crud_engine,
@@ -198,11 +203,11 @@ void register_collection_route(
     }
 
     if (route.operation_name == "create") {
-        if (seastar::this_shard_id() == 0) {
-            std::cerr << "[ROUTE] POST " << route.path << " -> CreateHandler"
-                      << (requires_auth ? " 🔒" : " 🌐") << "\n";
-        }
-
+        spdlog::get("sea.boot")->info(
+            "[ROUTE] POST {} -> CreateHandler {} ",
+            route.path,
+            requires_auth ? " 🔒" : "🌐"
+            );
         auto handler = std::make_unique<sea::http::handlers::crud::CreateHandler>(
             crud_engine,
             registry,
@@ -210,7 +215,8 @@ void register_collection_route(
             context.auth_service,
             context.service.database_config.type,
             context.blocking_executor,
-            context.resource_auth_helper
+            context.resource_auth_helper,
+            context.file_extractor
             );
 
         auto wrapped = wrap_with_middlewares(
@@ -252,11 +258,11 @@ void register_item_route(
     const auto base_path = sea::http::utils::base_path_without_id_suffix(route.path);
 
     if (route.operation_name == "get_by_id") {
-        if (seastar::this_shard_id() == 0) {
-            std::cerr << "[ROUTE] GET " << route.path << " -> GetByIdHandler"
-                      << (requires_auth ? " 🔒" : " 🌐") << "\n";
-        }
-
+        spdlog::get("sea.boot")->info(
+            "[ROUTE] GET {} -> GetByIdHandler {} ",
+            route.path,
+            requires_auth ? " 🔒" : "🌐"
+            );
         auto handler = std::make_unique<sea::http::handlers::crud::GetByIdHandler>(
             crud_engine,
             route.entity_name,
@@ -278,18 +284,19 @@ void register_item_route(
     }
 
     if (route.operation_name == "update") {
-        if (seastar::this_shard_id() == 0) {
-            std::cerr << "[ROUTE] PUT " << route.path << " -> UpdateHandler"
-                      << (requires_auth ? " 🔒" : " 🌐") << "\n";
-        }
-
+        spdlog::get("sea.boot")->info(
+            "[ROUTE] PUT {} -> UpdateHandler {} ",
+            route.path,
+            requires_auth ? " 🔒" : "🌐"
+            );
         auto handler = std::make_unique<sea::http::handlers::crud::UpdateHandler>(
             crud_engine,
             registry,
             context.auth_service,
             route.entity_name,
             context.blocking_executor,
-            context.resource_auth_helper
+            context.resource_auth_helper,
+            context.file_extractor
             );
 
         auto wrapped = wrap_with_middlewares(
@@ -307,16 +314,17 @@ void register_item_route(
     }
 
     if (route.operation_name == "delete") {
-        if (seastar::this_shard_id() == 0) {
-            std::cerr << "[ROUTE] DELETE " << route.path << " -> DeleteHandler"
-                      << (requires_auth ? " 🔒" : " 🌐") << "\n";
-        }
-
-
+        spdlog::get("sea.boot")->info(
+            "[ROUTE] DELETE {} -> DeleteHandler {} ",
+            route.path,
+            requires_auth ? " 🔒" : "🌐"
+            );
         auto handler = std::make_unique<sea::http::handlers::crud::DeleteHandler>(
             crud_engine,
             route.entity_name,
-            context.resource_auth_helper
+            context.resource_auth_helper,
+            registry,
+            context.file_extractor
             );
 
         auto wrapped = wrap_with_middlewares(
@@ -363,12 +371,11 @@ void register_has_many_routes(
             {
                 const std::string child_path =
                     base + "/{id}/" + relation.name;
-
-                if (seastar::this_shard_id() == 0) {
-                    std::cerr << "[ROUTE] GET " << child_path << " -> ListByFkHandler"
-                              << (requires_auth ? " 🔒" : " 🌐") << "\n";
-                }
-
+                spdlog::get("sea.boot")->info(
+                    "[ROUTE] GET {} -> ListByFkHandler {} ",
+                    child_path,
+                    requires_auth ? " 🔒" : "🌐"
+                    );
                 auto handler = std::make_unique<sea::http::handlers::relation::ListByFkHandler>(
                     crud_engine,
                     relation.target_entity,
@@ -398,12 +405,11 @@ void register_has_many_routes(
                 const std::string with_children_path =
                     "/" + sea::http::utils::lower_first(entity.name) + "s_with_" +
                     relation.name + "/{id}";
-
-                if (seastar::this_shard_id() == 0) {
-                    std::cerr << "[ROUTE] GET " << with_children_path << " -> GetWithChildrenHandler"
-                              << (requires_auth ? " 🔒" : " 🌐") << "\n";
-                }
-
+                spdlog::get("sea.boot")->info(
+                    "[ROUTE] GET {} -> GetWithChildrenHandler {} ",
+                    with_children_path,
+                    requires_auth ? " 🔒" : "🌐"
+                    );
                 auto handler = std::make_unique<sea::http::handlers::relation::GetWithChildrenHandler>(
                     crud_engine,
                     entity.name,                      // parent_entity (Department)
@@ -450,24 +456,22 @@ void register_has_many_routes(
 
                 if (name_field == nullptr) {
                     // Le parent n'a pas de champ "name", on skip cette route
-                    if (seastar::this_shard_id() == 0) {
-                        std::cerr << "[ROUTE] SKIP filter/with_"
-                                  << sea::http::utils::lower_first(entity.name)
-                                  << "_name (no 'name' field on " << entity.name << ")\n";
-                    }
+                    spdlog::get("sea.boot")->debug(
+                        "[ROUTE] SKIP filter/with_{} _name (no 'name' field on {})",
+                        sea::http::utils::lower_first(entity.name),
+                        entity.name
+                        );
                 } else {
                     // Construit le path : /<children>/filter/with_<parent>_name
                     // Note : 'children' = relation.target_entity en lower + "s"
                     const std::string filter_path =
                         "/" + sea::http::utils::lower_first(relation.target_entity) + "s" +
                         "/filter/with_" + sea::http::utils::lower_first(entity.name) + "_name";
-
-                    if (seastar::this_shard_id() == 0) {
-                        std::cerr << "[ROUTE] GET " << filter_path
-                                  << "?name=<value> -> ListByFkFieldHandler"
-                                  << (requires_auth ? " 🔒" : " 🌐") << "\n";
-                    }
-
+                    spdlog::get("sea.boot")->info(
+                        "[ROUTE] GET {} ?name=<value> -> ListByFkFieldHandler {}",
+                        filter_path,
+                        requires_auth ? " 🔒" : " 🌐"
+                        );
                     auto handler = std::make_unique<sea::http::handlers::relation::ListByFkFieldHandler>(
                         crud_engine,
                         relation.target_entity,           // child_entity (Employee)
@@ -512,12 +516,12 @@ void register_has_one_routes(
 
             const std::string path =
                 base + "/{id}/" + relation.name;
-            if (seastar::this_shard_id() == 0) {
-                std::cerr << "[ROUTE] GET " << path << " -> GetOneByFkHandler"
-                          << (requires_auth ? " 🔒" : " 🌐") << "\n";
-            }
 
-
+            spdlog::get("sea.boot")->info(
+                "[ROUTE] GET {} -> GetOneByFkHandler {}",
+                path,
+                requires_auth ? " 🔒" : " 🌐"
+                );
             auto handler = std::make_unique<sea::http::handlers::relation::GetOneByFkHandler>(
                 crud_engine,
                 relation.target_entity,
@@ -558,12 +562,11 @@ void register_many_to_many_routes(
 
             const std::string path =
                 base + "/{id}/" + relation.name;
-
-            if (seastar::this_shard_id() == 0) {
-                std::cerr << "[ROUTE] GET " << path << " -> ListManyToManyHandler"
-                          << (requires_auth ? " 🔒" : " 🌐") << "\n";
-            }
-
+            spdlog::get("sea.boot")->info(
+                "[ROUTE] GET {} -> ListManyToManyHandler {}",
+                path,
+                requires_auth ? " 🔒" : " 🌐"
+                );
 
             auto handler = std::make_unique<sea::http::handlers::relation::ListManyToManyHandler>(
                 crud_engine,
@@ -589,21 +592,105 @@ void register_many_to_many_routes(
     }
 }
 
+// ─────────────────────────────────────────────
+// Routes de download de fichiers
+//
+// Pour chaque champ File de chaque entité, génère une route :
+//   GET /<entity_lower>s/{id}/<field>
+//
+// Skip si :
+//   - context.file_service est null (le service backend n'a pas de
+//     support fichiers configuré, ou le YAML n'utilise pas de champ File)
+//   - l'entité n'a aucun champ File (rien à exposer)
+//
+// L'ABAC est héritée de l'entité parente (CrudOperation::Read).
+// ─────────────────────────────────────────────
+void register_file_download_routes(
+    seastar::httpd::routes& routes,
+    const std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine>& crud_engine,
+    const std::shared_ptr<sea::infrastructure::runtime::SchemaRuntimeRegistry>& registry,
+    const MiddlewareContext& context)
+{
+    if (context.file_service == nullptr) {
+        // Pas de support fichiers : ne crée aucune route download.
+        return;
+    }
+
+    const bool requires_auth = service_has_auth(context.service);
+
+    for (const auto& entity : context.service.schema.entities) {
+        // Base path : /users, /documents, etc. (lower + 's' selon convention).
+        const std::string base =
+            "/" + sea::http::utils::lower_first(entity.name) + "s";
+
+        for (const auto& field : entity.fields) {
+            if (!field.is_file_field()) {
+                continue;
+            }
+
+            // Route : /<entity>s/{id}/<field>
+            // Le seastar router fait correspondre la dernière partie
+            // statique avec .remainder("id"). Comme on a /users/{id}/avatar,
+            // on ne peut PAS utiliser .remainder("id") directement parce
+            // que le path ne se termine pas par {id}.
+            //
+            // Il faut faire /users/{id}/avatar - Seastar gère bien les
+            // path params multiples via url(...).remainder("id") quand
+            // {id} est dernier, mais ici {id} est au milieu suivi du
+            // segment statique "avatar".
+            //
+            // Workaround : on construit l'URL avec le segment intermédiaire
+            // statique avant le remainder.
+            //
+            // Méthode utilisée : on enregistre l'URL via path direct
+            // "/users/{id}/avatar" et on extrait l'id via get_path_param.
+            const std::string full_path =
+                base + "/{id}/" + field.name;
+
+            spdlog::get("sea.boot")->info(
+                "[ROUTE] GET {} -> FileDownloadByFieldHandler {} ",
+                full_path,
+                requires_auth ? " 🔒" : " 🌐"
+                );
+
+            auto handler =
+                std::make_unique<sea::http::handlers::files::FileDownloadByFieldHandler>(
+                    crud_engine,
+                    registry,
+                    context.file_service,
+                    entity.name,
+                    field.name,
+                    context.resource_auth_helper
+                    );
+
+            auto wrapped = wrap_with_middlewares(
+                std::move(handler),
+                requires_auth,
+                context
+                );
+
+            // Pattern d'URL : /users/{id}/avatar
+            // On utilise la même approche que les routes /<entity>s/{id}/<relation>
+            // existantes (cf. register_has_one_routes).
+            routes.add(
+                seastar::httpd::operation_type::GET,
+                seastar::httpd::url(base + "/" + field.name).remainder("id"),
+                wrapped.release()
+                );
+        }
+    }
+}
+
 void log_route_definitions(
     const std::string& service_name,
     const std::vector<RouteDefinition>& route_definitions)
 {
-    std::cerr << "[ROUTES] Service " << service_name << "\n";
-
+    auto log = spdlog::get("sea.boot");
+    log->info("[ROUTES] Service {}", service_name);
     for (const auto& route : route_definitions) {
-        std::cerr << "  "
-                  << route.path
-                  << " -> "
-                  << route.entity_name
-                  << "."
-                  << route.operation_name
-                  << "\n";
+        log->info("  {} -> {}.{}", route.path, route.entity_name, route.operation_name);
     }
+
 }
 
 } // namespace sea::http::routing

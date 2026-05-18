@@ -1,6 +1,8 @@
 #pragma once
 // sea_domain/security_scheme/authentification_config.h
 
+#include "security_scheme/cookie_config.h"
+#include "security_scheme/token_tracking_config.h"
 #include <chrono>
 #include <string>
 #include <string_view>
@@ -78,6 +80,17 @@ public:
     AuthentificationConfig& set_jwt_audience(std::string audience);
     AuthentificationConfig& set_access_token_ttl(std::chrono::seconds ttl);
     AuthentificationConfig& set_refresh_token_ttl(std::chrono::seconds ttl);
+    // --- Token delivery  ---
+    AuthentificationConfig& set_token_delivery(TokenDelivery mode);
+
+    // --- Cookies HttpOnly  ---
+    AuthentificationConfig& set_cookie_config(CookieConfig cfg);
+
+    // --- Token tracking ---
+    AuthentificationConfig& set_token_tracking(TokenTrackingConfig cfg);
+    [[nodiscard]] TokenDelivery               token_delivery()  const noexcept;
+    [[nodiscard]] const CookieConfig&         cookie_config()   const noexcept;
+    [[nodiscard]] const TokenTrackingConfig&  token_tracking()  const noexcept;
 
     // --- API Key ---
     AuthentificationConfig& set_api_key_header_name(std::string header);
@@ -132,7 +145,9 @@ private:
     std::string jwt_audience_;
     std::chrono::seconds access_token_ttl_;
     std::chrono::seconds refresh_token_ttl_;
-
+    TokenDelivery        token_delivery_   = TokenDelivery::Body;
+    CookieConfig         cookie_config_{};
+    TokenTrackingConfig  token_tracking_   = TokenTrackingConfig::disabled();
     // API Key
     std::string api_key_header_name_;
 

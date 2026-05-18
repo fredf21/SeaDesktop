@@ -9,6 +9,14 @@ add_library(sea_application STATIC
     load_project_use_case.h
     openapigenerator.h openapigenerator.cpp
     authservice.h authservice.cpp
+    token_tracking_service.h token_tracking_service.cpp
+    denylist_cache.h denylist_cache.cpp
+    logging_initializer.h logging_initializer.cpp
+    seastar_log_bridge.h seastar_log_bridge.cpp
+    ring_buffer_sink.h ring_buffer_sink.cpp
+
+    fileservice.h fileservice.cpp
+    fileservicefactory.h fileservicefactory.cpp
 
 )
 
@@ -35,6 +43,8 @@ target_link_libraries(sea_application
     PUBLIC
         Sea::domain
         Sea::infrastructure
+    PRIVATE
+        spdlog::spdlog_header_only
 )
 
 target_compile_features(sea_application PUBLIC cxx_std_20)

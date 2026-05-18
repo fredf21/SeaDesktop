@@ -1,14 +1,15 @@
 #pragma once
 #include "access_control/access_control_config.h"
-#pragma once
 
 #include "database_config.h"
+#include "logging/logging_config.h"
 #include "schema.h"
 
 #include <cstdint>     // std::uint16_t
 #include <string>
 #include <string_view>
 #include "security_scheme/security_config.h"
+#include "storage_config.h"
 namespace sea::domain {
 
 // ─────────────────────────────────────────────────────────────
@@ -50,6 +51,31 @@ struct Service {
     ServiceOptions           options{};          // options transverses
 
     access_control::AccessControlConfig access_control; // Pour l'ABAC
+    // Par defaut : console texte, niveau info, async actif.
+    // Configurable via section "logging:" dans le YAML.
+    sea::domain::logging::LoggingConfig logging = sea::domain::logging::LoggingConfig::safe_defaults();
+    // ─────────────────────────────────────────────────────────
+    // Configuration du backend de stockage de fichiers.
+    //
+    // Optionnel : si nullopt, et que le schema n'a aucun champ
+    // File, le FileService n'est pas instancie et aucune table
+    // sea_files n'est creee.
+    //
+    // Si nullopt mais le schema a au moins un champ File, le
+    // FileServiceFactory applique un fallback automatique :
+    //   StorageConfig{ backend = Filesystem, root_path = "./uploads" }
+    // (philosophie : tolerant pour demarrer rapidement).
+    //
+    // Pour personnaliser, ajouter un bloc `storage:` au niveau
+    // service dans le YAML :
+    //   storage:
+    //     backend: filesystem
+    //     root_path: /var/lib/seadesktop/uploads
+    //     file_mode: 0640
+    //     directory_mode: 0750
+    // ─────────────────────────────────────────────────────────
+    std::optional<StorageConfig> storage;
+
     // ── helpers ─────────────────────────────────────────────
 
     [[nodiscard]] bool has_valid_port() const noexcept {
@@ -71,6 +97,13 @@ struct Service {
     [[nodiscard]] const Entity* find_entity(std::string_view entity_name) const {
         return schema.find_entity(entity_name);
     }
+    // Indique si le schema utilise au moins un champ File.
+    // Delegue au helper du Schema (deduplication).
+    [[nodiscard]] bool has_file_fields() const noexcept {
+        return schema.has_file_fields();
+    }
+
+
 };
 
 } // namespace sea::domain

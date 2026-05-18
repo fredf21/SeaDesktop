@@ -50,6 +50,13 @@ add_library(sea_domain STATIC
     security_scheme/abac_mode.h security_scheme/abac_mode.cpp
     database_mappings/mysql_type_mapping.h
     database_mappings/postgres_type_mapping.h
+    pagination.h
+    security_scheme/token_tracking_config.h security_scheme/token_tracking_config.cpp
+    security_scheme/cookie_config.h security_scheme/cookie_config.cpp
+    logging/logging_config.h logging/logging_config.cpp
+    file_field_config.h
+    file_metadata.h
+    storage_config.h
 
 
 )

@@ -3,7 +3,6 @@
 #include "database_config.h"
 #include "schema.h"
 #include "runtime/generic_crud_engine.h"
-#include "runtime/schema_runtime_registry.h"
 #include "thread_pool_execution/i_blocking_executor.h"
 
 #include <memory>

@@ -71,6 +71,51 @@ std::string make_record_key(const runtime::DynamicRecord& values)
     return result;
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Helpers pagination : comparaison de DynamicValue pour le tri
+//
+// On compare typiquement des entiers, doubles, strings, bools.
+// Si les types diffèrent ou ne sont pas comparables, on retombe
+// sur leur représentation string (stable mais pas toujours sémantique).
+// ─────────────────────────────────────────────────────────────────
+int compare_dynamic_values(const runtime::DynamicValue& a,
+                           const runtime::DynamicValue& b)
+{
+    // Si les deux sont des int64 → comparaison numérique
+    if (std::holds_alternative<std::int64_t>(a) &&
+        std::holds_alternative<std::int64_t>(b)) {
+        const auto av = std::get<std::int64_t>(a);
+        const auto bv = std::get<std::int64_t>(b);
+        if (av < bv) return -1;
+        if (av > bv) return 1;
+        return 0;
+    }
+    // Si les deux sont des double
+    if (std::holds_alternative<double>(a) && std::holds_alternative<double>(b)) {
+        const auto av = std::get<double>(a);
+        const auto bv = std::get<double>(b);
+        if (av < bv) return -1;
+        if (av > bv) return 1;
+        return 0;
+    }
+    // Si les deux sont des bool
+    if (std::holds_alternative<bool>(a) && std::holds_alternative<bool>(b)) {
+        const auto av = std::get<bool>(a);
+        const auto bv = std::get<bool>(b);
+        if (av == bv) return 0;
+        return av ? 1 : -1;   // false < true
+    }
+    // Fallback : comparaison string
+    const auto as = dynamic_value_to_string(a);
+    const auto bs = dynamic_value_to_string(b);
+    if (!as.has_value() && !bs.has_value()) return 0;
+    if (!as.has_value()) return -1;
+    if (!bs.has_value()) return 1;
+    if (*as < *bs) return -1;
+    if (*as > *bs) return 1;
+    return 0;
+}
+
 } // namespace
 
 /**
@@ -311,6 +356,242 @@ InMemoryGenericRepository::in_transaction(std::function<seastar::future<bool>()>
         .committed = committed,
         .error_message = std::move(error_message)
     };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PAGINATION
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Helper : collecte tous les records d'une entité, triés.
+ *
+ * Si sort_field est nullopt, l'ordre dépend de l'itération du
+ * unordered_map (non garanti stable). Pour un backend de test
+ * c'est acceptable. Sinon on trie via compare_dynamic_values.
+ */
+std::vector<runtime::DynamicRecord>
+InMemoryGenericRepository::collect_all_sorted(
+    const std::string& entity_name,
+    const std::optional<std::string>& sort_field,
+    bool sort_desc) const
+{
+    std::vector<runtime::DynamicRecord> rows;
+
+    const auto it = storage_.find(entity_name);
+    if (it == storage_.end()) {
+        return rows;
+    }
+
+    rows.reserve(it->second.size());
+    for (const auto& [_, record] : it->second) {
+        rows.push_back(record);
+    }
+
+    if (sort_field.has_value()) {
+        const std::string& field = *sort_field;
+        std::sort(rows.begin(), rows.end(),
+                  [&field, sort_desc](const runtime::DynamicRecord& a,
+                                      const runtime::DynamicRecord& b) {
+                      const auto ait = a.find(field);
+                      const auto bit = b.find(field);
+
+                      // Les records sans le champ tombent en fin
+                      if (ait == a.end() && bit == b.end()) return false;
+                      if (ait == a.end()) return false;
+                      if (bit == b.end()) return true;
+
+                      const int cmp = compare_dynamic_values(ait->second, bit->second);
+                      return sort_desc ? (cmp > 0) : (cmp < 0);
+                  });
+    }
+
+    return rows;
+}
+
+seastar::future<std::size_t>
+InMemoryGenericRepository::count(const std::string& entity_name)
+{
+    const auto it = storage_.find(entity_name);
+    if (it == storage_.end()) {
+        return seastar::make_ready_future<std::size_t>(0);
+    }
+    return seastar::make_ready_future<std::size_t>(it->second.size());
+}
+
+seastar::future<PageResult>
+InMemoryGenericRepository::list_page(const std::string& entity_name,
+                                     const PageRequest& request)
+{
+    PageResult result;
+
+    auto rows = collect_all_sorted(entity_name, request.sort_field, request.sort_desc);
+    result.total = rows.size();
+
+    // page 1-indexee → offset = (page - 1) * page_size
+    // page = 0 est traite comme page = 1 (defensive)
+    const std::size_t page = request.page > 0 ? request.page : 1;
+    const std::size_t offset = (page - 1) * request.page_size;
+
+    if (offset >= rows.size() || request.page_size == 0) {
+        return seastar::make_ready_future<PageResult>(std::move(result));
+    }
+
+    const std::size_t end = std::min(offset + request.page_size, rows.size());
+    result.items.reserve(end - offset);
+    for (std::size_t i = offset; i < end; ++i) {
+        result.items.push_back(std::move(rows[i]));
+    }
+
+    return seastar::make_ready_future<PageResult>(std::move(result));
+}
+
+seastar::future<OffsetResult>
+InMemoryGenericRepository::list_offset(const std::string& entity_name,
+                                       const OffsetRequest& request)
+{
+    OffsetResult result;
+
+    auto rows = collect_all_sorted(entity_name, request.sort_field, request.sort_desc);
+    result.total = rows.size();
+
+    if (request.offset >= rows.size() || request.limit == 0) {
+        return seastar::make_ready_future<OffsetResult>(std::move(result));
+    }
+
+    const std::size_t end = std::min(request.offset + request.limit, rows.size());
+    result.items.reserve(end - request.offset);
+    for (std::size_t i = request.offset; i < end; ++i) {
+        result.items.push_back(std::move(rows[i]));
+    }
+
+    return seastar::make_ready_future<OffsetResult>(std::move(result));
+}
+
+seastar::future<CursorResult>
+InMemoryGenericRepository::list_cursor(const std::string& entity_name,
+                                       const CursorRequest& request)
+{
+    CursorResult result;
+
+    // Le cursor impose le tri par cursor_field
+    auto rows = collect_all_sorted(entity_name,
+                                   std::optional<std::string>(request.cursor_field),
+                                   request.sort_desc);
+
+    if (rows.empty() || request.limit == 0) {
+        return seastar::make_ready_future<CursorResult>(std::move(result));
+    }
+
+    // Detection du point de depart selon 'after'
+    std::size_t start = 0;
+    if (request.after.has_value()) {
+        const std::string& after = *request.after;
+        // On cherche le premier element STRICTEMENT apres la valeur 'after'
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            const auto it = rows[i].find(request.cursor_field);
+            if (it == rows[i].end()) continue;
+            const auto sval = dynamic_value_to_string(it->second);
+            if (!sval.has_value()) continue;
+
+            // En tri ASC : on saute tout ce qui est <= after
+            // En tri DESC : on saute tout ce qui est >= after
+            const bool past_cursor =
+                request.sort_desc ? (*sval < after) : (*sval > after);
+            if (past_cursor) {
+                start = i;
+                break;
+            }
+            // Si on arrive a la fin sans rien trouver, start reste a rows.size()
+            if (i == rows.size() - 1) {
+                start = rows.size();
+            }
+        }
+    }
+
+    if (start >= rows.size()) {
+        return seastar::make_ready_future<CursorResult>(std::move(result));
+    }
+
+    const std::size_t end = std::min(start + request.limit, rows.size());
+    result.items.reserve(end - start);
+    for (std::size_t i = start; i < end; ++i) {
+        result.items.push_back(rows[i]);
+    }
+
+    // next_cursor = valeur du cursor_field du dernier element si plus de pages
+    if (end < rows.size()) {
+        const auto& last = result.items.back();
+        const auto it = last.find(request.cursor_field);
+        if (it != last.end()) {
+            const auto sval = dynamic_value_to_string(it->second);
+            if (sval.has_value()) {
+                result.next_cursor = *sval;
+            }
+        }
+    }
+
+    return seastar::make_ready_future<CursorResult>(std::move(result));
+}
+// ─────────────────────────────────────────────────────────────
+// increment_field
+//
+// En in-memory, on lit la valeur courante du champ, on l'incrémente,
+// et on remet la valeur dans le record. Mono-shard Seastar = pas de
+// race condition (single-threaded).
+//
+// On supporte les variants entiers (int16/32/64, signés/non-signés).
+// Les autres types (string, double, ...) renvoient false : le contrat
+// d'increment_field exige un champ numérique.
+// ─────────────────────────────────────────────────────────────
+seastar::future<bool>
+InMemoryGenericRepository::increment_field(const std::string& entity_name,
+                                           const std::string& id,
+                                           const std::string& field_name,
+                                           std::int64_t delta)
+{
+    const auto entity_it = storage_.find(entity_name);
+    if (entity_it == storage_.end()) {
+        return seastar::make_ready_future<bool>(false);
+    }
+
+    const auto rec_it = entity_it->second.find(id);
+    if (rec_it == entity_it->second.end()) {
+        return seastar::make_ready_future<bool>(false);
+    }
+
+    auto field_it = rec_it->second.find(field_name);
+    if (field_it == rec_it->second.end()) {
+        return seastar::make_ready_future<bool>(false);
+    }
+
+    // Visite typée : seuls les variants entiers sont valides.
+    auto& value = field_it->second;
+    bool incremented = std::visit(
+        [delta](auto& v) -> bool {
+            using T = std::decay_t<decltype(v)>;
+            if constexpr (std::is_same_v<T, std::int64_t> ||
+                          std::is_same_v<T, std::int32_t> ||
+                          std::is_same_v<T, std::int16_t>) {
+                v = static_cast<T>(v + delta);
+                return true;
+            } else if constexpr (std::is_same_v<T, std::uint64_t> ||
+                                 std::is_same_v<T, std::uint32_t> ||
+                                 std::is_same_v<T, std::uint16_t>) {
+                // Pour les unsigned, on cast prudemment ; un delta
+                // négatif qui underflowerait le champ retournerait
+                // false dans le SGBD MySQL aussi (BIGINT UNSIGNED).
+                if (delta < 0 && static_cast<std::uint64_t>(-delta) > v) {
+                    return false;
+                }
+                v = static_cast<T>(static_cast<std::int64_t>(v) + delta);
+                return true;
+            } else {
+                return false;
+            }
+        },
+        value);
+
+    return seastar::make_ready_future<bool>(incremented);
 }
 
 } // namespace sea::infrastructure::persistence

@@ -4,6 +4,7 @@
 #include "access_control/evaluation_options.h"
 #include "access_control/evaluation_result.h"
 #include "entity.h"
+#include "spdlog/spdlog.h"
 
 #include <algorithm>
 #include <cctype>
@@ -245,9 +246,11 @@ ResourceCheckResult ResourceAuthorizationHelper::check_single(
 {
     // Bypass admin
     if (is_admin_bypass(subject)) {
-        std::cerr << "[AUTHZ-RES] " << entity_name << "."
-                  << crud_op_to_string(operation)
-                  << " : ADMIN BYPASS\n";
+        spdlog::get("sea.http")->info(
+            "AUTHZ-RES {}.{}  : ADMIN BYPASS",
+            entity_name, crud_op_to_string(operation)
+            );
+
         return ResourceCheckResult{true, ""};
     }
 
@@ -295,9 +298,10 @@ ResourceCheckResult ResourceAuthorizationHelper::check_single(
             };
         }
 
-        std::cerr << "[AUTHZ-RES] " << entity_name << "."
-                  << crud_op_to_string(operation)
-                  << " : SUBJECT-ONLY → ALLOW (re-check)\n";
+        spdlog::get("sea.http")->info(
+            "AUTHZ-RES {}.{} : SUBJECT-ONLY → ALLOW (re-check)",
+            entity_name, crud_op_to_string(operation)
+            );
         return ResourceCheckResult{true, ""};
     }
 
@@ -325,11 +329,10 @@ ResourceCheckResult ResourceAuthorizationHelper::check_single(
         );
 
     if (!result.allowed) {
-        std::cerr << "[AUTHZ-RES] " << entity_name << "."
-                  << crud_op_to_string(operation)
-                  << " : RESOURCE-AWARE → DENY ("
-                  << result.reason.value_or("policy refused")
-                  << ")\n";
+        spdlog::get("sea.http")->warn(
+            "AUTHZ-RES {}.{} : RESOURCE-AWARE → DENY ( {} )",
+            entity_name, crud_op_to_string(operation), result.reason.value_or("policy refused")
+            );
 
         return ResourceCheckResult{
             false,
@@ -338,10 +341,10 @@ ResourceCheckResult ResourceAuthorizationHelper::check_single(
         };
     }
 
-    std::cerr << "[AUTHZ-RES] " << entity_name << "."
-              << crud_op_to_string(operation)
-              << " : RESOURCE-AWARE → ALLOW\n";
-
+    spdlog::get("sea.http")->info(
+        "AUTHZ-RES {}.{} : RESOURCE-AWARE → ALLOW",
+        entity_name, crud_op_to_string(operation)
+        );
     return ResourceCheckResult{true, ""};
 }
 
@@ -358,9 +361,10 @@ std::string ResourceAuthorizationHelper::filter_collection(
 {
     // Bypass admin → retourne tout
     if (is_admin_bypass(subject)) {
-        std::cerr << "[AUTHZ-RES] " << entity_name << "."
-                  << crud_op_to_string(operation)
-                  << " : ADMIN BYPASS (no filtering)\n";
+        spdlog::get("sea.http")->info(
+            "AUTHZ-RES {}.{}  : ADMIN BYPASS (no filtering)",
+            entity_name, crud_op_to_string(operation)
+            );
         return records_json;
     }
 
@@ -386,10 +390,10 @@ std::string ResourceAuthorizationHelper::filter_collection(
     try {
         records = nlohmann::json::parse(records_json);
     } catch (const std::exception& e) {
-        std::cerr << "[AUTHZ-RES] " << entity_name << "."
-                  << crud_op_to_string(operation)
-                  << " : Failed to parse collection JSON: "
-                  << e.what() << "\n";
+        spdlog::get("sea.http")->critical(
+            "AUTHZ-RES {}.{}  : Failed to parse collection JSON : {}",
+            entity_name, crud_op_to_string(operation), e.what()
+            );
         return records_json;
     }
 
@@ -427,7 +431,10 @@ std::string ResourceAuthorizationHelper::filter_collection(
               << crud_op_to_string(operation)
               << " : FILTER → kept=" << kept
               << " denied=" << denied << "\n";
-
+    spdlog::get("sea.http")->warn(
+        "AUTHZ-RES {}.{}  : FILTER → kept= : {}, denied = {}",
+        entity_name, crud_op_to_string(operation), kept, denied
+        );
     return filtered.dump();
 }
 

@@ -10,6 +10,7 @@
 #include "access_control/policy_context.h"
 #include "access_control/evaluation_options.h"
 #include "access_control/evaluation_result.h"
+#include "spdlog/spdlog.h"
 
 #include <nlohmann/json.hpp>
 
@@ -342,13 +343,15 @@ AuthorizationMiddleware::handle(
     const auto plan = resolver_.resolve(method_str, real_path_str);
 
     if (plan.unknown_route) {
-        // Fail closed : toute route non identifiee est refusee
-        std::cerr << "[AUTHZ] " << method_str << " " << real_path_str
-                  << " : UNKNOWN ROUTE → 403\n";
+        spdlog::get("sea.http")->warn(
+            "AUTHZ {} {} : UNKNOWN ROUTE -> 403",
+            method_str, real_path_str
+            );
         rep = make_forbidden_response(std::move(rep),
                                       "Route not recognized for authorization");
         co_return std::move(rep);
     }
+
 
     if (plan.checks.empty()) {
         // Aucun check defini (cas de figure rare mais on laisse passer)
@@ -379,24 +382,29 @@ AuthorizationMiddleware::handle(
 
         switch (result.outcome) {
         case CheckOutcome::Allow:
-            std::cerr << "[AUTHZ] " << method_str << " " << real_path_str
-                      << " : check[" << i << "] " << check.entity_name << "."
-                      << crud_op_to_string(check.operation)
-                      << " → ALLOW (subject-only)\n";
+            spdlog::get("sea.http")->info(
+                "AUTHZ {} {} : check[{}] {}.{} -> ALLOW (subject-only)",
+                method_str, real_path_str,
+                i, check.entity_name, crud_op_to_string(check.operation)
+                );
             break;
 
         case CheckOutcome::PassToHandler:
-            std::cerr << "[AUTHZ] " << method_str << " " << real_path_str
-                      << " : check[" << i << "] " << check.entity_name << "."
-                      << crud_op_to_string(check.operation)
-                      << " → PASS (resource-aware, permissive)\n";
+            spdlog::get("sea.http")->info(
+                "AUTHZ {} {} : check[{}] {}.{} -> PASS (resource-aware, permissive)",
+                method_str, real_path_str,
+                i, check.entity_name, crud_op_to_string(check.operation)
+                );
             break;
 
         case CheckOutcome::Deny:
-            std::cerr << "[AUTHZ] " << method_str << " " << real_path_str
-                      << " : check[" << i << "] " << check.entity_name << "."
-                      << crud_op_to_string(check.operation)
-                      << " → DENY (" << result.reason << ")\n";
+            spdlog::get("sea.http")->warn(
+                "AUTHZ {} {} : check[{}] {}.{} -> DENY ({})",
+                method_str, real_path_str,
+                i, check.entity_name, crud_op_to_string(check.operation),
+                result.reason
+                );
+
 
             if (!first_deny_reason.has_value()) {
                 first_deny_reason = result.reason;

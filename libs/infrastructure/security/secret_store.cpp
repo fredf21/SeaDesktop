@@ -1,4 +1,5 @@
 #include "security/secret_store.h"
+#include "exception_handling.h"
 
 #include <cctype>
 #include <cstdlib>
@@ -6,7 +7,6 @@
 #include <fstream>
 #include <random>
 #include <sstream>
-#include <stdexcept>
 #include <system_error>
 
 namespace fs = std::filesystem;
@@ -52,24 +52,28 @@ namespace {
     const std::string& storageDir,
     const std::string& serviceName
     ) {
-    if (storageDir.empty()) {
-        throw std::runtime_error("storageDir cannot be empty");
-    }
+    try{
+        if (storageDir.empty()) {
+            throw sea::sea_errors_handling::SECURITY_ERROR("[SECURITY ERROR] storageDir cannot be empty");
+        }
 
-    if (serviceName.empty()) {
-        throw std::runtime_error("serviceName cannot be empty");
-    }
+        if (serviceName.empty()) {
+            throw sea::sea_errors_handling::SECURITY_ERROR("[SECURITY ERROR] serviceName cannot be empty");
+        }
 
-    fs::path dir(storageDir);
-    fs::path file = dir / (serviceName + ".jwt.secret");
-    return file.string();
+        fs::path dir(storageDir);
+        fs::path file = dir / (serviceName + ".jwt.secret");
+        return file.string();
+    }catch(const sea::sea_errors_handling::SECURITY_ERROR& e){
+        return std::string("");
+    }
 }
 
 } // namespace
 
 std::string build_service_jwt_env_name(const std::string& serviceName) {
     if (serviceName.empty()) {
-        throw std::runtime_error("Service name cannot be empty");
+        throw sea::sea_errors_handling::SECURITY_ERROR("[SECURITY ERROR] Service name cannot be empty");
     }
 
     return "SEA_JWT_SECRET_" + normalize_service_name_for_env(serviceName);
@@ -77,7 +81,7 @@ std::string build_service_jwt_env_name(const std::string& serviceName) {
 
 std::string generate_secure_random_secret(std::size_t length) {
     if (length == 0) {
-        throw std::runtime_error("Secret length must be greater than 0");
+        throw sea::sea_errors_handling::SECURITY_ERROR("[SECURITY ERROR] Secret length must be greater than 0");
     }
 
     static constexpr char charset[] =
@@ -128,7 +132,7 @@ void save_secret_to_file(
     const std::string& secret
     ) {
     if (is_blank(secret)) {
-        throw std::runtime_error("Cannot save empty JWT secret");
+        throw sea::sea_errors_handling::SECURITY_ERROR("[SECURITY ERROR] Cannot save empty JWT secret");
     }
 
     fs::create_directories(storageDir);
@@ -138,12 +142,12 @@ void save_secret_to_file(
     {
         std::ofstream out(filePath, std::ios::out | std::ios::trunc);
         if (!out.is_open()) {
-            throw std::runtime_error("Failed to open JWT secret file for writing: " + filePath);
+            throw sea::sea_errors_handling::SECURITY_ERROR("[SECURITY ERROR] Failed to open JWT secret file for writing: " + filePath);
         }
 
         out << secret;
         if (!out.good()) {
-            throw std::runtime_error("Failed to write JWT secret file: " + filePath);
+            throw sea::sea_errors_handling::SECURITY_ERROR("[SECURITY ERROR] Failed to write JWT secret file: " + filePath);
         }
     }
 
@@ -158,11 +162,11 @@ void save_secret_to_file(
 
 std::string resolve_jwt_secret(const JwtSecretConfig& config) {
     if (config.serviceName.empty()) {
-        throw std::runtime_error("serviceName is required");
+        throw sea::sea_errors_handling::SECURITY_ERROR("[SECURITY ERROR] serviceName is required");
     }
 
     if (config.storageDir.empty()) {
-        throw std::runtime_error("storageDir is required");
+        throw sea::sea_errors_handling::SECURITY_ERROR("[SECURITY ERROR] storageDir is required");
     }
 
     const std::string envName = build_service_jwt_env_name(config.serviceName);

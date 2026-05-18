@@ -20,6 +20,7 @@ qt_add_executable(SeaUI
     fieldlistmodel.h fieldlistmodel.cpp
     servicestatuscheck.h servicestatuscheck.cpp
     routelistmodel.h routelistmodel.cpp
+    routelistitemdelegate.h routelistitemdelegate.cpp
 
 )
 

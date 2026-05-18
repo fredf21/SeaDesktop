@@ -1,4 +1,5 @@
 #include "mysql_introspector.h"
+#include "spdlog/spdlog.h"
 
 #include <cppconn/exception.h>
 #include <cppconn/prepared_statement.h>
@@ -81,8 +82,10 @@ MysqlIntrospector::database_exists(const std::string& database_name)
                 }
                 return false;
             } catch (const sql::SQLException& e) {
-                std::cerr << "[INTROSPECT] database_exists error: "
-                          << e.what() << "\n";
+                spdlog::get("sea.persistence")->error(
+                    "INTROSPECT database_exists error: {}", e.what()
+                    );
+
                 return false;
             }
         }
@@ -110,8 +113,10 @@ MysqlIntrospector::list_tables()
                     tables.push_back(std::string(rs->getString(1)));
                 }
             } catch (const sql::SQLException& e) {
-                std::cerr << "[INTROSPECT] list_tables error: "
-                          << e.what() << "\n";
+                spdlog::get("sea.persistence")->error(
+                    "INTROSPECT list_tables error: {}", e.what()
+                    );
+
             }
             return tables;
         }
@@ -170,8 +175,10 @@ MysqlIntrospector::list_columns(const std::string& table_name)
                     columns.push_back(std::move(info));
                 }
             } catch (const sql::SQLException& e) {
-                std::cerr << "[INTROSPECT] list_columns(" << table_name << ") error: "
-                          << e.what() << "\n";
+                spdlog::get("sea.persistence")->error(
+                    "INTROSPECT list_columns({}) error: {}", table_name, e.what()
+                    );
+
             }
             return columns;
         }
@@ -220,8 +227,10 @@ MysqlIntrospector::list_indexes(const std::string& table_name)
                     info.columns.push_back(col_name);
                 }
             } catch (const sql::SQLException& e) {
-                std::cerr << "[INTROSPECT] list_indexes(" << table_name << ") error: "
-                          << e.what() << "\n";
+                spdlog::get("sea.persistence")->error(
+                    "INTROSPECT list_indexes({}) error: {}", table_name, e.what()
+                    );
+
             }
 
             std::vector<IndexInfo> result;
@@ -277,8 +286,10 @@ MysqlIntrospector::list_foreign_keys(const std::string& table_name)
                     fks.push_back(std::move(fk));
                 }
             } catch (const sql::SQLException& e) {
-                std::cerr << "[INTROSPECT] list_foreign_keys(" << table_name << ") error: "
-                          << e.what() << "\n";
+                spdlog::get("sea.persistence")->error(
+                    "INTROSPECT list_foreign_keys({}) error: {}", table_name, e.what()
+                    );
+
             }
             return fks;
         }

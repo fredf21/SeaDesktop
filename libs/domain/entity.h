@@ -2,6 +2,7 @@
 
 #include "access_control/entity_access_control.h"
 #include "field.h"
+#include "pagination.h"
 #include "relation.h"
 
 #include <string>
@@ -62,17 +63,46 @@ struct Entity {
     access_control::EntityAccessControl access_control;
     // Seeds.1 : seeds optionnels
     std::vector<SeedRecord> seeds;
-
+    std::optional<PaginationConfig> pagination;  // nullopt => pas de routes paginées
     // ── helpers ────────────────────────────────────────────────
+    [[nodiscard]] static std::string to_route_plural(std::string name)
+    {
+        if (name.empty()) {
+            return "";
+        }
+
+        name[0] = static_cast<char>(
+            std::tolower(static_cast<unsigned char>(name[0]))
+            );
+
+        if (name.size() >= 2 && name.back() == 'y') {
+            char before_y = static_cast<char>(
+                std::tolower(static_cast<unsigned char>(name[name.size() - 2]))
+                );
+
+            const bool before_is_vowel =
+                before_y == 'a' ||
+                before_y == 'e' ||
+                before_y == 'i' ||
+                before_y == 'o' ||
+                before_y == 'u';
+
+            if (!before_is_vowel) {
+                name.pop_back();
+                name += "ies";
+                return name;
+            }
+        }
+
+        return name + "s";
+    }
 
     [[nodiscard]] std::string route_prefix() const {
         if (name.empty()) {
             return "/";
         }
         // "User" → "/users"
-        std::string s = name;
-        s[0] = static_cast<char>(std::tolower(s[0]));
-        return "/" + s + "s";   // MVP : pluriel naïf, à améliorer
+        return "/" + to_route_plural(name);
     }
 
     [[nodiscard]] const Field* find_field(std::string_view n) const {
@@ -113,6 +143,41 @@ struct Entity {
         return find_relation(n) != nullptr;
     }
 
+    // ── helpers pagination ─────────────────────────────────────
+
+    [[nodiscard]] bool has_pagination() const noexcept {
+        return pagination.has_value() && pagination->any();
+    }
+    [[nodiscard]] bool has_page_pagination() const noexcept {
+        return pagination.has_value() && pagination->has_page();
+    }
+    [[nodiscard]] bool has_offset_pagination() const noexcept {
+        return pagination.has_value() && pagination->has_offset();
+    }
+    [[nodiscard]] bool has_cursor_pagination() const noexcept {
+        return pagination.has_value() && pagination->has_cursor();
+    }
+
+    // Indique si l'entite contient au moins un champ de type File.
+    // C'est la responsabilite naturelle d'Entity (qui possede les Fields)
+    // de savoir si elle expose un champ File. Schema et Service delegent
+    // ici pour la convenance des appelants.
+    //
+    // Utilise par :
+    //   - mysql_bootstrapper (via Schema::has_file_fields) : decider
+    //     de creer ou non sea_files au boot
+    //   - FileServiceFactory (via Service::has_file_fields) : decider
+    //     d'instancier ou non le FileService
+    //   - route_registration::register_file_download_routes : iterer
+    //     uniquement sur les entites qui ont des fichiers
+    [[nodiscard]] bool has_file_fields() const noexcept {
+        for (const auto& f : fields) {
+            if (f.is_file_field()) {
+                return true;
+            }
+        }
+        return false;
+    }
 
 
 };

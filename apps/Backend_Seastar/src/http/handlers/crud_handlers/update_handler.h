@@ -1,4 +1,5 @@
 #pragma once
+#include "http/handlers/file_handlers/file_upload_extractor.h"
 #include "thread_pool_execution/i_blocking_executor.h"
 #include <seastar/http/httpd.hh>
 #include <memory>
@@ -26,7 +27,9 @@ public:
         std::string entity_name,
         std::shared_ptr<IBlockingExecutor> blocking_executor,
         // helper ABAC resource-aware (optionnel)
-        std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> auth_helper = nullptr
+        std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> auth_helper = nullptr,
+        // Extractor de fichiers (optionnel)
+        std::shared_ptr<sea::http::handlers::file_upload::FileUploadExtractor> file_extractor = nullptr
         );
 
     seastar::future<std::unique_ptr<seastar::http::reply>>
@@ -41,6 +44,7 @@ private:
     std::string entity_name_;
     std::shared_ptr<IBlockingExecutor> blocking_executor_;
     std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> auth_helper_;
+    std::shared_ptr<sea::http::handlers::file_upload::FileUploadExtractor> file_extractor_;
 };
 
 }

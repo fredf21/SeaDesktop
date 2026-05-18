@@ -33,7 +33,7 @@ HttpLimitsMiddleware::handle(
     }
 
     // 2. Body trop gros ?
-    if (req->content.size() > config_.max_body_size()) {
+    if (req->content_length > config_.max_body_size()) {
         rep->set_status(seastar::http::reply::status_type::payload_too_large);
         rep->write_body("application/json", json{
                                                 {"error", "payload_too_large"},
@@ -69,7 +69,7 @@ HttpLimitsMiddleware::handle(
     }
 
     // 5. Trop de query params ?
-    if (req->query_parameters.size() > config_.max_query_params()) {
+    if (req->get_query_params().size() > config_.max_query_params()) {
         rep->set_status(seastar::http::reply::status_type::bad_request);
         rep->write_body("application/json", json{
                                                 {"error", "too_many_query_params"},

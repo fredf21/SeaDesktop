@@ -23,9 +23,9 @@ struct BootstrapResult {
 
     bool database_was_created = false;
     std::vector<std::string> tables_created;
-    std::vector<std::string> columns_added; // format "Table.column"
+    std::vector<std::string> columns_added; // forma~/Qt/Tools/QtCreator/bin/qtcreatort "Table.column"
     std::vector<std::string> columns_modified;
-    std::vector<std::string> columns_renamed;      // ✨ NEW (Phase B.3)
+    std::vector<std::string> columns_renamed;
     std::vector<std::string> indexes_changed;
     std::vector<std::string> pivots_created;
     std::vector<std::string> errors;
@@ -68,6 +68,26 @@ public:
     // Cette methode utilise une connexion SANS specifier la DB (root@host)
     // car la DB peut ne pas exister.
     seastar::future<bool> ensure_database_exists();
+
+    // ─────────────────────────────────────────────────────────
+    // S'assure que la table système `sea_files` existe.
+    //
+    // Cette table stocke les metadata de tous les fichiers
+    // uploadés (cf. SeaFilesTable). Elle est créée AVANT toutes
+    // les tables d'entités du YAML, car celles-ci peuvent y
+    // référer via des FK (champs de type File).
+    //
+    // Idempotent : utilise CREATE TABLE IF NOT EXISTS. Peut
+    // être appelée à chaque boot sans effet de bord.
+    //
+    // Note : on ne modifie pas la table existante si son schéma
+    // a évolué — cela suivra le pattern de migration des entités
+    // utilisateur si on évolue le schéma de sea_files plus tard.
+    //
+    // Retour : true si la table existe (créée ou déjà présente).
+    //         false en cas d'erreur SQL.
+    // ─────────────────────────────────────────────────────────
+    seastar::future<bool> ensure_sea_files_table();
 
 private:
     // Compare le schema YAML avec l'etat actuel et applique les changements.

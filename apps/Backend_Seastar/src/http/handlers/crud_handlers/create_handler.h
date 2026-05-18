@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include "database_config.h"
+#include "http/handlers/file_handlers/file_upload_extractor.h"
 #include "thread_pool_execution/i_blocking_executor.h"
 
 namespace sea::application { class AuthService; }
@@ -11,7 +12,7 @@ class GenericCrudEngine;
 class SchemaRuntimeRegistry;
 }
 
-// ✨ Module 6 : forward declaration
+//forward declaration
 namespace sea::http::handlers::access_control {
 class ResourceAuthorizationHelper;
 }
@@ -28,7 +29,11 @@ public:
         sea::domain::DatabaseType db_type,
         std::shared_ptr<IBlockingExecutor> blocking_executor,
         // helper ABAC resource-aware (optionnel)
-        std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> auth_helper = nullptr
+        std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> auth_helper = nullptr,
+        // Extractor de fichiers (optionnel). Si nullptr, les requêtes
+        // multipart/form-data et les champs File en JSON sont ignorés
+        // -- le handler fonctionne comme avant pour les entités sans File.
+        std::shared_ptr<sea::http::handlers::file_upload::FileUploadExtractor> file_extractor = nullptr
         );
 
     seastar::future<std::unique_ptr<seastar::http::reply>>
@@ -43,9 +48,8 @@ private:
     std::shared_ptr<sea::application::AuthService> auth_service_;
     sea::domain::DatabaseType db_type_;
     std::shared_ptr<IBlockingExecutor> blocking_executor_;
-
-    // ✨ Module 6
     std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> auth_helper_;
+    std::shared_ptr<sea::http::handlers::file_upload::FileUploadExtractor> file_extractor_;
 };
 
 }

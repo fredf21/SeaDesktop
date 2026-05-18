@@ -9,7 +9,7 @@
 #include "security_scheme/security_config.h"
 #include "security_scheme/authentification_config.h"
 
-// ✨ Includes pour access_control
+// Includes pour access_control
 #include "access_control/crud_operation.h"
 #include "access_control/access_control_spec.h"
 #include "access_control/policy_condition.h"
@@ -70,7 +70,33 @@ nlohmann::json OpenApiGenerator::generate(
     for (const auto& entity : service.schema.entities) {
         doc["components"]["schemas"][entity.name] = make_entity_schema(entity);
         doc["components"]["schemas"][entity.name + "Input"] = make_entity_input_schema(entity);
+        // Schemas d'enveloppes paginees
+        if (entity.has_page_pagination()) {
+            doc["components"]["schemas"][entity.name + "PageEnvelope"] =
+                make_page_envelope_schema(entity);
+        }
+        if (entity.has_offset_pagination()) {
+            doc["components"]["schemas"][entity.name + "OffsetEnvelope"] =
+                make_offset_envelope_schema(entity);
+        }
+        if (entity.has_cursor_pagination()) {
+            doc["components"]["schemas"][entity.name + "CursorEnvelope"] =
+                make_cursor_envelope_schema(entity);
+        }
+
     }
+
+    // --- Schemas d'erreur (toujours requis, independamment de l'auth) ---
+    // ErrorResponse est reference par TOUS les paths CRUD (400, 404, etc.)
+    // et pas seulement par les paths auth. Doit donc etre defini meme
+    // quand auth_enabled = false.
+    doc["components"]["schemas"]["ErrorResponse"] = {
+        {"type", "object"},
+        {"properties", {
+                           {"error", {{"type", "string"}}},
+                           {"message", {{"type", "string"}}}
+                       }}
+    };
 
     // --- Schémas auth ---
     if (auth_enabled) {
@@ -85,6 +111,8 @@ nlohmann::json OpenApiGenerator::generate(
     // --- Paths relations ---
     add_relation_paths(doc["paths"], service);
 
+    // Paths paginees
+    add_pagination_paths(doc["paths"], route_definitions, service);
     // --- Paths auth ---
     if (auth_enabled) {
         add_auth_paths(doc["paths"]);
@@ -192,9 +220,9 @@ OpenApiGenerator::json OpenApiGenerator::field_to_openapi_schema(
     case FieldType::String:
     case FieldType::Text:
     case FieldType::Password:
-    // case FieldType::Url:
-    //     schema["type"] = "string";
-    //     break;
+        // case FieldType::Url:
+        //     schema["type"] = "string";
+        //     break;
 
     case FieldType::Email:
         schema["type"] = "string";
@@ -218,20 +246,20 @@ OpenApiGenerator::json OpenApiGenerator::field_to_openapi_schema(
         schema["type"] = "boolean";
         break;
 
-    // case FieldType::Date:
-    //     schema["type"] = "string";
-    //     schema["format"] = "date";
-    //     break;
+        // case FieldType::Date:
+        //     schema["type"] = "string";
+        //     schema["format"] = "date";
+        //     break;
 
-    // case FieldType::DateTime:
-    // case FieldType::Timestamp:
-    //     schema["type"] = "string";
-    //     schema["format"] = "date-time";
-    //     break;
+        // case FieldType::DateTime:
+        // case FieldType::Timestamp:
+        //     schema["type"] = "string";
+        //     schema["format"] = "date-time";
+        //     break;
 
-    // case FieldType::Json:
-    //     schema["type"] = "object";
-    //     break;
+        // case FieldType::Json:
+        //     schema["type"] = "object";
+        //     break;
 
     default:
         schema["type"] = "string";
@@ -310,13 +338,9 @@ void OpenApiGenerator::add_auth_schemas(json& schemas) const {
                        }}
     };
 
-    schemas["ErrorResponse"] = {
-        {"type", "object"},
-        {"properties", {
-                           {"error", {{"type", "string"}}},
-                           {"message", {{"type", "string"}}}
-                       }}
-    };
+    // Note : ErrorResponse n'est PAS defini ici. Il est defini en amont
+    // dans le builder principal (inconditionnellement, car utilise par
+    // tous les paths CRUD aussi).
 }
 
 // =====================================================================
@@ -1087,6 +1111,332 @@ std::string OpenApiGenerator::build_authorization_description(
     describe_condition(spec->condition(), "");
 
     return oss.str();
+}
+// ─────────────────────────────────────────────────────────────────────
+// parse_pagination_operation
+//
+// Detecte si un op_name est une operation paginee :
+//   "list_page"           -> ("list",         "page")
+//   "list_by_fk_offset"   -> ("list_by_fk",   "offset")
+//   "list_many_to_many_cursor" -> ("list_many_to_many", "cursor")
+//   "list"                -> nullopt
+//   "get_by_id"           -> nullopt
+// ─────────────────────────────────────────────────────────────────────
+
+std::optional<OpenApiGenerator::PaginationOpInfo>
+OpenApiGenerator::parse_pagination_operation(const std::string& op_name) const
+{
+    static const char* const modes[] = { "page", "offset", "cursor" };
+    for (const char* mode : modes) {
+        const std::string suffix = std::string("_") + mode;
+        if (op_name.size() > suffix.size() &&
+            op_name.compare(op_name.size() - suffix.size(),
+                            suffix.size(), suffix) == 0) {
+            PaginationOpInfo info;
+            info.op_base = op_name.substr(0, op_name.size() - suffix.size());
+            info.mode    = mode;
+            return info;
+        }
+    }
+    return std::nullopt;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// make_page_envelope_schema
+//
+// Genere :
+//   {
+//     "type": "object",
+//     "properties": {
+//       "items":       { "type": "array", "items": { "$ref": ".../<Entity>" } },
+//       "page":        { "type": "integer", "example": 1 },
+//       "page_size":   { "type": "integer", "example": 20 },
+//       "total":       { "type": "integer", "example": 137 },
+//       "total_pages": { "type": "integer", "example": 7 },
+//       "sort":        { "type": "string",  "example": "created_at:desc" }
+//     },
+//     "required": ["items", "page", "page_size", "total", "total_pages"]
+//   }
+// ─────────────────────────────────────────────────────────────────────
+
+OpenApiGenerator::json
+OpenApiGenerator::make_page_envelope_schema(const domain::Entity& entity) const
+{
+    json schema = {
+        {"type", "object"},
+        {"description", "Reponse paginee (mode page-based) pour " + entity.name},
+        {"properties", {
+                           {"items", {
+                                         {"type", "array"},
+                                         {"items", {{"$ref", "#/components/schemas/" + entity.name}}}
+                                     }},
+                           {"page",        {{"type", "integer"}, {"example", 1},   {"minimum", 1}}},
+                           {"page_size",   {{"type", "integer"}, {"example", 20},  {"minimum", 1}}},
+                           {"total",       {{"type", "integer"}, {"example", 137}, {"minimum", 0}}},
+                           {"total_pages", {{"type", "integer"}, {"example", 7},   {"minimum", 0}}},
+                           {"sort",        {{"type", "string"},  {"example", "created_at:desc"},
+                                     {"description", "Champ et direction du tri actif (optionnel)"}}}
+                       }},
+        {"required", json::array({"items", "page", "page_size", "total", "total_pages"})}
+    };
+    return schema;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// make_offset_envelope_schema
+// ─────────────────────────────────────────────────────────────────────
+
+OpenApiGenerator::json
+OpenApiGenerator::make_offset_envelope_schema(const domain::Entity& entity) const
+{
+    json schema = {
+        {"type", "object"},
+        {"description", "Reponse paginee (mode offset/limit) pour " + entity.name},
+        {"properties", {
+                           {"items", {
+                                         {"type", "array"},
+                                         {"items", {{"$ref", "#/components/schemas/" + entity.name}}}
+                                     }},
+                           {"offset", {{"type", "integer"}, {"example", 0},   {"minimum", 0}}},
+                           {"limit",  {{"type", "integer"}, {"example", 20},  {"minimum", 1}}},
+                           {"total",  {{"type", "integer"}, {"example", 137}, {"minimum", 0}}},
+                           {"sort",   {{"type", "string"},  {"example", "created_at:desc"},
+                                     {"description", "Champ et direction du tri actif (optionnel)"}}}
+                       }},
+        {"required", json::array({"items", "offset", "limit", "total"})}
+    };
+    return schema;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// make_cursor_envelope_schema
+//
+// Pas de 'total' (volontaire) ni de 'sort' (fige par le YAML).
+// ─────────────────────────────────────────────────────────────────────
+
+OpenApiGenerator::json
+OpenApiGenerator::make_cursor_envelope_schema(const domain::Entity& entity) const
+{
+    json schema = {
+        {"type", "object"},
+        {"description", "Reponse paginee (mode cursor) pour " + entity.name},
+        {"properties", {
+                           {"items", {
+                                         {"type", "array"},
+                                         {"items", {{"$ref", "#/components/schemas/" + entity.name}}}
+                                     }},
+                           {"limit", {{"type", "integer"}, {"example", 20}, {"minimum", 1}}},
+                           {"next_cursor", {{"type", "string"},
+                                            {"description", "Token pour la page suivante (absent si fin de liste)"},
+                                            {"example", "u-123"}}}
+                       }},
+        {"required", json::array({"items", "limit"})}
+    };
+    return schema;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// add_pagination_paths
+//
+// Genere les paths OpenAPI pour toutes les routes paginees trouvees
+// dans route_definitions. Pour chaque route :
+// - parse le path-template pour extraire d'eventuels {id} ou {value}
+// - genere les parameters appropries (path params + query params du mode)
+// - reference le schema d'enveloppe correspondant
+// ─────────────────────────────────────────────────────────────────────
+
+void OpenApiGenerator::add_pagination_paths(
+    json& paths,
+    const std::vector<RouteDefinition>& route_definitions,
+    const domain::Service& service) const
+{
+    for (const auto& route : route_definitions) {
+        const auto info_opt = parse_pagination_operation(route.operation_name);
+        if (!info_opt.has_value()) {
+            continue;
+        }
+        const auto& info = *info_opt;
+
+        // Recherche l'entite cible (pour ref du schema d'enveloppe)
+        const auto* target = find_entity_by_name(service, route.entity_name);
+        if (target == nullptr) {
+            continue;
+        }
+
+        // Pour get_with_children_*, l'enveloppe et le summary se basent
+        // sur l'enfant, pas le parent. On retrouve l'enfant via le path
+        // motif "_with_<rel.name>/"
+        const domain::Entity* envelope_entity = target;
+        if (info.op_base == "get_with_children") {
+            for (const auto& rel : target->relations) {
+                if (rel.kind != sea::domain::RelationKind::HasMany) continue;
+                if (route.path.find("_with_" + rel.name + "/") != std::string::npos) {
+                    const auto* child = find_entity_by_name(service, rel.target_entity);
+                    if (child != nullptr) envelope_entity = child;
+                    break;
+                }
+            }
+        }
+
+        // Choix du schema d'enveloppe selon le mode
+        std::string envelope_ref;
+        if (info.mode == "page") {
+            envelope_ref = "#/components/schemas/" + envelope_entity->name + "PageEnvelope";
+        } else if (info.mode == "offset") {
+            envelope_ref = "#/components/schemas/" + envelope_entity->name + "OffsetEnvelope";
+        } else { // cursor
+            envelope_ref = "#/components/schemas/" + envelope_entity->name + "CursorEnvelope";
+        }
+
+        // Construction des parameters
+        json parameters = json::array();
+
+        // 1) Path params : on parse le path-template pour les {x}
+        {
+            std::size_t i = 0;
+            const std::string& p = route.path;
+            while (i < p.size()) {
+                if (p[i] == '{') {
+                    const auto close = p.find('}', i);
+                    if (close == std::string::npos) break;
+                    const std::string param_name = p.substr(i + 1, close - i - 1);
+                    parameters.push_back({
+                        {"name", param_name},
+                        {"in", "path"},
+                        {"required", true},
+                        {"schema", {{"type", "string"}}}
+                    });
+                    i = close + 1;
+                } else {
+                    ++i;
+                }
+            }
+        }
+
+        // 2) Query params specifiques au mode
+        if (info.mode == "page") {
+            const auto& cfg = *envelope_entity->pagination->page;
+            parameters.push_back({
+                {"name", "page"}, {"in", "query"}, {"required", false},
+                {"schema", {{"type", "integer"}, {"minimum", 1}, {"default", 1}}},
+                {"description", "Numero de page (1-indexe)"}
+            });
+            parameters.push_back({
+                {"name", "page_size"}, {"in", "query"}, {"required", false},
+                {"schema", {{"type", "integer"},
+                            {"minimum", 1},
+                            {"maximum", cfg.max_page_size},
+                            {"default", cfg.default_page_size}}},
+                {"description", "Taille de page (max " +
+                                    std::to_string(cfg.max_page_size) + ")"}
+            });
+            if (!cfg.sortable_fields.empty()) {
+                json sortable = json::array();
+                for (const auto& f : cfg.sortable_fields) sortable.push_back(f);
+                parameters.push_back({
+                    {"name", "sort"}, {"in", "query"}, {"required", false},
+                    {"schema", {{"type", "string"}}},
+                    {"description", "Tri 'field:asc|desc'. Champs autorises : " +
+                                        [&]{ std::string s; for (const auto& f : cfg.sortable_fields){ if(!s.empty())s+=","; s+=f;} return s; }()}
+                });
+            }
+        } else if (info.mode == "offset") {
+            const auto& cfg = *envelope_entity->pagination->offset;
+            parameters.push_back({
+                {"name", "offset"}, {"in", "query"}, {"required", false},
+                {"schema", {{"type", "integer"}, {"minimum", 0}, {"default", 0}}},
+                {"description", "Offset (0-indexe)"}
+            });
+            parameters.push_back({
+                {"name", "limit"}, {"in", "query"}, {"required", false},
+                {"schema", {{"type", "integer"},
+                            {"minimum", 1},
+                            {"maximum", cfg.max_limit},
+                            {"default", cfg.default_limit}}},
+                {"description", "Nombre maximum d'elements (max " +
+                                    std::to_string(cfg.max_limit) + ")"}
+            });
+            if (!cfg.sortable_fields.empty()) {
+                parameters.push_back({
+                    {"name", "sort"}, {"in", "query"}, {"required", false},
+                    {"schema", {{"type", "string"}}},
+                    {"description", "Tri 'field:asc|desc'. Champs autorises : " +
+                                        [&]{ std::string s; for (const auto& f : cfg.sortable_fields){ if(!s.empty())s+=","; s+=f;} return s; }()}
+                });
+            }
+        } else { // cursor
+            const auto& cfg = *envelope_entity->pagination->cursor;
+            parameters.push_back({
+                {"name", "after"}, {"in", "query"}, {"required", false},
+                {"schema", {{"type", "string"}}},
+                {"description", "Cursor de la page precedente (vide pour la premiere page)"}
+            });
+            parameters.push_back({
+                {"name", "limit"}, {"in", "query"}, {"required", false},
+                {"schema", {{"type", "integer"},
+                            {"minimum", 1},
+                            {"maximum", cfg.max_limit},
+                            {"default", cfg.default_limit}}},
+                {"description", "Nombre maximum d'elements (max " +
+                                    std::to_string(cfg.max_limit) + ")"}
+            });
+        }
+
+        // Tag et summary descriptif
+        std::string mode_label;
+        if (info.mode == "page")    mode_label = "page-based";
+        else if (info.mode == "offset") mode_label = "offset/limit";
+        else                        mode_label = "cursor";
+
+        const std::string summary =
+            "List " + envelope_entity->name + " (pagine " + mode_label + ")";
+
+        // Construction de l'operation
+        json op = {
+            {"tags", json::array({envelope_entity->name})},
+            {"summary", summary},
+            {"parameters", parameters},
+            {"responses", {
+                              {"200", {
+                                          {"description", "Page de resultats"},
+                                          {"content", {
+                                                          {"application/json", {
+                                                                                   {"schema", {{"$ref", envelope_ref}}}
+                                                                               }}
+                                                      }}
+                                      }},
+                              {"400", {
+                                          {"description", "Parametres de pagination invalides"},
+                                          {"content", {
+                                                          {"application/json", {
+                                                                                   {"schema", {{"$ref", "#/components/schemas/ErrorResponse"}}}
+                                                                               }}
+                                                      }}
+                                      }},
+                              {"401", {{"description", "Non authentifie"}}}
+                          }}
+        };
+
+        if (route.requires_auth) {
+            op["security"] = json::array({bearer_security()});
+        } else {
+            op["security"] = json::array();
+        }
+
+        // Enrichissement access_control (sur l'op base correspondante)
+        // Note : "list_page" -> "list" pour le lookup de l'access_control_spec
+        enrich_with_access_control(op, service, route.entity_name, info.op_base);
+
+        // Conversion HttpMethod -> string OpenAPI
+        const auto http_method = to_openapi_method(route.method);
+        if (!http_method.empty()) {
+            paths[route.path][http_method] = op;
+        }
+    }
 }
 
 } // namespace sea::application

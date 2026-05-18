@@ -5,7 +5,9 @@
 #include <cppconn/resultset.h>
 #include <cppconn/resultset_metadata.h>
 #include <cppconn/statement.h>
+#include "exception_handling.h"
 #include "persistence/utilities.h"
+#include "spdlog/spdlog.h"
 #include <seastar/core/coroutine.hh>
 #include <memory>
 #include <sstream>
@@ -98,60 +100,64 @@ void bindValue(
     int index,
     const runtime::DynamicValue& value)
 {
-    if (std::holds_alternative<std::monostate>(value)) {
-        stmt->setNull(index, 0);
-    }
-    else if (std::holds_alternative<std::string>(value)) {
-        stmt->setString(index, std::get<std::string>(value));
-    }
-    else if (std::holds_alternative<std::int16_t>(value)) {
-        stmt->setInt(index, std::get<std::int16_t>(value));
-    }
-    else if (std::holds_alternative<std::uint16_t>(value)) {
-        stmt->setUInt(index, std::get<std::uint16_t>(value));
-    }
-    else if (std::holds_alternative<std::uint32_t>(value)) {
-        stmt->setUInt(index, std::get<std::uint32_t>(value));
-    }
-    else if (std::holds_alternative<std::int32_t>(value)) {
-        stmt->setInt(index, std::get<std::int32_t>(value));
-    }
-    else if (std::holds_alternative<std::uint64_t>(value)) {
-        stmt->setUInt64(index, std::get<std::uint64_t>(value));
-    }
-    else if (std::holds_alternative<std::int64_t>(value)) {
-        stmt->setInt64(index, std::get<std::int64_t>(value));
-    }
-    else if (std::holds_alternative<double>(value)) {
-        stmt->setDouble(index, std::get<double>(value));
-    }
-    else if (std::holds_alternative<bool>(value)) {
-        stmt->setBoolean(index, std::get<bool>(value));
-    }
-    else if (std::holds_alternative<nlohmann::json>(value)) {
-        stmt->setString(index, std::get<nlohmann::json>(value).dump());
-    }
-    else if (std::holds_alternative<std::vector<std::uint8_t>>(value)) {
-        const auto& bytes = std::get<std::vector<std::uint8_t>>(value);
-
-        std::string binaryData(
-            reinterpret_cast<const char*>(bytes.data()),
-            bytes.size()
-            );
-
-        stmt->setString(index, binaryData);
-    }
-    else if (std::holds_alternative<runtime::NativeValue>(value)) {
-        const auto& native = std::get<runtime::NativeValue>(value);
-
-        if (native.value.is_string()) {
-            stmt->setString(index, native.value.get<std::string>());
-        } else {
-            stmt->setString(index, native.value.dump());
+    try{
+        if (std::holds_alternative<std::monostate>(value)) {
+            stmt->setNull(index, 0);
         }
-    }
-    else {
-        throw std::runtime_error("Impossible de binder cette valeur sur une colonne SQL simple");
+        else if (std::holds_alternative<std::string>(value)) {
+            stmt->setString(index, std::get<std::string>(value));
+        }
+        else if (std::holds_alternative<std::int16_t>(value)) {
+            stmt->setInt(index, std::get<std::int16_t>(value));
+        }
+        else if (std::holds_alternative<std::uint16_t>(value)) {
+            stmt->setUInt(index, std::get<std::uint16_t>(value));
+        }
+        else if (std::holds_alternative<std::uint32_t>(value)) {
+            stmt->setUInt(index, std::get<std::uint32_t>(value));
+        }
+        else if (std::holds_alternative<std::int32_t>(value)) {
+            stmt->setInt(index, std::get<std::int32_t>(value));
+        }
+        else if (std::holds_alternative<std::uint64_t>(value)) {
+            stmt->setUInt64(index, std::get<std::uint64_t>(value));
+        }
+        else if (std::holds_alternative<std::int64_t>(value)) {
+            stmt->setInt64(index, std::get<std::int64_t>(value));
+        }
+        else if (std::holds_alternative<double>(value)) {
+            stmt->setDouble(index, std::get<double>(value));
+        }
+        else if (std::holds_alternative<bool>(value)) {
+            stmt->setBoolean(index, std::get<bool>(value));
+        }
+        else if (std::holds_alternative<nlohmann::json>(value)) {
+            stmt->setString(index, std::get<nlohmann::json>(value).dump());
+        }
+        else if (std::holds_alternative<std::vector<std::uint8_t>>(value)) {
+            const auto& bytes = std::get<std::vector<std::uint8_t>>(value);
+
+            std::string binaryData(
+                reinterpret_cast<const char*>(bytes.data()),
+                bytes.size()
+                );
+
+            stmt->setString(index, binaryData);
+        }
+        else if (std::holds_alternative<runtime::NativeValue>(value)) {
+            const auto& native = std::get<runtime::NativeValue>(value);
+
+            if (native.value.is_string()) {
+                stmt->setString(index, native.value.get<std::string>());
+            } else {
+                stmt->setString(index, native.value.dump());
+            }
+        }
+        else {
+            throw sea::sea_errors_handling::PersistenceException("[MYSQL] Impossible de binder cette valeur sur une colonne SQL simple");
+        }
+    } catch(const sea::sea_errors_handling::PersistenceException& e){
+
     }
 }
 const sea::domain::Field* find_field_by_name(
@@ -182,7 +188,7 @@ std::optional<std::string> generate_mysql_uuid(sql::Connection* conn)
             return std::string(rs->getString(1));
         }
         return std::nullopt;
-    } catch (const sql::SQLException&) {
+    } catch (const sql::SQLException& e) {
         return std::nullopt;
     }
 }
@@ -378,7 +384,9 @@ MySQLGenericRepository::create(
                 }
                 return record;
             } catch (const sql::SQLException& e) {
-                std::cerr << "[MYSQL CREATE] EXCEPTION: " << e.what() << "\n";
+                spdlog::get("sea.persistence")->error(
+                    "CREATE EXCEPTION: {}", e.what()
+                    );
                 return std::nullopt;
             }
         }
@@ -717,7 +725,7 @@ MySQLGenericRepository::insert_pivot(
                     if (i > 0) {
                         query << ", ";
                     }
-                    // ✨ Si c'est un UUID, wrap avec UUID_TO_BIN(?, 1)
+                    //  Si c'est un UUID, wrap avec UUID_TO_BIN(?, 1)
                     if (is_uuid_string(bind_values[i])) {
                         query << "UUID_TO_BIN(?, 1)";
                     } else {
@@ -739,13 +747,17 @@ MySQLGenericRepository::insert_pivot(
 
             } catch (const sql::SQLException& e) {
                 // l'erreur pour faciliter le debug
-                std::cerr << "[REPOSITORY] insert_pivot SQL error: "
-                          << e.what()
-                          << " (code=" << e.getErrorCode() << ")\n";
+                spdlog::get("sea.persistence")->error(
+                    "insert_pivot SQL error: {} (code={})",
+                    e.what(), e.getErrorCode()
+                    );
+
                 return false;
             } catch (const std::exception& e) {
-                std::cerr << "[REPOSITORY] insert_pivot error: "
-                          << e.what() << "\n";
+                spdlog::get("sea.persistence")->error(
+                    "insert_pivot error: {}", e.what()
+                    );
+
                 return false;
             }
         }
@@ -754,7 +766,7 @@ MySQLGenericRepository::insert_pivot(
 
 
 // ────────────────────────────────────────────────────────────────────────
-// ✨ in_transaction
+// in_transaction
 //
 // Pipeline :
 // 1. Si deja dans une transaction : execute la lambda directement (no-op).
@@ -775,7 +787,9 @@ MySQLGenericRepository::in_transaction(
     // Cas degenere : transaction imbriquee. On execute juste la lambda dans
     // la transaction parent (pas de begin/commit interne).
     if (is_in_transaction()) {
-        std::cerr << "[TXN] Nested transaction detected, executing inline\n";
+        spdlog::get("sea.persistence")->debug(
+            "TXN Nested transaction detected, executing inline"
+            );
         const bool ok = co_await work();
         co_return TransactionResult{
             .committed = ok,
@@ -796,7 +810,10 @@ MySQLGenericRepository::in_transaction(
     } catch (const std::exception& e) {
         // Si on n'arrive meme pas a desactiver l'autocommit, on release et abandonne.
         pool.release(conn);
-        std::cerr << "[TXN] Failed to disable autocommit: " << e.what() << "\n";
+        pool.release(conn);
+        spdlog::get("sea.persistence")->error(
+            "TXN Failed to disable autocommit: {}", e.what()
+            );
         co_return TransactionResult{
             .committed = false,
             .error_message = std::string("Failed to begin transaction: ") + e.what()
@@ -813,11 +830,15 @@ MySQLGenericRepository::in_transaction(
     try {
         should_commit = co_await work();
     } catch (const std::exception& e) {
-        std::cerr << "[TXN] Exception in transaction: " << e.what() << "\n";
+        spdlog::get("sea.persistence")->error(
+            "TXN Exception in transaction: {}", e.what()
+            );
         error_message = std::string("Exception: ") + e.what();
         should_commit = false;
     } catch (...) {
-        std::cerr << "[TXN] Unknown exception in transaction\n";
+        spdlog::get("sea.persistence")->error(
+            "TXN Unknown exception in transaction"
+            );
         error_message = "Unknown exception";
         should_commit = false;
     }
@@ -830,16 +851,18 @@ MySQLGenericRepository::in_transaction(
                 conn->commit();
             });
             committed = true;
-            std::cerr << "[TXN] COMMIT\n";
+            spdlog::get("sea.persistence")->debug("TXN COMMIT");
         } else {
             co_await _executor->submit([conn]() {
                 conn->rollback();
             });
             committed = false;
-            std::cerr << "[TXN] ROLLBACK\n";
+            spdlog::get("sea.persistence")->debug("TXN ROLLBACK");
         }
     } catch (const std::exception& e) {
-        std::cerr << "[TXN] Failed to commit/rollback: " << e.what() << "\n";
+        spdlog::get("sea.persistence")->error(
+            "TXN Failed to commit/rollback: {}", e.what()
+            );
         error_message = std::string("Failed to finalize transaction: ") + e.what();
         committed = false;
     }
@@ -850,7 +873,9 @@ MySQLGenericRepository::in_transaction(
             conn->setAutoCommit(true);
         });
     } catch (const std::exception& e) {
-        std::cerr << "[TXN] WARNING: Failed to restore autocommit: " << e.what() << "\n";
+        spdlog::get("sea.persistence")->warn(
+            "TXN Failed to restore autocommit: {} (continuing)", e.what()
+            );
         // On continue quand meme : on doit liberer la connexion.
     }
 
@@ -862,6 +887,379 @@ MySQLGenericRepository::in_transaction(
         .committed = committed,
         .error_message = std::move(error_message)
     };
+}
+// ═══════════════════════════════════════════════════════════════════
+// PAGINATION
+//
+// A coller dans mysql_generic_repository.cpp JUSTE AVANT la ligne
+// terminant le namespace :  } // namespace sea::infrastructure::persistence::mysql
+//
+// Strategie :
+// - count          : SELECT COUNT(*) FROM table
+// - list_page      : SELECT ... FROM table [ORDER BY field ASC/DESC] LIMIT ? OFFSET ?
+//                    avec offset = (page - 1) * page_size
+//                    + COUNT(*) pour calculer 'total'
+// - list_offset    : idem que list_page mais sans calcul de page
+// - list_cursor    : SELECT ... FROM table WHERE cursor_field > ? ORDER BY cursor_field ASC LIMIT ?
+//                    (ou < ? + DESC selon sort_desc)
+//
+// Toutes les requetes utilisent les helpers existants :
+// - get_required_entity, resolve_table_name, validate_sql_identifier
+// - build_select_columns, resultset_to_record
+//
+// Securite SQL :
+// - LIMIT / OFFSET / COUNT  : valeurs scalaires non-injectables (size_t)
+// - ORDER BY field          : on valide field via validate_sql_identifier
+// - cursor value            : bound via setString (prepared statement)
+// ═══════════════════════════════════════════════════════════════════
+
+seastar::future<std::size_t>
+MySQLGenericRepository::count(const std::string& entity_name)
+{
+    auto& pool = _pool.local();
+    co_return co_await run_blocking_mysql<std::size_t>(
+        pool,
+        *_executor,
+        _active_txn_connection,
+        [this, entity_name](sql::Connection* conn) -> std::size_t {
+            using namespace sea::infrastructure::persistence::utilities;
+            ValidationResult validation_result;
+            const auto* entity =
+                get_required_entity(*_schema_registry, entity_name, validation_result);
+            if (entity == nullptr) {
+                return 0;
+            }
+            const std::string table_name = resolve_table_name(*entity);
+            if (!validate_sql_identifier(table_name, validation_result)) {
+                return 0;
+            }
+            try {
+                std::ostringstream sql;
+                sql << "SELECT COUNT(*) FROM `" << table_name << "`";
+                auto stmt =
+                    std::unique_ptr<sql::Statement>(conn->createStatement());
+                auto rs =
+                    std::unique_ptr<sql::ResultSet>(stmt->executeQuery(sql.str()));
+                if (!rs->next()) {
+                    return 0;
+                }
+                return static_cast<std::size_t>(rs->getInt64(1));
+            } catch (const sql::SQLException&) {
+                return 0;
+            }
+        }
+        );
+}
+
+seastar::future<sea::infrastructure::persistence::PageResult>
+MySQLGenericRepository::list_page(
+    const std::string& entity_name,
+    const PageRequest& request)
+{
+    auto& pool = _pool.local();
+    co_return co_await run_blocking_mysql<PageResult>(
+        pool,
+        *_executor,
+        _active_txn_connection,
+        [this, entity_name, request](sql::Connection* conn) -> PageResult {
+            using namespace sea::infrastructure::persistence::utilities;
+            PageResult result;
+
+            ValidationResult validation_result;
+            const auto* entity =
+                get_required_entity(*_schema_registry, entity_name, validation_result);
+            if (entity == nullptr) {
+                return result;
+            }
+            const std::string table_name = resolve_table_name(*entity);
+            if (!validate_sql_identifier(table_name, validation_result)) {
+                return result;
+            }
+
+            // Sort field doit etre un identifiant SQL valide si fourni
+            std::string order_clause;
+            if (request.sort_field.has_value()) {
+                const std::string& sf = *request.sort_field;
+                if (!validate_sql_identifier(sf, validation_result)) {
+                    return result;
+                }
+                order_clause = " ORDER BY `" + sf + "` " +
+                               (request.sort_desc ? "DESC" : "ASC");
+            }
+
+            try {
+                // 1) Compter le total
+                {
+                    std::ostringstream csql;
+                    csql << "SELECT COUNT(*) FROM `" << table_name << "`";
+                    auto cstmt = std::unique_ptr<sql::Statement>(conn->createStatement());
+                    auto crs = std::unique_ptr<sql::ResultSet>(cstmt->executeQuery(csql.str()));
+                    if (crs->next()) {
+                        result.total = static_cast<std::size_t>(crs->getInt64(1));
+                    }
+                }
+
+                // 2) Fetch la page
+                const std::size_t page = request.page > 0 ? request.page : 1;
+                const std::size_t offset = (page - 1) * request.page_size;
+
+                std::ostringstream sql;
+                sql << "SELECT " << build_select_columns(*entity)
+                    << " FROM `" << table_name << "`"
+                    << order_clause
+                    << " LIMIT " << request.page_size
+                    << " OFFSET " << offset;
+
+                auto stmt = std::unique_ptr<sql::Statement>(conn->createStatement());
+                auto rs = std::unique_ptr<sql::ResultSet>(stmt->executeQuery(sql.str()));
+                while (rs->next()) {
+                    result.items.push_back(resultset_to_record(rs.get(), *entity));
+                }
+            } catch (const sql::SQLException&) {
+                // Sur erreur SQL, on retourne ce qu'on a (probablement vide)
+                return result;
+            }
+
+            return result;
+        }
+        );
+}
+
+seastar::future<sea::infrastructure::persistence::OffsetResult>
+MySQLGenericRepository::list_offset(
+    const std::string& entity_name,
+    const OffsetRequest& request)
+{
+    auto& pool = _pool.local();
+    co_return co_await run_blocking_mysql<OffsetResult>(
+        pool,
+        *_executor,
+        _active_txn_connection,
+        [this, entity_name, request](sql::Connection* conn) -> OffsetResult {
+            using namespace sea::infrastructure::persistence::utilities;
+            OffsetResult result;
+
+            ValidationResult validation_result;
+            const auto* entity =
+                get_required_entity(*_schema_registry, entity_name, validation_result);
+            if (entity == nullptr) {
+                return result;
+            }
+            const std::string table_name = resolve_table_name(*entity);
+            if (!validate_sql_identifier(table_name, validation_result)) {
+                return result;
+            }
+
+            std::string order_clause;
+            if (request.sort_field.has_value()) {
+                const std::string& sf = *request.sort_field;
+                if (!validate_sql_identifier(sf, validation_result)) {
+                    return result;
+                }
+                order_clause = " ORDER BY `" + sf + "` " +
+                               (request.sort_desc ? "DESC" : "ASC");
+            }
+
+            try {
+                // 1) Compter le total
+                {
+                    std::ostringstream csql;
+                    csql << "SELECT COUNT(*) FROM `" << table_name << "`";
+                    auto cstmt = std::unique_ptr<sql::Statement>(conn->createStatement());
+                    auto crs = std::unique_ptr<sql::ResultSet>(cstmt->executeQuery(csql.str()));
+                    if (crs->next()) {
+                        result.total = static_cast<std::size_t>(crs->getInt64(1));
+                    }
+                }
+
+                // 2) Fetch
+                std::ostringstream sql;
+                sql << "SELECT " << build_select_columns(*entity)
+                    << " FROM `" << table_name << "`"
+                    << order_clause
+                    << " LIMIT " << request.limit
+                    << " OFFSET " << request.offset;
+
+                auto stmt = std::unique_ptr<sql::Statement>(conn->createStatement());
+                auto rs = std::unique_ptr<sql::ResultSet>(stmt->executeQuery(sql.str()));
+                while (rs->next()) {
+                    result.items.push_back(resultset_to_record(rs.get(), *entity));
+                }
+            } catch (const sql::SQLException&) {
+                return result;
+            }
+
+            return result;
+        }
+        );
+}
+
+seastar::future<sea::infrastructure::persistence::CursorResult>
+MySQLGenericRepository::list_cursor(
+    const std::string& entity_name,
+    const CursorRequest& request)
+{
+    auto& pool = _pool.local();
+    co_return co_await run_blocking_mysql<CursorResult>(
+        pool,
+        *_executor,
+        _active_txn_connection,
+        [this, entity_name, request](sql::Connection* conn) -> CursorResult {
+            using namespace sea::infrastructure::persistence::utilities;
+            CursorResult result;
+
+            ValidationResult validation_result;
+            const auto* entity =
+                get_required_entity(*_schema_registry, entity_name, validation_result);
+            if (entity == nullptr) {
+                return result;
+            }
+            const std::string table_name = resolve_table_name(*entity);
+            if (!validate_sql_identifier(table_name, validation_result) ||
+                !validate_sql_identifier(request.cursor_field, validation_result)) {
+                return result;
+            }
+
+            // Fetch limit + 1 pour determiner s'il y a une page suivante
+            // (technique standard : on lit 1 ligne de plus, si elle existe
+            // c'est qu'il y a un next_cursor)
+            const std::size_t fetch_limit = request.limit + 1;
+
+            try {
+                std::ostringstream sql;
+                sql << "SELECT " << build_select_columns(*entity)
+                    << " FROM `" << table_name << "`";
+
+                const bool has_after = request.after.has_value();
+                if (has_after) {
+                    // ASC : WHERE cursor_field > ?
+                    // DESC: WHERE cursor_field < ?
+                    sql << " WHERE `" << request.cursor_field << "` "
+                        << (request.sort_desc ? "<" : ">") << " ?";
+                }
+
+                sql << " ORDER BY `" << request.cursor_field << "` "
+                    << (request.sort_desc ? "DESC" : "ASC")
+                    << " LIMIT " << fetch_limit;
+
+                auto stmt = std::unique_ptr<sql::PreparedStatement>(
+                    conn->prepareStatement(sql.str())
+                    );
+                if (has_after) {
+                    stmt->setString(1, *request.after);
+                }
+                auto rs = std::unique_ptr<sql::ResultSet>(stmt->executeQuery());
+
+                std::vector<runtime::DynamicRecord> fetched;
+                while (rs->next()) {
+                    fetched.push_back(resultset_to_record(rs.get(), *entity));
+                }
+
+                // Si on a fetch limit+1 lignes, il y a une page suivante.
+                // On retire la derniere et on construit next_cursor a partir
+                // de la valeur cursor_field du dernier element conserve.
+                if (fetched.size() > request.limit) {
+                    fetched.pop_back();
+                    if (!fetched.empty()) {
+                        const auto& last = fetched.back();
+                        const auto it = last.find(request.cursor_field);
+                        if (it != last.end()) {
+                            // Le cursor_field est typiquement un id/uuid → string.
+                            // On tente plusieurs types.
+                            if (std::holds_alternative<std::string>(it->second)) {
+                                result.next_cursor = std::get<std::string>(it->second);
+                            } else if (std::holds_alternative<std::int64_t>(it->second)) {
+                                result.next_cursor =
+                                    std::to_string(std::get<std::int64_t>(it->second));
+                            }
+                        }
+                    }
+                }
+
+                result.items = std::move(fetched);
+            } catch (const sql::SQLException&) {
+                return result;
+            }
+
+            return result;
+        }
+        );
+}
+// ─────────────────────────────────────────────────────────────
+// increment_field
+//
+// UPDATE `<table>` SET `<field>` = `<field>` + ? WHERE `id` = ?
+//
+// Particularités :
+//   - `entity_name` est utilisé directement comme nom de table.
+//     On ne passe PAS par le SchemaRuntimeRegistry car cette
+//     méthode doit aussi servir pour les tables système
+//     (sea_files notamment), absentes du registry.
+//
+//   - L'`id` est détecté heuristiquement comme UUID (36 chars
+//     avec dashes aux bonnes positions). Si oui, on wrap avec
+//     UUID_TO_BIN(?, 1). Si non, on passe l'`id` tel quel.
+//     Cohérent avec le pattern d'insert_pivot.
+//
+//   - `field_name` et `entity_name` sont validés comme identifiants
+//     SQL pour éviter toute injection (pas de backtick, pas de
+//     espace, etc.).
+// ─────────────────────────────────────────────────────────────
+seastar::future<bool>
+MySQLGenericRepository::increment_field(
+    const std::string& entity_name,
+    const std::string& id,
+    const std::string& field_name,
+    std::int64_t delta)
+{
+    auto& pool = _pool.local();
+    co_return co_await run_blocking_mysql<bool>(
+        pool,
+        *_executor,
+        _active_txn_connection,
+        [entity_name, id, field_name, delta](sql::Connection* conn) -> bool {
+            using namespace sea::infrastructure::persistence::utilities;
+            ValidationResult validation_result;
+
+            // Validation : entity_name et field_name doivent être
+            // des identifiants SQL valides (anti-injection).
+            if (!validate_sql_identifier(entity_name, validation_result)) {
+                return false;
+            }
+            if (!validate_sql_identifier(field_name, validation_result)) {
+                return false;
+            }
+
+            // Détection heuristique UUID : si l'`id` ressemble à un
+            // UUID v4 (36 chars, dashes aux positions canoniques),
+            // on wrap avec UUID_TO_BIN. Sinon on passe tel quel.
+            // Cohérent avec insert_pivot dans ce même fichier.
+            const bool id_is_uuid =
+                id.size() == 36 &&
+                id[8] == '-' && id[13] == '-' &&
+                id[18] == '-' && id[23] == '-';
+
+            try {
+                std::ostringstream sql;
+                sql << "UPDATE `" << entity_name << "` "
+                    << "SET `" << field_name << "` = `" << field_name << "` + ? "
+                    << "WHERE `id` = "
+                    << (id_is_uuid ? "UUID_TO_BIN(?, 1)" : "?");
+
+                auto stmt = std::unique_ptr<sql::PreparedStatement>(
+                    conn->prepareStatement(sql.str())
+                    );
+
+                stmt->setInt64(1, delta);
+                stmt->setString(2, id);
+
+                const int affected_rows = stmt->executeUpdate();
+                return affected_rows == 1;
+            } catch (const sql::SQLException&) {
+                return false;
+            }
+        }
+        );
 }
 
 } // namespace sea::infrastructure::persistence::mysql

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "field_type.h"
+#include "file_field_config.h"
 
 #include <cstddef>    // size_t
 #include <cstdint>    // int64_t
@@ -89,12 +90,31 @@ struct Field {
     //     previous_name: phone     ← NEW
     std::optional<std::string> previous_name;
 
+    // ─────────────────────────────────────────────────────────
+    // Configuration spécifique aux champs File.
+    //
+    // Renseignée si et seulement si type == FieldType::File.
+    // Contient les contraintes d'upload (max_size, mime, extensions),
+    // le sous-dossier de stockage, et le comportement on_delete.
+    //
+    // Côté colonne SQL, un champ File se traduit par un BINARY(16)
+    // référençant sea_files.id via une FK.
+    // ─────────────────────────────────────────────────────────
+    std::optional<FileFieldConfig> file_config;
+
     [[nodiscard]] bool has_default() const noexcept {
         return !std::holds_alternative<std::monostate>(default_val);
     }
 
     [[nodiscard]] bool has_previous_name() const noexcept {
         return previous_name.has_value() && !previous_name->empty();
+    }
+    // Indique si le champ est un upload File correctement configuré.
+    // Note : type==File implique normalement file_config.has_value()
+    // (garanti par le schema_validator à l'Étape 3), mais on reste
+    // défensif ici pour éviter un crash côté handlers/codegen.
+    [[nodiscard]] bool is_file_field() const noexcept {
+        return type == FieldType::File && file_config.has_value();
     }
 
 };
@@ -202,6 +222,24 @@ inline Field& default_value(Field& f, bool v) {
 }
 inline Field& renamed_from(Field& f, std::string old_name) {
     f.previous_name = std::move(old_name);
+    return f;
+}
+// ─────────────────────────────────────────────────────────────
+// Helper fluide pour configurer un champ File.
+// Force type = FieldType::File et installe la config.
+//
+// Exemple d'usage C++ :
+//   auto f = make_field("avatar", FieldType::File);
+//   as_file(f, FileFieldConfig{
+//       .max_size_bytes = 5 * 1024 * 1024,
+//       .allowed_mime_types = {"image/png", "image/jpeg"},
+//       .storage_path = "users/avatars",
+//       .on_delete = OnDeleteFile::Cascade
+//   });
+// ─────────────────────────────────────────────────────────────
+inline Field& as_file(Field& f, FileFieldConfig cfg) {
+    f.type = FieldType::File;
+    f.file_config = std::move(cfg);
     return f;
 }
 

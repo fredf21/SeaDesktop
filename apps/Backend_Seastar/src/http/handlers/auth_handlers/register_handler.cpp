@@ -6,6 +6,7 @@
 #include "runtime/generic_crud_engine.h"
 #include "runtime/json_record_parser.h"
 #include "runtime/schema_runtime_registry.h"
+#include "spdlog/spdlog.h"
 
 #include <nlohmann/json.hpp>
 #include <utility>
@@ -164,15 +165,18 @@ RegisterHandler::handle(const seastar::sstring&,
                     co_await sea::http::utils::generate_int_id("User", crud_engine_);
             }
         }
-        std::cerr << "[REGISTER DEBUG] Record contents before create:\n";
-        for (const auto& [key, value] : record) {
-            std::cerr << "  - " << key << " : ";
-            if (auto str = sea::http::utils::dynamic_value_to_string(value)) {
-                std::cerr << "'" << *str << "' (len=" << str->size() << ")\n";
-            } else {
-                std::cerr << "<not a string>\n";
+        auto http_log = spdlog::get("sea.http");
+        if (http_log->should_log(spdlog::level::debug)) {
+            http_log->debug("Record contents before create (User):");
+            for (const auto& [key, value] : record) {
+                if (auto str = sea::http::utils::dynamic_value_to_string(value)) {
+                    http_log->debug("  - {} : '{}' (len={})", key, *str, str->size());
+                } else {
+                    http_log->debug("  - {} : <not a string>", key);
+                }
             }
         }
+
 
 
         // Création utilisateur

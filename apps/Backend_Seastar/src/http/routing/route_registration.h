@@ -27,6 +27,24 @@ class SchemaRuntimeRegistry;
 namespace sea::application {
 class AuthService;
 }
+namespace sea::application::auth {
+class TokenTrackingService;
+}
+
+// Forward declaration pour la prise en charge des champs File.
+// Le file_extractor est optionnel dans le MiddlewareContext : si nullptr
+// (cas des services sans champ File ou en attendant le branchement
+// complet du FileService), les handlers fonctionnent en mode JSON pur.
+namespace sea::http::handlers::file_upload {
+class FileUploadExtractor;
+}
+
+// Forward declaration du FileService, utilisé par les handlers de
+// download (GET /<entity>/{id}/<field>) qui doivent récupérer
+// metadata + contenu binaire depuis sea_files + IFileStorage.
+namespace sea::application {
+class FileService;
+}
 
 namespace sea::http::routing {
 
@@ -41,6 +59,37 @@ struct MiddlewareContext {
     std::shared_ptr<sea::application::access_control::PolicyEngine> policy_engine;
     std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> resource_auth_helper;
 
+    // ───────────────────────────────────────
+    // TokenTrackingService pour la verification denylist des access tokens
+    // et le tracking des refresh tokens.
+    // Peut etre nullptr si auth_service est null ou si token_tracking
+    // est desactive dans le YAML.
+    std::shared_ptr<sea::application::auth::TokenTrackingService> token_tracking;
+
+    // Configuration des cookies (path, secure, same_site, names, etc.).
+    // Utilise par ProtectedHandler pour lire le cookie sea_access en
+    // fallback de l'header Authorization.
+    // Si auth est desactive, cette config a ses defauts (utilise mais inerte).
+    sea::domain::security::CookieConfig cookie_config;
+
+    // ───────────────────────────────────────
+    // FileUploadExtractor : injecté dans les handlers Create/Update/Delete
+    // pour permettre la prise en charge des champs File (upload multipart
+    // ou JSON+base64, release des UUIDs au delete, etc.).
+    //
+    // Peut etre nullptr si :
+    //   - le YAML ne declare aucune entite avec un champ File,
+    //   - le FileService n'a pas pu etre construit au boot (storage indispo).
+    //
+    // Quand nullptr, les handlers retombent silencieusement sur leur
+    // comportement d'origine (JSON uniquement, pas de gestion de fichiers).
+    std::shared_ptr<sea::http::handlers::file_upload::FileUploadExtractor> file_extractor;
+
+    // FileService : utilisé par les handlers de download (GET sur
+    // /<entity>/{id}/<field>). Peut etre nullptr pour les mêmes
+    // raisons que file_extractor. Si nullptr, les routes de download
+    // ne sont tout simplement pas enregistrées.
+    std::shared_ptr<sea::application::FileService> file_service;
 };
 
 // Wrap un handler avec toute la stack de middlewares.
@@ -84,6 +133,29 @@ void register_has_one_routes(
 void register_many_to_many_routes(
     seastar::httpd::routes& routes,
     const std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine>& crud_engine,
+    const MiddlewareContext& context
+    );
+
+// ─────────────────────────────────────────────
+// Routes de download de fichiers
+//
+// Pour chaque entité du schema qui a un ou plusieurs champ(s) File,
+// génère une route GET /<entity_lower>s/{id}/<field>.
+//
+// Exemples produits :
+//   - User a avatar (File) → GET /users/{id}/avatar
+//   - Document a pdf (File) → GET /documents/{id}/pdf
+//
+// L'ABAC est héritée de l'entité parente (Read). Pas de route
+// /files/{uuid} système (cf. décisions de design Étape 7.5).
+//
+// Skip silencieusement si context.file_service est null (pas de
+// support fichiers) ou si l'entité n'a aucun champ File.
+// ─────────────────────────────────────────────
+void register_file_download_routes(
+    seastar::httpd::routes& routes,
+    const std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine>& crud_engine,
+    const std::shared_ptr<sea::infrastructure::runtime::SchemaRuntimeRegistry>& registry,
     const MiddlewareContext& context
     );
 

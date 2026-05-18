@@ -106,6 +106,10 @@ services:
     entities:
       # ─────────────────────────────────────────────────────────────
       # User : own_resource (mode service = permissive)
+      #
+      # Pagination : 2 modes activés
+      #   - page   : pour l'UI admin classique (tableau avec "Page 3/12")
+      #   - offset : pour les exports paginés en scroll infini
       # ─────────────────────────────────────────────────────────────
       - name: User
         table_name: User
@@ -144,8 +148,24 @@ services:
             type: uuid
             required: false
 
+        # ── Pagination ──────────────────────────────────────────
+        # Routes generees en plus :
+        #   GET /users/page?page=N&page_size=M&sort=field:asc|desc
+        #   GET /users/offset?offset=K&limit=M&sort=field:asc|desc
+        # Pas de cursor : pas de champ created_at ou autre tri stable.
+        pagination:
+          page:
+            default_page_size: 20
+            max_page_size: 100
+            default_sort: email:asc
+            sortable_fields: [email, full_name, id]
+          offset:
+            default_limit: 20
+            max_limit: 100
+            default_sort: email:asc
+            sortable_fields: [email, full_name, id]
+
         access_control:
-          # Pas de override → utilise le mode service-level (permissive)
           list:
             allow_roles: [admin]
 
@@ -165,6 +185,11 @@ services:
 
       # ─────────────────────────────────────────────────────────────
       # Department : RBAC pur (pas d'ABAC, mode n'a pas d'impact)
+      #
+      # Pagination : mode page seul.
+      # Justification : peu de departements en pratique, pas besoin de
+      # cursor ni d'offset. Le mode page suffit pour une UI admin
+      # classique (tableau avec numerotation).
       # ─────────────────────────────────────────────────────────────
       - name: Department
         table_name: Department
@@ -195,6 +220,22 @@ services:
             name: ACC
           - alias: dept_com
             name: COMM
+
+        # ── Pagination ──────────────────────────────────────────
+        # Routes generees en plus :
+        #   GET /departments/page?page=N&page_size=M&sort=name:asc|desc
+        # Note : la relation has_many vers Employee genere aussi des
+        # routes pagin\u00e9es heritees de Employee, ex:
+        #   GET /employees/filter/with_department/{id}/page?...
+        #   GET /departments_with_employees/{id}/page?...
+        # (cf pagination d'Employee plus bas).
+        pagination:
+          page:
+            default_page_size: 10
+            max_page_size: 50
+            default_sort: name:asc
+            sortable_fields: [name, id]
+
         access_control:
           list:
             allow_roles: [admin, manager, user]
@@ -214,6 +255,10 @@ services:
       # ─────────────────────────────────────────────────────────────
       # Employee : same_scope (mode service = permissive)
       # → Manager peut voir/modifier les employes de son departement
+      #
+      # Pagination : page + cursor
+      #   - page   : UI admin avec numerotation
+      #   - cursor : pour les exports massifs sur id (UUID stable)
       # ─────────────────────────────────────────────────────────────
       - name: Employee
         table_name: Employee
@@ -253,6 +298,26 @@ services:
             fk_column: department_id
             on_delete: restrict
 
+        # ── Pagination ──────────────────────────────────────────
+        # Routes generees en plus :
+        #   GET /employees/page?page=N&page_size=M&sort=field:asc|desc
+        #   GET /employees/cursor?after=<id>&limit=M
+        #   GET /employees/filter/with_department/{id}/page?...
+        #   GET /employees/filter/with_department/{id}/cursor?...
+        #   GET /employees/filter/with_department_name/{value}/page?...
+        #   GET /employees/filter/with_department_name/{value}/cursor?...
+        pagination:
+          page:
+            default_page_size: 25
+            max_page_size: 100
+            default_sort: full_name:asc
+            sortable_fields: [full_name, email, age, id]
+          cursor:
+            default_limit: 50
+            max_limit: 200
+            cursor_field: id          # UUID = ordre stable garanti
+            sort: id:asc              # fige le tri pour la stabilite du cursor
+
         access_control:
           list:
             allow_roles: [admin, manager]
@@ -275,6 +340,11 @@ services:
 
       # ─────────────────────────────────────────────────────────────
       # Student : RBAC simple
+      #
+      # Pagination : LES 3 MODES en meme temps.
+      # Cette entite sert de "showcase" : elle demontre que les 3
+      # paradigmes peuvent coexister sur une seule entite, chacun
+      # avec sa propre route HTTP.
       # ─────────────────────────────────────────────────────────────
       - name: Student
         table_name: Student
@@ -315,7 +385,34 @@ services:
             email: yann@school.ca
             age: 20
             programs: [prog_cs, prog_eng]
-            
+
+        # ── Pagination ──────────────────────────────────────────
+        # Showcase complet des 3 modes :
+        #   GET /students/page?page=N&page_size=M&sort=field:asc|desc
+        #   GET /students/offset?offset=K&limit=M&sort=field:asc|desc
+        #   GET /students/cursor?after=<id>&limit=M
+        #
+        # Et pour la relation many_to_many vers Program :
+        #   GET /students/filter/with_program/{id}/page?...
+        #   GET /students/filter/with_program/{id}/offset?...
+        #   GET /students/filter/with_program/{id}/cursor?...
+        pagination:
+          page:
+            default_page_size: 20
+            max_page_size: 100
+            default_sort: name:asc
+            sortable_fields: [name, email, age, id]
+          offset:
+            default_limit: 20
+            max_limit: 100
+            default_sort: name:asc
+            sortable_fields: [name, email, age, id]
+          cursor:
+            default_limit: 30
+            max_limit: 100
+            cursor_field: id
+            sort: id:asc
+
         access_control:
           list:
             allow_roles: [admin, manager, user]
@@ -334,6 +431,10 @@ services:
 
       # ─────────────────────────────────────────────────────────────
       # Program : RBAC simple
+      #
+      # PAS DE PAGINATION → demontre que les entites sans bloc
+      # 'pagination' continuent de fonctionner exactement comme
+      # avant (regression zero garantie).
       # ─────────────────────────────────────────────────────────────
       - name: Program
         table_name: Program
@@ -360,13 +461,17 @@ services:
             source_fk_column: program_id
             target_fk_column: student_id
             on_delete: cascade
-            
+
         seeds:
           - alias: prog_cs
             name: Computer Science
           - alias: prog_eng
             name: Engineering
-            
+
+        # Pas de bloc 'pagination' → seules les routes CRUD standard
+        # sont generees :
+        #   GET /programs, /programs/{id}, POST /programs, etc.
+        # Aucune route /programs/page ou autre.
         access_control:
           list:
             allow_roles: [admin, manager, user]
@@ -388,6 +493,9 @@ services:
       # abac_mode override = strict pour cette entite
       # → Toute regle avec same_scope/own_resource sera 403
       # → Sert a verifier que le parser lit bien le override
+      #
+      # Pas de pagination : c'est une table pivot, pas exposee comme
+      # entite metier.
       # ─────────────────────────────────────────────────────────────
       - name: StudentProgram
         table_name: StudentProgram

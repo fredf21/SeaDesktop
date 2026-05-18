@@ -89,6 +89,35 @@ public:
         std::function<seastar::future<bool>()> work
         ) override;
 
+    // ── Pagination ──────────────────────────────────────────
+    //
+    // Les 3 modes sont supportes mais l'implementation reste naive :
+    // on materialise toutes les lignes puis on trie/coupe en memoire.
+    // C'est volontaire — ce backend sert aux tests et au dev.
+
+    seastar::future<PageResult>
+    list_page(const std::string& entity_name,
+              const PageRequest& request) override;
+
+    seastar::future<OffsetResult>
+    list_offset(const std::string& entity_name,
+                const OffsetRequest& request) override;
+
+    seastar::future<CursorResult>
+    list_cursor(const std::string& entity_name,
+                const CursorRequest& request) override;
+
+    seastar::future<std::size_t>
+    count(const std::string& entity_name) override;
+
+    // increment_field : atomique en mode mono-shard (Seastar shared-nothing
+    // garantit qu'un shard est mono-thread). Cf. IGenericRepository pour la
+    // doc complète.
+    seastar::future<bool>
+    increment_field(const std::string& entity_name,
+                    const std::string& id,
+                    const std::string& field_name,
+                    std::int64_t delta) override;
 
 private:
 
@@ -110,14 +139,17 @@ private:
 
     /**
      * Extrait l'ID depuis un record.
-     *
-     * Convention :
-     * - le champ "id" doit exister
-     * - doit être convertible en string
      */
-    [[nodiscard]]
-    std::optional<std::string>
+    [[nodiscard]] std::optional<std::string>
     extract_id(const runtime::DynamicRecord& record) const;
+
+    // Helper interne pagination : récupère tous les records triés
+    // selon (sort_field, sort_desc). Si sort_field est nullopt, ordre
+    // d'itération (non garanti stable mais déterministe par appel).
+    [[nodiscard]] std::vector<runtime::DynamicRecord>
+    collect_all_sorted(const std::string& entity_name,
+                       const std::optional<std::string>& sort_field,
+                       bool sort_desc) const;
 };
 
 } // namespace sea::infrastructure::persistence

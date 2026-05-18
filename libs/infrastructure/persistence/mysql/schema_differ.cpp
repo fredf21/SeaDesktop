@@ -1,6 +1,7 @@
 #include "schema_differ.h"
 
 #include "database_mappings/mysql_type_mapping.h"
+#include "spdlog/spdlog.h"
 
 #include <algorithm>
 #include <cctype>
@@ -364,7 +365,7 @@ SchemaDiffer::compute_index_diffs(
 }
 
 // ═════════════════════════════════════════════════════════════
-// ✨ PHASE B.3 : compute_renames + heuristique
+// compute_renames + heuristique
 // ═════════════════════════════════════════════════════════════
 
 // ─────────────────────────────────────────────────────────────
@@ -466,17 +467,21 @@ SchemaDiffer::compute_renames(
         // Si la colonne old_name n'existe pas en MySQL, ignore silencieusement
         // (le rename a peut-etre deja ete applique)
         if (!table_info.has_column(old_name)) {
-            std::cerr << "[DIFF] " << table_name << ": rename annotation "
-                      << old_name << " → " << new_name
-                      << " skipped (old column not found)\n";
+            spdlog::get("sea.persistence")->warn(
+                "DIFF {}: rename annotation {} -> {} skipped (old column not found)",
+                table_name, old_name, new_name
+                );
+
             continue;
         }
 
         // Si la colonne new_name existe deja en MySQL → conflit
         if (table_info.has_column(new_name)) {
-            std::cerr << "[DIFF] " << table_name << ": rename annotation "
-                      << old_name << " → " << new_name
-                      << " skipped (new column already exists, conflict)\n";
+            spdlog::get("sea.persistence")->warn(
+                "DIFF {}: rename annotation {} -> {} skipped (new column already exists, conflict)",
+                table_name, old_name, new_name
+                );
+
             continue;
         }
 

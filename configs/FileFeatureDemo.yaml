@@ -1,0 +1,159 @@
+# ──────────────────────────────────────────────────────────────────
+# SeaDesktop — YAML de test pour la feature File Upload
+#
+# Ce projet déclare 3 entités avec des champs File pour couvrir les
+# 3 modes on_delete (cascade, set_null, restrict).
+#
+# Toutes les clés ci-dessous sont effectivement parsées par le
+# yaml_schema_parser. Aucun attribut décoratif/inventé.
+# ──────────────────────────────────────────────────────────────────
+
+project:
+  name: FileFeatureDemo
+
+services:
+  - name: FileTestService
+    port: 8080
+
+    # ──────────────────────────────────────────────────────────
+    # Backend MySQL
+    # Clés acceptées : type, host, port, database_name, username,
+    # password, migrations.
+    # ──────────────────────────────────────────────────────────
+    database:
+      type: mysql
+      host: 127.0.0.1
+      port: 3306
+      database_name: file_demo
+      username: root
+      password: root
+      migrations:
+        create_database_if_missing: true
+        enabled: true
+
+    # ──────────────────────────────────────────────────────────
+    # Storage : optionnel. Si absent et qu'il y a des champs File,
+    # le fallback est root_path="./uploads".
+    # ──────────────────────────────────────────────────────────
+    storage:
+      backend: filesystem
+      root_path: ./uploads
+      file_mode: "0640"
+      directory_mode: "0750"
+
+    # ──────────────────────────────────────────────────────────
+    # Logging
+    # ──────────────────────────────────────────────────────────
+    logging:
+      level: debug
+      sinks:
+        - type: console
+          format: text
+          enabled: true
+
+    # ──────────────────────────────────────────────────────────
+    # Sécurité (auth désactivée pour faciliter les tests)
+    # ──────────────────────────────────────────────────────────
+    security:
+      authentication:
+        enabled: false
+
+    # ──────────────────────────────────────────────────────────
+    # Entités (directement au niveau service)
+    # ──────────────────────────────────────────────────────────
+    entities:
+
+      # ────────────────────────────────────────────────────────
+      # User — Avatar avec on_delete=cascade
+      # ────────────────────────────────────────────────────────
+      # Cas d'usage : avatar de profil. DELETE User supprime aussi
+      # le fichier physique (si plus aucun autre User ne le partage).
+      - name: User
+        fields:
+          - name: id
+            type: uuid
+          - name: email
+            type: email
+            required: true
+            unique: true
+          - name: name
+            type: string
+            required: true
+            max_length: 100
+          - name: avatar
+            type: file
+            required: false
+            file:
+              max_size: 5MB
+              allowed_mime_types:
+                - image/png
+                - image/jpeg
+                - image/webp
+              allowed_extensions:
+                - .png
+                - .jpg
+                - .jpeg
+                - .webp
+              storage_path: users/avatars
+              on_delete: cascade
+
+      # ────────────────────────────────────────────────────────
+      # Article — Banner avec on_delete=set_null
+      # ────────────────────────────────────────────────────────
+      # Cas d'usage : image d'en-tête de blog. DELETE Article garde
+      # le fichier (utile pour archive, ou si réutilisé ailleurs).
+      - name: Article
+        fields:
+          - name: id
+            type: uuid
+          - name: title
+            type: string
+            required: true
+            max_length: 200
+          - name: content
+            type: text
+            required: true
+          - name: banner
+            type: file
+            required: false
+            file:
+              max_size: 10MB
+              allowed_mime_types:
+                - image/png
+                - image/jpeg
+              allowed_extensions:
+                - .png
+                - .jpg
+                - .jpeg
+              storage_path: articles/banners
+              on_delete: set_null
+
+      # ────────────────────────────────────────────────────────
+      # Contract — PDF avec on_delete=restrict
+      # ────────────────────────────────────────────────────────
+      # Cas d'usage : document légal critique. DELETE Contract est
+      # REFUSÉ (409 Conflict) tant qu'un PDF est attaché. Pour
+      # supprimer : PUT avec pdf=null d'abord, puis DELETE.
+      - name: Contract
+        fields:
+          - name: id
+            type: uuid
+          - name: reference
+            type: string
+            required: true
+            unique: true
+            max_length: 50
+          - name: signed_date
+            type: timestamp
+            required: false
+          - name: pdf
+            type: file
+            required: false
+            file:
+              max_size: 20MB
+              allowed_mime_types:
+                - application/pdf
+              allowed_extensions:
+                - .pdf
+              storage_path: contracts/pdfs
+              on_delete: restrict

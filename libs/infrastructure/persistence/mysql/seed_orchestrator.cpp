@@ -2,6 +2,7 @@
 
 #include "mysql_introspector.h"
 #include "mysql_schema_generator.h"
+#include "spdlog/spdlog.h"
 
 #include <bcrypt/BCrypt.hpp>
 
@@ -90,8 +91,11 @@ SeedOrchestrator::should_seed_entity(const sea::domain::Entity& entity)
     const auto records = co_await _crud_engine->list(entity.name);
 
     if (!records.empty()) {
-        std::cerr << "[SEEDS] " << entity.name << ": skip (table not empty, "
-                  << records.size() << " row(s))\n";
+        spdlog::get("sea.persistence")->info(
+            "SEEDS {}: skip (table not empty, {} row(s))",
+            entity.name, records.size()
+            );
+
         co_return false;
     }
 
@@ -198,8 +202,11 @@ SeedOrchestrator::resolve_string_value(
         if (uuid.has_value()) {
             co_return *uuid;
         } else {
-            std::cerr << "[SEEDS] WARNING: alias '" << alias
-                      << "' not found in registry\n";
+            spdlog::get("sea.persistence")->warn(
+                "SEEDS WARNING: alias '{}' not found in registry",
+                alias
+                );
+
             co_return raw_value;
         }
     }
@@ -215,7 +222,10 @@ SeedOrchestrator::resolve_string_value(
             const auto hashed = co_await hash_password_async(plain);
             co_return hashed;
         } else {
-            std::cerr << "[SEEDS] WARNING: cannot hash password (no executor)\n";
+            spdlog::get("sea.persistence")->warn(
+                "[SEEDS] cannot hash password (no executor)"
+                );
+
             co_return raw_value;
         }
     }
@@ -232,8 +242,9 @@ SeedOrchestrator::seed_entity_records(
     AliasRegistry& registry,
     SeedResult& result)
 {
-    std::cerr << "[SEEDS] " << entity.name << ": "
-              << entity.seeds.size() << " seed(s) to insert\n";
+    spdlog::get("sea.persistence")->info(
+        "SEEDS {} : {} seed(s) to insert", entity.name, entity.seeds.size()
+        );
 
     for (const auto& seed : entity.seeds) {
         sea::infrastructure::runtime::DynamicRecord record;
@@ -250,19 +261,21 @@ SeedOrchestrator::seed_entity_records(
                 record[key] = std::move(dv);
             }
         }
-
-        std::ostringstream desc;
-        desc << "  - ";
-        if (seed.has_alias()) desc << "[" << seed.alias << "] ";
-        desc << "fields=" << seed.values.size();
-        std::cerr << desc.str();
+        const std::string alias_part = seed.has_alias()
+                                           ? " [" + seed.alias + "]"
+                                           : "";
 
         const auto op_result = co_await _crud_engine->create(entity.name, record);
 
+        auto persist_log = spdlog::get("sea.persistence");
+
         if (!op_result.success) {
-            std::cerr << " FAILED\n";
+            persist_log->error(
+                "  -{} fields={} FAILED",
+                alias_part, seed.values.size()
+                );
             for (const auto& err : op_result.errors) {
-                std::cerr << "    error: " << err << "\n";
+                persist_log->error("    error: {}", err);
                 result.errors.push_back(
                     entity.name + "[" + seed.alias + "]: " + err
                     );
@@ -270,7 +283,11 @@ SeedOrchestrator::seed_entity_records(
             continue;
         }
 
-        std::cerr << " OK\n";
+        persist_log->info(
+            "  -{} fields={} OK",
+            alias_part, seed.values.size()
+            );
+
         result.total_entities_seeded++;
 
         if (seed.has_alias() && op_result.record.has_value()) {
@@ -312,8 +329,10 @@ SeedOrchestrator::seed_m2m_pivots(
 
         // Verifie que le seed a un alias (sinon impossible de resolve la source)
         if (!seed.has_alias()) {
-            std::cerr << "[SEEDS] M2M skip: seed in '" << entity.name
-                      << "' has no alias\n";
+            spdlog::get("sea.persistence")->warn(
+                "SEEDS M2M skip: seed in '{}' has no alias", entity.name
+                );
+
             continue;
         }
 
@@ -321,7 +340,7 @@ SeedOrchestrator::seed_m2m_pivots(
         const auto source_uuid = registry.get(seed.alias);
         if (!source_uuid.has_value()) {
             const auto err = "M2M source alias not found: " + seed.alias;
-            std::cerr << "[SEEDS] " << err << "\n";
+            spdlog::get("sea.persistence")->error("SEEDS {}", err);
             result.errors.push_back(err);
             continue;
         }
@@ -334,7 +353,7 @@ SeedOrchestrator::seed_m2m_pivots(
             if (relation == nullptr) {
                 const auto err = "M2M relation not found in entity: "
                                  + entity.name + "." + relation_name;
-                std::cerr << "[SEEDS] " << err << "\n";
+                spdlog::get("sea.persistence")->error("SEEDS {}", err);
                 result.errors.push_back(err);
                 continue;
             }
@@ -342,15 +361,16 @@ SeedOrchestrator::seed_m2m_pivots(
             if (relation->kind != sea::domain::RelationKind::ManyToMany) {
                 const auto err = "Relation is not M2M: "
                                  + entity.name + "." + relation_name;
-                std::cerr << "[SEEDS] " << err << "\n";
+                spdlog::get("sea.persistence")->error("SEEDS {}", err);
                 result.errors.push_back(err);
                 continue;
             }
 
-            std::cerr << "[SEEDS] M2M " << entity.name
-                      << "[" << seed.alias << "]"
-                      << "." << relation_name << " ("
-                      << target_aliases.size() << " link(s))\n";
+            spdlog::get("sea.persistence")->info(
+                "SEEDS M2M {}[{}].{}  ({} link(s))",
+                entity.name, seed.alias, relation_name, target_aliases.size()
+                );
+
 
             // Pour chaque target alias : resolve + INSERT pivot
             for (const auto& target_alias : target_aliases) {
@@ -358,7 +378,7 @@ SeedOrchestrator::seed_m2m_pivots(
 
                 if (!target_uuid.has_value()) {
                     const auto err = "M2M target alias not found: " + target_alias;
-                    std::cerr << "[SEEDS]   " << err << "\n";
+                     spdlog::get("sea.persistence")->error("SEEDS {}", err);
                     result.errors.push_back(err);
                     continue;
                 }
@@ -375,16 +395,19 @@ SeedOrchestrator::seed_m2m_pivots(
                     );
 
                 if (ok) {
-                    std::cerr << "  + " << seed.alias
-                              << " ↔ " << target_alias << " OK\n";
+                    spdlog::get("sea.persistence")->info(
+                        "  + {} <-> {} OK",
+                        seed.alias, target_alias
+                        );
                     result.total_pivot_rows++;
                 } else {
                     const auto err = "Pivot insert failed: " + seed.alias
-                                     + " ↔ " + target_alias
+                                     + " <-> " + target_alias
                                      + " in " + relation->pivot_table;
-                    std::cerr << "  ! " << err << "\n";
+                    spdlog::get("sea.persistence")->error("  ! {}", err);
                     result.errors.push_back(err);
                 }
+
             }
         }
     }
@@ -401,21 +424,25 @@ SeedOrchestrator::seed_all()
     SeedResult result;
 
     if (!_config.migrations.seeds.enabled) {
-        std::cerr << "[SEEDS] Seeds disabled (seeds.enabled=false)\n";
+        spdlog::get("sea.persistence")->info(
+            "SEEDS disabled (seeds.enabled=false)"
+            );
         result.success = true;
         co_return result;
     }
 
-    std::cerr << "[SEEDS] ─── Starting seeds ───\n";
-    std::cerr << "[SEEDS] Mode: " << to_string(_config.migrations.seeds.mode) << "\n";
-    std::cerr << "[SEEDS] On error: " << to_string(_config.migrations.seeds.on_error) << "\n";
+    auto persist_log = spdlog::get("sea.persistence");
+    persist_log->info("=== Starting seeds ===");
+    persist_log->info("Mode: {}", to_string(_config.migrations.seeds.mode));
+    persist_log->info("On error: {}", to_string(_config.migrations.seeds.on_error));
+
 
     const auto sorted_entities = MysqlSchemaGenerator::topological_sort(_schema.entities);
 
     AliasRegistry registry;
 
     // ── Passe 1 : entity seeds ──
-    std::cerr << "[SEEDS] Pass 1: inserting entity seeds\n";
+    persist_log->info("Pass 1: inserting entity seeds");
     for (const auto* entity : sorted_entities) {
         if (!entity->has_seeds()) continue;
 
@@ -426,26 +453,29 @@ SeedOrchestrator::seed_all()
     }
 
     // ── Passe 2 : M2M pivots ──
-    std::cerr << "[SEEDS] Pass 2: inserting M2M pivot seeds\n";
+    persist_log->info("Pass 2: inserting M2M pivot seeds");
     for (const auto* entity : sorted_entities) {
         if (!entity->has_seeds()) continue;
         co_await seed_m2m_pivots(*entity, registry, result);
     }
 
     // ── Resume ──
-    std::cerr << "[SEEDS] ─── Summary ───\n";
-    std::cerr << "[SEEDS] Total entities seeded: " << result.total_entities_seeded << "\n";
-    std::cerr << "[SEEDS] Total pivot rows: " << result.total_pivot_rows << "\n";
-    std::cerr << "[SEEDS] Aliases registered: " << registry.size() << "\n";
-    std::cerr << "[SEEDS] Errors: " << result.errors.size() << "\n";
+    persist_log->info("=== Summary ===");
+    persist_log->info("Total entities seeded: {}", result.total_entities_seeded);
+    persist_log->info("Total pivot rows: {}", result.total_pivot_rows);
+    persist_log->info("Aliases registered: {}", registry.size());
+    persist_log->info("Errors: {}", result.errors.size());
     for (const auto& e : result.errors) {
-        std::cerr << "  ! " << e << "\n";
+        persist_log->error("  ! {}", e);
     }
 
+
     result.success = result.errors.empty();
-    std::cerr << "[SEEDS] ─── "
-              << (result.success ? "SUCCESS" : "FAILED")
-              << " ───\n";
+    if (result.success) {
+        persist_log->info("=== SUCCESS ===");
+    } else {
+        persist_log->error("=== FAILED ===");
+    }
 
     co_return result;
 }

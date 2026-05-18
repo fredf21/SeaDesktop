@@ -47,6 +47,25 @@ enum class FieldType {
     // Texte long (équivalent TEXT en SQL)
     Text,
 
+    // Fichier upload (stocké via IFileStorage, référencé par UUID
+    // pointant vers la table système sea_files).
+    //
+    // Un champ File se déclare en YAML avec un sous-bloc `file:` :
+    //
+    //   - name: avatar
+    //     type: file
+    //     file:
+    //       max_size: 5MB
+    //       allowed_mime_types: [image/png, image/jpeg]
+    //       allowed_extensions: [.png, .jpg]
+    //       storage_path: users/avatars
+    //       on_delete: cascade
+    //
+    // En base, la colonne est BINARY(16) (UUID v4) et référence
+    // sea_files.id via une FK. La configuration complète vit dans
+    // Field::file_config (cf. file_field_config.h).
+    File,
+
     // Échappatoire pour types spécifiques DB
     Native
 };
@@ -75,6 +94,7 @@ constexpr std::string_view to_string(FieldType t) noexcept {
     case FieldType::Decimal:   return "decimal";
     case FieldType::Json:      return "json";
     case FieldType::Binary:    return "binary";
+    case FieldType::File:      return "file";
     case FieldType::Native:    return "native";
 
     default:                   return "unknown"; // sécurité
@@ -111,7 +131,7 @@ inline std::optional<FieldType> field_type_from_string(std::string_view s) noexc
     if (lower == "decimal")   return FieldType::Decimal;
     if (lower == "json")      return FieldType::Json;
     if (lower == "binary")    return FieldType::Binary;
-
+    if (lower == "file")      return FieldType::File;
 
     // Type inconnu → parser devra gérer l'erreur
     return std::nullopt;
@@ -124,7 +144,7 @@ inline std::optional<FieldType> field_type_from_string(std::string_view s) noexc
 // Indique si le type contient une logique métier supplémentaire
 // (validation ou transformation)
 constexpr bool is_logical_type(FieldType t) noexcept {
-    return t == FieldType::Password || t == FieldType::Email || t == FieldType::Native;
+    return t == FieldType::Password || t == FieldType::Email || t == FieldType::Native  || t == FieldType::File;
 }
 
 // Indique si le type est numérique
@@ -146,6 +166,12 @@ constexpr bool is_numeric(FieldType t) noexcept {
 // Indique si le type est booléen
 constexpr bool is_boolean(FieldType t) noexcept {
     return t == FieldType::Bool;
+}
+// Indique si le type représente un fichier upload.
+// Les champs File ont une configuration dédiée (file_config) et
+// référencent un record de la table système sea_files via UUID.
+constexpr bool is_file(FieldType t) noexcept {
+    return t == FieldType::File;
 }
 
 } // namespace sea::domain

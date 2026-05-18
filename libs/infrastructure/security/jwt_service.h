@@ -24,6 +24,10 @@ struct JwtClaims {
     std::int64_t issued_at;     // claim "iat"
     std::int64_t expires_at;    // claim "exp"
     std::unordered_map<std::string, std::string> additional_claims;
+    // JWT ID (claim "jti" standard RFC 7519).
+    // Vide si le token n'a pas de jti (tokens pre-1.3 ou autres emetteurs).
+    std::string jti;
+
 };
 
 // Paramètres pour générer un token
@@ -36,6 +40,11 @@ struct GenerateTokenParams {
     TokenType token_type;
     std::chrono::seconds ttl;
     std::unordered_map<std::string, std::string> additional_claims;
+
+    // Si vide, JwtService genere un UUID v4 automatiquement.
+    // Sinon on utilise la valeur fournie (utile pour les tests).
+    std::string jti;
+
 };
 
 // Paramètres pour vérifier un token

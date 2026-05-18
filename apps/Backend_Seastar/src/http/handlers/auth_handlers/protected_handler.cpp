@@ -1,64 +1,83 @@
 #include "protected_handler.h"
 #include "../../utils/http_utils.h"
+#include "../../utils/cookie_helper.h"
 
 #include "authservice.h"
+#include "token_tracking_service.h"
 
 #include <nlohmann/json.hpp>
 #include <utility>
+#include "security/jwt_service.h"
 
 namespace sea::http::handlers::auth {
 
 using json = nlohmann::json;
 
+namespace {
+
 /**
- * ProtectedHandler
- *
- * Wrapper de sécurité pour protéger une route.
- *
- * Rôle :
- * - vérifier le token JWT
- * - refuser si invalide
- * - sinon déléguer au handler réel
+ * Extrait l'access_token depuis :
+ *   1) Header Authorization: Bearer <token>   (priorite)
+ *   2) Cookie sea_access (fallback navigateur)
  */
-ProtectedHandler::ProtectedHandler( std::unique_ptr<seastar::httpd::handler_base> inner,
-                                   std::shared_ptr<sea::application::AuthService> auth_service, std::shared_ptr<IBlockingExecutor> blocking_executor)
+std::optional<std::string> extract_access_token(
+    const seastar::http::request& req,
+    const std::string& cookie_name)
+{
+    // 1) Header Authorization
+    if (auto tok = sea::http::utils::extract_bearer_token(req); tok.has_value()) {
+        return tok;
+    }
+    // 2) Cookie
+    if (const auto cookie_it = req._headers.find("Cookie");
+        cookie_it != req._headers.end()) {
+        const std::string_view cookie_header(
+            cookie_it->second.data(), cookie_it->second.size()
+            );
+        if (auto v = sea::http::utils::get_cookie_value(cookie_header, cookie_name);
+            v.has_value() && !v->empty()) {
+            return v;
+        }
+    }
+    return std::nullopt;
+}
+
+} // namespace anonyme
+
+ProtectedHandler::ProtectedHandler(
+    std::unique_ptr<seastar::httpd::handler_base> inner,
+    std::shared_ptr<sea::application::AuthService> auth_service,
+    std::shared_ptr<sea::application::auth::TokenTrackingService> token_tracking,
+    std::shared_ptr<IBlockingExecutor> blocking_executor,
+    sea::domain::security::CookieConfig cookie_config)
     : inner_(std::move(inner))
     , auth_service_(std::move(auth_service))
+    , token_tracking_(std::move(token_tracking))
     , blocking_executor_(std::move(blocking_executor))
+    , cookie_config_(std::move(cookie_config))
 {
 }
 
-/**
- * Interception de la requête HTTP
- */
 seastar::future<std::unique_ptr<seastar::http::reply>>
 ProtectedHandler::handle(const seastar::sstring& path,
                          std::unique_ptr<seastar::http::request> req,
                          std::unique_ptr<seastar::http::reply> rep)
 {
-    /**
-     * Extraction token Bearer
-     */
-    const auto token = sea::http::utils::extract_bearer_token(*req);
-
-    if (!token.has_value()) {
+    // ─── 1. Extraction token : Bearer prioritaire, cookie fallback ──
+    const auto token = extract_access_token(
+        *req, cookie_config_.access_token_name()
+        );
+    if (!token.has_value() || token->empty()) {
         rep->set_status(seastar::http::reply::status_type::unauthorized);
         rep->write_body("application/json",
                         json{{"error", "Token manquant"}}.dump());
         co_return std::move(rep);
     }
 
-    /**
-     * Vérification JWT
-     *
-     * NOTE :
-     * Si verify_token devient CPU-heavy → déplacer dans blocking_executor
-     */
+    // ─── 2. Verification signature / exp (hors reactor) ─────────────
     const auto claims =
-        co_await auth_service_->verify_token_async(
-            *token,
-            *blocking_executor_
-            );
+        co_await auth_service_->verify_token_async(*token, *blocking_executor_);
+
     if (!claims.has_value()) {
         rep->set_status(seastar::http::reply::status_type::unauthorized);
         rep->write_body("application/json",
@@ -66,120 +85,85 @@ ProtectedHandler::handle(const seastar::sstring& path,
         co_return std::move(rep);
     }
 
-    /**
-     * Injection future possible :
-     * → ajouter les claims dans req (context utilisateur)
-     */
+    // ─── 3. Verification denylist (token tracking) ──────────────────
+    // verify_token_async retourne un AuthUserClaims qui n'inclut PAS
+    // le jti (l'API de AuthUserClaims expose user_id/email/role).
+    // On extrait le jti via JwtService::verify_token (synchronous).
+    // C'est rapide (signature deja verifiee, on extrait juste les claims).
+    if (token_tracking_ && token_tracking_->config().is_enabled()) {
+        using namespace domain::security;
+        const auto verify_params = infrastructure::security::VerifyTokenParams{
+            .token           = *token,
+            .secret          = auth_service_->config().jwt_secret(),
+            .expected_issuer = auth_service_->issuer(),
+            .expected_type   = infrastructure::security::TokenType::Access
+        };
+        const auto raw_claims = infrastructure::security::JwtService::verify_token(verify_params);
 
-    /**
-     * Injection des claims dans la requête.
-     *
-     * 1. SÉCURITÉ : strip tous les X-User-* qui pourraient venir du client
-     *    (sinon un attaquant pourrait forger X-User-Role: admin)
-     *
-     * 2. Inject les vrais claims comme headers
-     *    (lus par AuthorizationMiddleware pour construire PolicySubject)
-     */
+        if (raw_claims.has_value() && !raw_claims->jti.empty()) {
+            const bool revoked = co_await token_tracking_->is_access_revoked(
+                raw_claims->jti
+                );
+            if (revoked) {
+                rep->set_status(seastar::http::reply::status_type::unauthorized);
+                rep->write_body("application/json",
+                                json{{"error", "Token revoque"}}.dump());
+                co_return std::move(rep);
+            }
+        }
+        // Si raw_claims->jti est vide, on accepte (compat tokens pre-1.3).
+    }
+
+    // ─── 4. Injection des claims comme X-User-* ─────────────────────
     strip_user_headers(*req);
     inject_claims_as_headers(*req, *claims);
 
-
-    /**
-     * Passage au handler réel
-     */
+    // ─── 5. Delegue au handler interne ──────────────────────────────
     co_return co_await inner_->handle(path, std::move(req), std::move(rep));
 }
 
-/**
- * Strip les headers X-User-* venant du client.
- *
- * Implémentation case-insensitive : le client peut envoyer
- * "x-user-role" ou "X-USER-ROLE", on les attrape tous.
- */
 void ProtectedHandler::strip_user_headers(seastar::http::request& req) const
 {
-    // On collecte les clés à supprimer (modification en cours d'itération
-    // = comportement indéfini sur certaines maps).
     std::vector<seastar::sstring> to_remove;
     to_remove.reserve(8);
 
     for (const auto& kv : req._headers) {
         const auto& key = kv.first;
-
-        // Compare case-insensitive avec "X-User-"
-        if (key.size() < 7) {
-            continue;
-        }
+        if (key.size() < 7) continue;
 
         bool matches = true;
         static constexpr char prefix[] = "x-user-";
         for (std::size_t i = 0; i < 7; ++i) {
             const char c = static_cast<char>(
                 std::tolower(static_cast<unsigned char>(key[i])));
-            if (c != prefix[i]) {
-                matches = false;
-                break;
-            }
+            if (c != prefix[i]) { matches = false; break; }
         }
-
-        if (matches) {
-            to_remove.push_back(key);
-        }
+        if (matches) to_remove.push_back(key);
     }
-
     for (const auto& key : to_remove) {
         req._headers.erase(key);
     }
 }
 
-/**
- * Injecte les claims comme headers HTTP.
- *
- * Convention de nommage :
- *   user_id        → X-User-Id
- *   email          → X-User-Email
- *   role           → X-User-Role
- *   department_id  → X-User-Department-Id
- *   manager_id     → X-User-Manager-Id
- */
 void ProtectedHandler::inject_claims_as_headers(
     seastar::http::request& req,
     const sea::application::AuthUserClaims& claims) const
 {
-    // Claims standards
-    if (!claims.user_id.empty()) {
-        req._headers["X-User-Id"] = claims.user_id;
-    }
-    if (!claims.email.empty()) {
-        req._headers["X-User-Email"] = claims.email;
-    }
-    if (!claims.role.empty()) {
-        req._headers["X-User-Role"] = claims.role;
-    }
+    if (!claims.user_id.empty()) req._headers["X-User-Id"]    = claims.user_id;
+    if (!claims.email.empty())   req._headers["X-User-Email"] = claims.email;
+    if (!claims.role.empty())    req._headers["X-User-Role"]  = claims.role;
 
-    // Claims custom (department_id, manager_id, etc.)
     for (const auto& [key, value] : claims.additional_claims) {
-        if (key.empty() || value.empty()) {
-            continue;
-        }
+        if (key.empty() || value.empty()) continue;
         const std::string header_name = "X-User-" + to_header_case(key);
         req._headers[header_name] = value;
     }
 }
 
-/**
- * Convertit un nom de claim snake_case en Header-Case.
- *
- * Exemples :
- *   "department_id"  → "Department-Id"
- *   "mfa_verified"   → "Mfa-Verified"
- *   "tenant_id"      → "Tenant-Id"
- */
 std::string ProtectedHandler::to_header_case(const std::string& claim_name)
 {
     std::string result;
     result.reserve(claim_name.size());
-
     bool capitalize_next = true;
 
     for (char c : claim_name) {
@@ -194,28 +178,27 @@ std::string ProtectedHandler::to_header_case(const std::string& claim_name)
             result += c;
         }
     }
-
     return result;
 }
 
-
-/**
- * Helper pour conditionnellement protéger une route
- */
 std::unique_ptr<seastar::httpd::handler_base> maybe_protect(
     std::unique_ptr<seastar::httpd::handler_base> handler,
     bool requires_auth,
-    const std::shared_ptr<sea::application::AuthService>& auth_service, const std::shared_ptr<IBlockingExecutor>& blocking_executor )
+    const std::shared_ptr<sea::application::AuthService>& auth_service,
+    const std::shared_ptr<sea::application::auth::TokenTrackingService>& token_tracking,
+    const std::shared_ptr<IBlockingExecutor>& blocking_executor,
+    const sea::domain::security::CookieConfig& cookie_config)
 {
-    if (requires_auth) {
-        return std::make_unique<ProtectedHandler>(
-            std::move(handler),
-            auth_service,
-            blocking_executor
-            );
+    if (!requires_auth) {
+        return handler;
     }
-
-    return handler;
+    return std::make_unique<ProtectedHandler>(
+        std::move(handler),
+        auth_service,
+        token_tracking,
+        blocking_executor,
+        cookie_config
+        );
 }
 
 } // namespace sea::http::handlers::auth

@@ -42,7 +42,7 @@ public:
     }
 
     seastar::future<OperationResult> create(const std::string& entity_name,
-                                         DynamicRecord record);
+                                            DynamicRecord record);
 
     seastar::future<std::vector<DynamicRecord>>
     list(const std::string& entity_name) const;
@@ -57,11 +57,49 @@ public:
                       const std::string& value) const;
 
     seastar::future<OperationResult> update(const std::string& entity_name,
-                                         const std::string& id,
-                                         DynamicRecord record);
+                                            const std::string& id,
+                                            DynamicRecord record);
 
     seastar::future<bool> remove(const std::string& entity_name,
-                              const std::string& id);
+                                 const std::string& id);
+    // ── Pagination ──────────────────────────────────────────
+    //
+    // Trois modes independants. Le handler HTTP appelle la methode
+    // correspondant au mode demande dans le YAML, apres avoir parse
+    // et valide les query params via pagination_query::parse_*_query.
+    //
+    // Note : aucune validation supplementaire ici. Le repository
+    // est appele tel quel avec la request normalisee.
+
+    seastar::future<sea::infrastructure::persistence::PageResult>
+    list_page(const std::string& entity_name,
+              const sea::infrastructure::persistence::PageRequest& request) const;
+
+    seastar::future<sea::infrastructure::persistence::OffsetResult>
+    list_offset(const std::string& entity_name,
+                const sea::infrastructure::persistence::OffsetRequest& request) const;
+
+    seastar::future<sea::infrastructure::persistence::CursorResult>
+    list_cursor(const std::string& entity_name,
+                const sea::infrastructure::persistence::CursorRequest& request) const;
+
+    // ─────────────────────────────────────────────────────────
+    // get_repository
+    //
+    // Accès direct au repository sous-jacent. Utilisé par les
+    // handlers qui ont besoin d'orchestrer une transaction SQL
+    // englobant plusieurs opérations (ex: handler avec champs File
+    // qui doit faire `extract → create → retain` atomiquement).
+    //
+    // Note de design : oui, ça casse partiellement l'abstraction
+    // "le CrudEngine est la seule porte d'entrée". Mais l'alternative
+    // (ajouter des méthodes create_with_files, update_with_files, etc.
+    // au CrudEngine) coupleraient l'engine au domaine File, ce qui est
+    // pire. Le getter est une concession ciblée et documentée.
+    // ─────────────────────────────────────────────────────────
+    [[nodiscard]] std::shared_ptr<sea::infrastructure::persistence::IGenericRepository>
+    get_repository() const noexcept { return repository_; }
+
 
 private:
     std::shared_ptr<SchemaRuntimeRegistry> registry_;

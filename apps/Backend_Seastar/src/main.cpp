@@ -8,17 +8,25 @@
 #include <boost/program_options.hpp>
 
 #include <chrono>
-#include <iostream>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 
 #include "authservice.h"
+#include "fileservice.h"
+#include "fileservicefactory.h"
+#include "http/handlers/file_handlers/file_upload_extractor.h"
+#include "http/handlers/auth_handlers/logout_handler.h"
+#include "http/handlers/auth_handlers/refresh_handler.h"
+#include "http/handlers/logs_handlers/logs_handler.h"
+#include "http/routing/pagination_routes.h"
 #include "import_yaml_schema_usecase.h"
 #include "openapigenerator.h"
 #include "persistence/mysql/seed_orchestrator.h"
 #include "route_generator.h"
+#include "spdlog/spdlog.h"
+#include "token_tracking_service.h"
 #include "validate_schema_usecase.h"
 
 // Handlers
@@ -37,7 +45,7 @@
 #include "persistence/repository_factory.h"
 #include "persistence/mysql/mysql_connector.h"
 #include "persistence/mysql/mysqlconnexionpool.h"
-#include "persistence/mysql/mysql_bootstrapper.h"  // ✨ Module Migrations Phase A
+#include "persistence/mysql/mysql_bootstrapper.h"
 
 // Blocking executor
 #include "thread_pool_execution/std_thread_pool_executor.h"
@@ -54,6 +62,7 @@
 #include "http/routing/route_registration.h"
 #include "access_control/policy_engine.h"
 #include "access_control/operators/operator_registry.h"
+#include "logging_initializer.h"
 
 namespace bpo = boost::program_options;
 
@@ -66,11 +75,10 @@ bool is_main_shard()
 
 void log_boot(const std::string& message)
 {
-    if (is_main_shard()) {
-        std::cerr << message << "\n";
-    }
-}
 
+    spdlog::get("sea.boot")->info("{}", message);
+
+}
 } // namespace
 
 int main(int argc, char** argv)
@@ -121,47 +129,86 @@ int main(int argc, char** argv)
         }
 
         const auto service = *selected_service;
+        // ─────────────────────────────────────────────────────
+        // 2bis. Initialisation du logging (Etape 2.3 Sujet 2)
+        // ─────────────────────────────────────────────────────
+        // Initialise spdlog avec les sinks/niveaux/format declares dans
+        // le YAML, puis installe le hook Seastar -> spdlog pour que les
+        // logs internes Seastar passent par notre infra.
+        //
+        // ATTENTION : cet appel doit precedeer tout autre log [BOOT]
+        // (sinon les premiers std::cerr passent encore en stderr brut).
+        //
+        // En cas d'erreur de config logging, on tombe sur stderr classique
+        // pour ne pas bloquer le boot du service.
+        try {
+            sea::application::logging::LoggingInitializer::init(service.logging);
+            if (is_main_shard()) {
+                std::cerr << "[BOOT] Logging initialise (niveau="
+                          << to_string(service.logging.level()) << ")\n";
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[BOOT] WARNING: init logging echoue: " << e.what()
+            << " -- fallback sur stderr\n";
+        }
+
         // Après l'import du service depuis YAML
         const auto& ac_config = service.access_control;
 
-        std::cerr << "[BOOT] Authorization: "
-                  << (ac_config.enabled() ? "ENABLED" : "DISABLED") << "\n";
+        spdlog::get("sea.boot")->info(
+            "Authorization: {}",
+            ac_config.enabled() ? "ENABLED" : "DISABLED"
+            );
+
 
         if (ac_config.enabled()) {
             using namespace sea::domain::access_control;
 
-            std::cerr << "  default_policy: " << to_string(ac_config.default_policy()) << "\n";
-            std::cerr << "  admin_role: " << ac_config.admin_role() << "\n";
-            std::cerr << "  default_scope_field: " << ac_config.default_scope_field() << "\n";
-
-            std::cerr << "  declared_roles: ";
+            spdlog::get("sea.boot")->info(
+                "  default_policy: {}", to_string(ac_config.default_policy())
+                );
+            spdlog::get("sea.boot")->info(
+                "  admin_role: {}", ac_config.admin_role()
+                );
+            spdlog::get("sea.boot")->info(
+                "  default_scope_field: {}", ac_config.default_scope_field()
+                );
+            std::string roles_str;
             for (const auto& r : ac_config.declared_roles()) {
-                std::cerr << r << " ";
+                if (!roles_str.empty()) roles_str += " ";
+                roles_str += r;
             }
-            std::cerr << "\n";
+            spdlog::get("sea.boot")->info(
+                "  declared_roles: {}", roles_str
+                );
 
             // Per-entity rules
-            std::cerr << "[BOOT] Per-entity access control rules:\n";
+            spdlog::get("sea.boot")->info("Per-entity access control rules:");
             for (const auto& entity : service.schema.entities) {
                 const auto& entity_ac = entity.access_control;
                 if (!entity_ac.has_any_spec()) continue;
 
-                std::cerr << "  " << entity.name;
+                std::string entity_line = "  " + entity.name;
                 if (!entity_ac.scope_field().empty()) {
-                    std::cerr << " (scope_field=" << entity_ac.scope_field() << ")";
+                    entity_line += " (scope_field=" + entity_ac.scope_field() + ")";
                 }
                 if (!entity_ac.owner_field().empty()) {
-                    std::cerr << " (owner_field=" << entity_ac.owner_field() << ")";
+                    entity_line += " (owner_field=" + entity_ac.owner_field() + ")";
                 }
-                std::cerr << "\n";
+                spdlog::get("sea.boot")->info("{}", entity_line);
 
                 for (int op_idx = 0; op_idx <= 4; ++op_idx) {
                     const auto op = static_cast<CrudOperation>(op_idx);
                     const auto* spec = entity_ac.find_spec(op);
                     if (spec && !spec->is_empty()) {
-                        std::cerr << "    " << to_string(op);
-                        std::cerr << (spec->requires_resource() ? " (resource-aware)" : " (subject-only, fast path)");
-                        std::cerr << "\n";
+                        spdlog::get("sea.boot")->info(
+                            "    {} {}",
+                            to_string(op),
+                            spec->requires_resource()
+                                ? "(resource-aware)"
+                                : "(subject-only, fast path)"
+                            );
+
                     }
                 }
             }
@@ -239,11 +286,10 @@ int main(int argc, char** argv)
             if (service.database_config.migrations.enabled
                 && service.database_config.migrations.create_database_if_missing) {
 
-                if (is_main_shard()) {
-                    std::cerr << "\n═══════════════════════════════════════════════\n";
-                    std::cerr << " PHASE A : ensure database exists\n";
-                    std::cerr << "═══════════════════════════════════════════════\n";
-                }
+                spdlog::get("sea.boot")->info(
+                    "═══ PHASE A : ensure database exists ═══"
+                    );
+
 
                 sea::infrastructure::persistence::mysql::MysqlBootstrapper db_bootstrapper(
                     service.database_config,
@@ -261,7 +307,7 @@ int main(int argc, char** argv)
                 }
             }
 
-            // ETAPE 7.B : Demarrer le pool (la DB existe maintenant)
+            // ETAPE 8 : Demarrer le pool (la DB existe maintenant)
             sea::infrastructure::persistence::mysql::MySQLConnector connector(
                 service.database_config.host,
                 service.database_config.username,
@@ -288,19 +334,18 @@ int main(int argc, char** argv)
 
             resources.mysql_pool = mysql_pool.get();
 
-            log_boot("[BOOT] MySQL pool demarre");
+            log_boot("MySQL pool demarre");
 
-            // ✨ ETAPE 7.C : Bootstrap complet (introspect + CREATE TABLE + ADD COLUMN)
+            // ETAPE 8. : Bootstrap complet (introspect + CREATE TABLE + ADD COLUMN)
             //
             // Maintenant que le pool est demarre, on peut introspect MySQL
             // et appliquer les migrations.
             if (service.database_config.migrations.enabled) {
 
-                if (is_main_shard()) {
-                    std::cerr << "\n═══════════════════════════════════════════════\n";
-                    std::cerr << " PHASE A : bootstrap schema (CREATE TABLE / ADD COLUMN)\n";
-                    std::cerr << "═══════════════════════════════════════════════\n";
-                }
+                spdlog::get("sea.boot")->info(
+                    "═══ PHASE A : bootstrap schema (CREATE TABLE / ADD COLUMN) ═══"
+                    );
+
 
                 sea::infrastructure::persistence::mysql::MysqlBootstrapper bootstrapper(
                     service.database_config,
@@ -312,19 +357,20 @@ int main(int argc, char** argv)
                 const auto result = co_await bootstrapper.bootstrap();
 
                 if (!result.success) {
-                    if (is_main_shard()) {
-                        std::cerr << "[BOOT] WARNING: Bootstrap a echoue avec "
-                                  << result.errors.size() << " erreur(s)\n";
-                        std::cerr << "[BOOT] Le serveur va tenter de demarrer quand meme\n";
-                        // Decision V1 : on continue quand meme.
-                        // Pour PROD strict : throw std::runtime_error("Bootstrap failed");
-                    }
+                    spdlog::get("sea.boot")->warn(
+                        "Bootstrap a echoue avec {} erreur(s)",
+                        result.errors.size()
+                        );
+                    spdlog::get("sea.boot")->warn(
+                        "Le serveur va tenter de demarrer quand meme"
+                        );
+
                 }
             }
         }
 
         // ─────────────────────────────────────────────────────
-        // 8. RateLimitStore
+        // 9. RateLimitStore
         // ─────────────────────────────────────────────────────
         auto rate_limit_store =
             std::make_shared<
@@ -337,14 +383,15 @@ int main(int argc, char** argv)
         if (rate_limits_enabled) {
             co_await rate_limit_store->start();
 
-            if (is_main_shard()) {
-                std::cerr << "[BOOT] RateLimitStore demarre sur "
-                          << seastar::smp::count << " shards\n";
-            }
+            spdlog::get("sea.boot")->info(
+                "RateLimitStore demarre sur {} shards",
+                seastar::smp::count
+                );
+
         }
 
         // ─────────────────────────────────────────────────────
-        // 9. Repository + services runtime
+        // 10. Repository + services runtime
         // ─────────────────────────────────────────────────────
         sea::infrastructure::persistence::RepositoryFactory repository_factory;
 
@@ -367,16 +414,45 @@ int main(int argc, char** argv)
 
 
         // ─────────────────────────────────────────────────────
-        // 9.5. Phase Seeds : insertion des donnees initiales
+        // 10bis. FileService + FileUploadExtractor (conditionnel)
+        // ─────────────────────────────────────────────────────
+        // Si le schema declare au moins un champ File, on instancie
+        // toute la pile fichiers : IFileStorage (Filesystem) +
+        // FileRepository + FileService + FileUploadExtractor.
+        // Sinon on garde les pointeurs nullptr et les handlers HTTP
+        // retombent silencieusement sur leur comportement d'origine
+        // (JSON uniquement, pas de gestion de fichiers).
+        //
+        // Le FileService partage le meme `repository` que le crud_engine
+        // : c'est essentiel pour que les transactions englobent INSERT
+        // sea_files + INSERT entite dans la meme tx SQL.
+        std::shared_ptr<sea::application::FileService> file_service;
+        std::shared_ptr<sea::http::handlers::file_upload::FileUploadExtractor> file_extractor;
+
+        if (auto bundle = sea::application::FileServiceFactory::make(
+                service, repository, blocking_executor))
+        {
+            file_service = bundle->file_service;
+            // Construit l'extractor cote apps/ (le factory ne le fait pas
+            // car FileUploadExtractor vit dans la couche HTTP, au-dessus
+            // de sea_application).
+            file_extractor = std::make_shared<
+                sea::http::handlers::file_upload::FileUploadExtractor>(file_service);
+            spdlog::get("sea.boot")->info(
+                "main: file service stack ready (storage + repo + service + extractor)");
+        }
+
+
+        // ─────────────────────────────────────────────────────
+        // 11. Phase Seeds : insertion des donnees initiales
         // ─────────────────────────────────────────────────────
         if (service.database_config.is_mysql()
             && service.database_config.migrations.seeds.enabled) {
 
-            if (is_main_shard()) {
-                std::cerr << "\n═══════════════════════════════════════════════\n";
-                std::cerr << " PHASE C : seed initial data\n";
-                std::cerr << "═══════════════════════════════════════════════\n";
-            }
+            spdlog::get("sea.boot")->info(
+                "═══ PHASE C : seed initial data ═══"
+                );
+
 
             auto seed_introspector =
                 std::make_shared<sea::infrastructure::persistence::mysql::MysqlIntrospector>(
@@ -400,16 +476,14 @@ int main(int argc, char** argv)
                     == sea::domain::SeedsErrorPolicy::Abort) {
                     throw std::runtime_error("Seeds failed and on_error=abort");
                 }
-                if (is_main_shard()) {
-                    std::cerr << "[BOOT] WARNING: Seeds had errors, continuing\n";
-                }
+                spdlog::get("sea.boot")->warn("Seeds had errors, continuing");
             }
         }
 
 
 
         // ─────────────────────────────────────────────────────
-        // 10. Routes + OpenAPI
+        // 12. Routes + OpenAPI
         // ─────────────────────────────────────────────────────
         sea::application::RouteGenerator route_generator;
         const auto route_definitions = route_generator.generate(service);
@@ -428,7 +502,7 @@ int main(int argc, char** argv)
         }
 
         // ─────────────────────────────────────────────────────
-        // 11. AuthService
+        // 13. AuthService
         // ─────────────────────────────────────────────────────
         std::shared_ptr<sea::application::AuthService> auth_service = nullptr;
 
@@ -462,21 +536,90 @@ int main(int argc, char** argv)
                     service.name
                     );
 
-            if (is_main_shard()) {
-                std::cerr << "[BOOT] Auth activee:"
-                          << " type=" << to_string(effective_auth_cfg.type())
-                          << " algorithm=" << to_string(effective_auth_cfg.jwt_algorithm())
-                          << " access_ttl="
-                          << effective_auth_cfg.access_token_ttl().count() << "s"
-                          << " refresh_ttl="
-                          << effective_auth_cfg.refresh_token_ttl().count() << "s"
-                          << "\n";
-            }
+            spdlog::get("sea.boot")->info(
+                "Auth activee: type={} algorithm={} access_ttl={}s refresh_ttl={}s",
+                to_string(effective_auth_cfg.type()),
+                to_string(effective_auth_cfg.jwt_algorithm()),
+                effective_auth_cfg.access_token_ttl().count(),
+                effective_auth_cfg.refresh_token_ttl().count()
+                );
+
         } else {
-            log_boot("[BOOT] Auth desactivee (type=none)");
+            log_boot("Auth desactivee (type=none)");
         }
         // ─────────────────────────────────────────────────────
-        // 11.5. PolicyEngine (Module 5 - Authorization)
+        // 13bis TokenTrackingService
+        // ─────────────────────────────────────────────────────
+        //
+        // Construit UNIQUEMENT si auth_service existe (sinon nullptr).
+        //
+        // Si token_tracking.enabled = false dans le YAML, le service est cree
+        // quand meme mais en mode no-op (toutes ses methodes deviennent des
+        // passthroughs). Cela simplifie le code des handlers : ils l'appellent
+        // toujours, sans avoir a verifier le mode.
+        //
+        // Si auth_service == nullptr, token_tracking reste nullptr et les
+        // handlers le testent avant utilisation (ils gerent deja ce cas).
+        std::shared_ptr<sea::application::auth::TokenTrackingService> token_tracking = nullptr;
+        if (auth_service) {
+            token_tracking = std::make_shared<sea::application::auth::TokenTrackingService>(
+                repository,    // ton IGenericRepository
+                auth_service->config().token_tracking()
+                );
+
+            const auto& tt_cfg = auth_service->config().token_tracking();
+
+            spdlog::get("sea.boot")->info(
+                "TokenTracking {} (refresh_table={}, revoked_table={}, cache_ttl={}s)",
+                tt_cfg.is_enabled() ? "active" : "desactive (mode no-op)",
+                tt_cfg.refresh_table(),
+                tt_cfg.revoked_table(),
+                tt_cfg.cache().ttl.count()
+                );
+
+        }
+        if (token_tracking &&
+            auth_service->config().token_tracking().is_enabled() &&
+            auth_service->config().token_tracking().auto_cleanup().is_enabled()) {
+
+            const auto interval =
+                auth_service->config().token_tracking().auto_cleanup().interval;
+
+            // Timer Seastar declenche periodiquement le cleanup.
+            // Reference statique pour qu'il ne soit pas detruit prematurement.
+            // En production, mieux : stocker dans la classe Application/ServiceState.
+            static seastar::timer<> cleanup_timer;
+            cleanup_timer.set_callback([token_tracking]() {
+                (void)token_tracking->cleanup_expired().then_wrapped(
+                    [](seastar::future<sea::application::auth::TokenTrackingService::CleanupReport> f) {
+                        try {
+                            auto report = f.get();
+                            if (report.refresh_deleted > 0 || report.revoked_deleted > 0) {
+                                spdlog::get("sea.security")->info(
+                                    "cleanup: refresh={} revoked={}",
+                                    report.refresh_deleted,
+                                    report.revoked_deleted
+                                    );
+                            }
+                        } catch (const std::exception& e) {
+                            spdlog::get("sea.security")->error(
+                                "cleanup error: {}", e.what()
+                                );
+                        }
+
+                    });
+            });
+            cleanup_timer.arm_periodic(interval);
+
+            spdlog::get("sea.boot")->info(
+                "TokenTracking cleanup periodique active (interval={}s)",
+                interval.count()
+                );
+
+        }
+
+        // ─────────────────────────────────────────────────────
+        // 14. PolicyEngine (Module 5 - Authorization)
         // ─────────────────────────────────────────────────────
         std::shared_ptr<sea::application::access_control::PolicyEngine>
             policy_engine = nullptr;
@@ -492,20 +635,18 @@ int main(int argc, char** argv)
                     operator_registry
                     );
 
-            if (is_main_shard()) {
-                std::cerr << "[BOOT] Authorization activee:"
-                          << " default_policy="
-                          << to_string(service.access_control.default_policy())
-                          << " admin_role=" << service.access_control.admin_role()
-                          << " abac_mode="
-                          << to_string(service.access_control.abac_mode())
-                          << "\n";
-            }
+            spdlog::get("sea.boot")->info(
+                "Authorization activee: default_policy={} admin_role={} abac_mode={}",
+                to_string(service.access_control.default_policy()),
+                service.access_control.admin_role(),
+                to_string(service.access_control.abac_mode())
+                );
+
         } else {
-            log_boot("[BOOT] Authorization desactivee");
+            log_boot("Authorization desactivee");
         }
 
-        // Section 11.6 (après PolicyEngine)
+        // Section 14
         std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper>
             resource_auth_helper = nullptr;
 
@@ -518,7 +659,7 @@ int main(int argc, char** argv)
         }
 
         // ─────────────────────────────────────────────────────
-        // 12. Auth source
+        // 15. Auth source
         // ─────────────────────────────────────────────────────
         bool has_auth_source = false;
 
@@ -530,7 +671,7 @@ int main(int argc, char** argv)
         }
 
         // ─────────────────────────────────────────────────────
-        // 13. MiddlewareContext
+        // 16. MiddlewareContext
         // ─────────────────────────────────────────────────────
         /**
          * Point critique :
@@ -540,18 +681,24 @@ int main(int argc, char** argv)
          * verify_token_async(...) et risque de refaire du crypto dans le reactor.
          */
         sea::http::routing::MiddlewareContext mw_context{
-            .service = service,
-            .auth_service = auth_service,
-            .rate_limit_store = rate_limits_enabled
-                                    ? rate_limit_store.get()
-                                    : nullptr,
-            .blocking_executor = blocking_executor,
-            .policy_engine = policy_engine,
-            .resource_auth_helper = resource_auth_helper
+            .service              = service,
+            .auth_service         = auth_service,
+            .rate_limit_store     = rate_limit_store.get(),
+            .blocking_executor    = blocking_executor,
+            .policy_engine        = policy_engine,
+            .resource_auth_helper = resource_auth_helper,
+            // ── AJOUT token tracking ──
+            .token_tracking       = token_tracking,
+            .cookie_config        = auth_service
+                                 ? auth_service->config().cookie_config()
+                                 : sea::domain::security::CookieConfig{},
+            // ── Pile fichiers (nullptr si le schema n'a pas de champ File) ──
+            .file_extractor       = file_extractor,
+            .file_service         = file_service
         };
 
         // ─────────────────────────────────────────────────────
-        // 14. Serveur HTTP
+        // 17. Serveur HTTP
         // ─────────────────────────────────────────────────────
         auto server =
             std::make_shared<seastar::httpd::http_server_control>();
@@ -574,7 +721,7 @@ int main(int argc, char** argv)
                                             has_auth_source,
                                             mw_context,
                                             blocking_executor
-            ](seastar::httpd::routes& r) {
+                                            , token_tracking](seastar::httpd::routes& r) {
                 using namespace sea::http::routing;
 
                 // ─────────────────────────────────────────────
@@ -633,6 +780,15 @@ int main(int argc, char** argv)
                 // Routes auth
                 // ─────────────────────────────────────────────
                 if (auth_enabled && auth_service && has_auth_source) {
+
+                    // Recuperation des configs depuis auth_service (etape 1.4)
+                    const auto& auth_cfg    = auth_service->config();
+                    const auto& cookie_cfg  = auth_cfg.cookie_config();
+                    const auto  delivery    = auth_cfg.token_delivery();
+                    const auto  access_ttl  = auth_cfg.access_token_ttl();
+                    const auto  refresh_ttl = auth_cfg.refresh_token_ttl();
+
+                    // ─── POST /auth/register (inchange) ────────────────────────
                     r.add(
                         seastar::httpd::operation_type::POST,
                         seastar::httpd::url("/auth/register"),
@@ -649,6 +805,7 @@ int main(int argc, char** argv)
                             ).release()
                         );
 
+                    // ─── POST /auth/login (ENRICHI etape 1.4) ──────────────────
                     r.add(
                         seastar::httpd::operation_type::POST,
                         seastar::httpd::url("/auth/login"),
@@ -656,13 +813,62 @@ int main(int argc, char** argv)
                             std::make_unique<sea::http::handlers::auth::LoginHandler>(
                                 crud_engine,
                                 auth_service,
-                                blocking_executor
+                                token_tracking,        // ← AJOUT
+                                blocking_executor,
+                                cookie_cfg,            // ← AJOUT
+                                delivery,              // ← AJOUT
+                                access_ttl,            // ← AJOUT
+                                refresh_ttl            // ← AJOUT
                                 ),
                             false,
                             mw_context
                             ).release()
                         );
 
+                    // ─── POST /auth/refresh (NOUVEAU etape 1.4) ────────────────
+                    // requires_auth = false : l'utilisateur n'a plus son access_token
+                    // valide (c'est pour ca qu'il fait /refresh), donc le middleware
+                    // de protection ne doit PAS verifier l'access. La validation se
+                    // fait via le refresh_token (allowlist) DANS le handler.
+                    r.add(
+                        seastar::httpd::operation_type::POST,
+                        seastar::httpd::url("/auth/refresh"),
+                        wrap_with_middlewares(
+                            std::make_unique<sea::http::handlers::auth::RefreshHandler>(
+                                crud_engine,
+                                auth_service,
+                                token_tracking,
+                                blocking_executor,
+                                cookie_cfg,
+                                delivery,
+                                access_ttl,
+                                refresh_ttl
+                                ),
+                            false,
+                            mw_context
+                            ).release()
+                        );
+
+                    // ─── POST /auth/logout (NOUVEAU etape 1.4) ─────────────────
+                    // requires_auth = true : pour se deconnecter, il faut etre
+                    // identifie (c'est ProtectedHandler qui posera les X-User-*).
+                    // Le LogoutHandler revoque ensuite les tokens et clear les cookies.
+                    r.add(
+                        seastar::httpd::operation_type::POST,
+                        seastar::httpd::url("/auth/logout"),
+                        wrap_with_middlewares(
+                            std::make_unique<sea::http::handlers::auth::LogoutHandler>(
+                                auth_service,
+                                token_tracking,
+                                blocking_executor,
+                                cookie_cfg
+                                ),
+                            true,
+                            mw_context
+                            ).release()
+                        );
+
+                    // ─── GET /auth/me (inchange) ───────────────────────────────
                     r.add(
                         seastar::httpd::operation_type::GET,
                         seastar::httpd::url("/auth/me"),
@@ -675,6 +881,54 @@ int main(int argc, char** argv)
                             ).release()
                         );
                 }
+
+                // ─────────────────────────────────────────────
+                // Routes /admin/logs (etape 2.5)
+                //
+                // Securite a 2 couches :
+                //   1. ProtectedHandler (auth requise) via wrap_with_middlewares
+                //   2. Garde admin role dans le handler (compare X-User-Role
+                //      avec service.access_control.admin_role())
+                //
+                // GET /admin/logs              : lit le ring buffer
+                // GET /admin/logs/loggers      : liste des loggers connus
+                // ─────────────────────────────────────────────
+                {
+                    auto ring_buffer_sink =
+                        sea::application::logging::LoggingInitializer::get_ring_buffer_sink();
+
+                    // Recupere le role admin configure dans le YAML
+                    // (authorization.admin_role, default "admin")
+                    const std::string admin_role_name = service.access_control.admin_role();
+
+                    if (ring_buffer_sink) {
+                        r.add(
+                            seastar::httpd::operation_type::GET,
+                            seastar::httpd::url("/admin/logs"),
+                            wrap_with_middlewares(
+                                std::make_unique<sea::http::handlers::logs::admin::LogsHandler>(
+                                    ring_buffer_sink,
+                                    admin_role_name
+                                    ),
+                                true,            // requires_auth (ProtectedHandler)
+                                mw_context
+                                ).release()
+                            );
+
+                        r.add(
+                            seastar::httpd::operation_type::GET,
+                            seastar::httpd::url("/admin/logs/loggers"),
+                            wrap_with_middlewares(
+                                std::make_unique<sea::http::handlers::logs::admin::LoggersListHandler>(
+                                    admin_role_name
+                                    ),
+                                true,            // requires_auth
+                                mw_context
+                                ).release()
+                            );
+                    }
+                }
+
 
                 // ─────────────────────────────────────────────
                 // Routes CRUD collection
@@ -698,6 +952,15 @@ int main(int argc, char** argv)
                 register_has_many_routes(r, crud_engine, mw_context);
                 register_has_one_routes(r, crud_engine, mw_context);
                 register_many_to_many_routes(r, crud_engine, mw_context);
+                register_file_download_routes(r, crud_engine, registry, mw_context);
+
+                // Routes paginées (etape 5)
+                //
+                // Lit toutes les RouteDefinition se terminant par _page, _offset, _cursor
+                // et les enregistre via match_rule (necessaire pour /.../{id}/page).
+                // Si aucune entité du YAML n'active la pagination, cet appel est un no-op.
+                register_pagination_routes(r, route_definitions, crud_engine, mw_context);
+
 
                 // ─────────────────────────────────────────────
                 // Routes CRUD item
@@ -719,10 +982,11 @@ int main(int argc, char** argv)
 
             });
 
-            if (is_main_shard()) {
-                std::cerr << "[BOOT] Serveur en ecoute sur le port "
-                          << service.port << "\n";
-            }
+            spdlog::get("sea.boot")->info(
+                "Serveur en ecoute sur le port {}",
+                service.port
+                );
+
 
             co_await server->listen(seastar::ipv4_addr{service.port});
 
@@ -735,14 +999,15 @@ int main(int argc, char** argv)
             try {
                 throw;
             } catch (const std::exception& e) {
-                std::cerr << "[ERROR] " << e.what() << "\n";
+                spdlog::get("sea.boot")->error("Server error: {}", e.what());
             } catch (...) {
-                std::cerr << "[ERROR] Exception inconnue\n";
+                spdlog::get("sea.boot")->error("Unknown exception during server lifecycle");
             }
+
         }
 
         // ─────────────────────────────────────────────────────
-        // 15. Cleanup
+        // 18. Cleanup
         // ─────────────────────────────────────────────────────
         co_await server->stop();
 

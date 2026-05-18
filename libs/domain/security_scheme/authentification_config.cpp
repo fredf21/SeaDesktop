@@ -1,5 +1,4 @@
 #include "authentification_config.h"
-
 #include <stdexcept>
 
 namespace sea::domain::security {
@@ -109,6 +108,23 @@ AuthentificationConfig& AuthentificationConfig::set_refresh_token_ttl(std::chron
     refresh_token_ttl_ = ttl;
     return *this;
 }
+AuthentificationConfig& AuthentificationConfig::set_token_delivery(TokenDelivery mode)
+{
+    token_delivery_ = mode;
+    return *this;
+}
+
+AuthentificationConfig& AuthentificationConfig::set_cookie_config(CookieConfig cfg)
+{
+    cookie_config_ = std::move(cfg);
+    return *this;
+}
+
+AuthentificationConfig& AuthentificationConfig::set_token_tracking(TokenTrackingConfig cfg)
+{
+    token_tracking_ = std::move(cfg);
+    return *this;
+}
 
 AuthentificationConfig& AuthentificationConfig::set_api_key_header_name(std::string header)
 {
@@ -126,6 +142,21 @@ AuthentificationConfig& AuthentificationConfig::set_oauth2_jwks_url(std::string 
 {
     oauth2_jwks_url_ = std::move(url);
     return *this;
+}
+
+TokenDelivery AuthentificationConfig::token_delivery() const noexcept
+{
+    return token_delivery_;
+}
+
+const CookieConfig& AuthentificationConfig::cookie_config() const noexcept
+{
+    return cookie_config_;
+}
+
+const TokenTrackingConfig& AuthentificationConfig::token_tracking() const noexcept
+{
+    return token_tracking_;
 }
 
 // ===== Getters =====
@@ -225,6 +256,14 @@ void AuthentificationConfig::validate() const
                 "Use a shorter TTL (15min recommended) and rely on refresh tokens"
                 );
         }
+        // Validation des sous-configs cookies et token_tracking
+        // (uniquement pour JWT, les autres types n'utilisent pas ces options)
+        if (token_delivery_ == TokenDelivery::Cookie ||
+            token_delivery_ == TokenDelivery::Both) {
+            cookie_config_.validate();
+        }
+        token_tracking_.validate();   // no-op si !enabled
+
         break;
 
     case AuthType::ApiKey:

@@ -1,7 +1,7 @@
-
 #include "mysql_schema_generator.h"
 
 #include "database_mappings/mysql_type_mapping.h"
+#include "sea_files_table.h"     // pour SeaFilesTable::TABLE_NAME et COL_ID
 #include <queue>
 #include <sstream>
 #include <unordered_map>
@@ -20,6 +20,48 @@ std::string on_delete_to_sql(sea::domain::OnDelete rule)
     case sea::domain::OnDelete::Cascade:  return "CASCADE";
     case sea::domain::OnDelete::SetNull:  return "SET NULL";
     case sea::domain::OnDelete::Restrict: return "RESTRICT";
+    }
+    return "RESTRICT";
+}
+
+// ─────────────────────────────────────────────────────────────
+// Convertit OnDeleteFile (config d'un champ File) en clause
+// ON DELETE SQL pour la FK vers sea_files.
+//
+// Note importante : la FK SQL ne gère que la partie "row" du
+// comportement. Le reste (décrément du reference_count, suppression
+// physique du fichier sur disque) est orchestré au niveau applicatif
+// par le FileService (Étape 6). Donc :
+//
+//   Cascade  → ON DELETE CASCADE  : la row de sea_files est supprimée
+//              automatiquement quand la dernière entité référençante
+//              l'est. Le FileService observera reference_count==0
+//              et supprimera le fichier physique.
+//              EN PRATIQUE : le FileService décrémente le compteur en
+//              amont. Si on s'appuyait uniquement sur la FK CASCADE,
+//              on perdrait la possibilité de partager (le delete d'une
+//              entité supprimerait la row sea_files même si d'autres
+//              entités y pointent encore). C'est pour cela qu'on
+//              utilise RESTRICT côté SQL pour Cascade (cf. ci-dessous).
+//
+//   SetNull  → ON DELETE SET NULL : la colonne FK de l'entité passe à
+//              NULL quand la row sea_files disparaît. Le FileService
+//              décide quand supprimer la row sea_files.
+//
+//   Restrict → ON DELETE RESTRICT : impossible de supprimer une row
+//              sea_files tant qu'une entité y pointe. Stop net.
+//
+// CHOIX FINAL : pour Cascade ET Restrict, on utilise RESTRICT au
+// niveau SQL. La différence Cascade/Restrict est appliquée par le
+// FileService en amont (Cascade décrémente le compteur ; Restrict
+// refuse le DELETE de l'entité). SET NULL est mappé directement.
+// ─────────────────────────────────────────────────────────────
+std::string on_delete_file_to_sql(sea::domain::OnDeleteFile rule)
+{
+    switch (rule) {
+    case sea::domain::OnDeleteFile::Cascade:  return "RESTRICT";
+    case sea::domain::OnDeleteFile::SetNull:  return "SET NULL";
+    case sea::domain::OnDeleteFile::Restrict: return "RESTRICT";
     }
     return "RESTRICT";
 }
@@ -187,6 +229,33 @@ std::string MysqlSchemaGenerator::generate_create_table_sql(
             << "\n    FOREIGN KEY (`" << relation.fk_column << "`)"
             << "\n    REFERENCES `" << relation.target_entity << "` (`id`)"
             << "\n    ON DELETE " << on_delete_to_sql(relation.on_delete);
+    }
+
+    // ── 6. FOREIGN KEY (depuis les champs File) ─────────────
+    //
+    // Chaque champ File référence sea_files.id via une FK avec
+    // ON DELETE dérivé du FileFieldConfig::on_delete.
+    //
+    // Pas d'index séparé : la FK MySQL crée automatiquement un
+    // index sur la colonne référençante (ce qui n'est pas le cas
+    // dans tous les SGBD, mais MySQL le fait).
+    //
+    // Le validator (Étape 3) garantit que tout champ File a un
+    // file_config non vide ; on protège quand même avec un check
+    // défensif (is_file_field) pour éviter tout crash si un schéma
+    // construit en C++ direct contournait le validator.
+    for (const auto& field : entity.fields) {
+        if (!field.is_file_field()) {
+            continue;
+        }
+
+        const auto& cfg = *field.file_config;
+
+        sql << ",\n  CONSTRAINT `fk_" << table_name << "_" << field.name << "_file`"
+            << "\n    FOREIGN KEY (`" << field.name << "`)"
+            << "\n    REFERENCES `" << SeaFilesTable::TABLE_NAME
+            << "` (`" << SeaFilesTable::COL_ID << "`)"
+            << "\n    ON DELETE " << on_delete_file_to_sql(cfg.on_delete);
     }
 
     sql << "\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";

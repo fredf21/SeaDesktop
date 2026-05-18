@@ -1,11 +1,14 @@
 #include "login_handler.h"
 #include "../../utils/http_utils.h"
+#include "../../utils/cookie_helper.h"
 
 #include "authservice.h"
+#include "token_tracking_service.h"
 #include "runtime/generic_crud_engine.h"
+#include "security/jwt_service.h"
 
 #include <nlohmann/json.hpp>
-
+#include <set>
 #include <utility>
 
 namespace sea::http::handlers::auth {
@@ -15,10 +18,20 @@ using json = nlohmann::json;
 LoginHandler::LoginHandler(
     std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
     std::shared_ptr<sea::application::AuthService> auth_service,
-    std::shared_ptr<IBlockingExecutor> blocking_executor)
+    std::shared_ptr<sea::application::auth::TokenTrackingService> token_tracking,
+    std::shared_ptr<IBlockingExecutor> blocking_executor,
+    sea::domain::security::CookieConfig cookie_config,
+    sea::domain::security::TokenDelivery token_delivery,
+    std::chrono::seconds access_token_ttl,
+    std::chrono::seconds refresh_token_ttl)
     : crud_engine_(std::move(crud_engine))
     , auth_service_(std::move(auth_service))
+    , token_tracking_(std::move(token_tracking))
     , blocking_executor_(std::move(blocking_executor))
+    , cookie_config_(std::move(cookie_config))
+    , token_delivery_(token_delivery)
+    , access_token_ttl_(access_token_ttl)
+    , refresh_token_ttl_(refresh_token_ttl)
 {
 }
 
@@ -28,28 +41,28 @@ LoginHandler::LoginHandler(
  * Route : POST /auth/login
  *
  * Flow :
- * 1. Lire le body HTTP
- * 2. Parser JSON
- * 3. Vérifier email/password
- * 4. Récupérer utilisateur
- * 5. Vérifier password (thread pool)
- * 6. Générer tokens JWT
- * 7. Retourner réponse
+ * 1. Lire body, parser JSON
+ * 2. Verifier email/password (bcrypt async)
+ * 3. Construire les claims (additional_claims pour ABAC)
+ * 4. Generer access_token + refresh_token (JwtService produit le jti UUID v4)
+ * 5. Enregistrer refresh_jti dans l'allowlist (TokenTrackingService)
+ * 6. Selon token_delivery, poser les Set-Cookie + retourner body
  */
 seastar::future<std::unique_ptr<seastar::http::reply>>
 LoginHandler::handle(const seastar::sstring&,
                      std::unique_ptr<seastar::http::request> req,
                      std::unique_ptr<seastar::http::reply> rep)
 {
+    using sea::domain::security::TokenDelivery;
+    namespace cookie_helper = sea::http::utils;
+
     try {
-        // Lecture body HTTP
+        // ─── 1. Lecture body ────────────────────────────────────
         const std::string reqbody =
             co_await sea::http::utils::read_request_body(*req);
 
-        // Parsing JSON
         const auto body = json::parse(reqbody);
 
-        // Validation input
         if (!body.contains("email") || !body.contains("password")) {
             rep->set_status(seastar::http::reply::status_type::bad_request);
             rep->write_body("application/json",
@@ -57,22 +70,21 @@ LoginHandler::handle(const seastar::sstring&,
             co_return std::move(rep);
         }
 
-        const std::string email = body["email"].get<std::string>();
+        const std::string email    = body["email"].get<std::string>();
         const std::string password = body["password"].get<std::string>();
 
-        // Recherche utilisateur
+        // ─── 2. Recherche utilisateur ───────────────────────────
         const auto user_record =
             co_await crud_engine_->find_one_by_field("User", "email", email);
 
         if (!user_record.has_value()) {
-            // volontairement vague (sécurité)
             rep->set_status(seastar::http::reply::status_type::unauthorized);
             rep->write_body("application/json",
                             json{{"error", "Identifiants invalides"}}.dump());
             co_return std::move(rep);
         }
 
-        // Récupération hash password
+        // Recuperation hash password
         const auto pwd_it = user_record->find("password");
         if (pwd_it == user_record->end()) {
             rep->set_status(seastar::http::reply::status_type::unauthorized);
@@ -91,13 +103,7 @@ LoginHandler::handle(const seastar::sstring&,
             co_return std::move(rep);
         }
 
-        /**
-         * Vérification password hors reactor
-         *
-         * Très important :
-         * - bcrypt / argon2 = CPU heavy
-         * - ne doit JAMAIS bloquer Seastar
-         */
+        // ─── 3. Verification password (hors reactor) ────────────
         const bool password_ok =
             co_await blocking_executor_->submit(
                 [auth_service = auth_service_,
@@ -114,7 +120,7 @@ LoginHandler::handle(const seastar::sstring&,
             co_return std::move(rep);
         }
 
-        // ID utilisateur
+        // ─── 4. Extraction user_id, role ────────────────────────
         const auto id_it = user_record->find("id");
         if (id_it == user_record->end()) {
             rep->set_status(seastar::http::reply::status_type::internal_server_error);
@@ -133,29 +139,16 @@ LoginHandler::handle(const seastar::sstring&,
             co_return std::move(rep);
         }
 
-        //  Role (fallback user)
         std::string role = "user";
-
-        const auto role_it = user_record->find("role");
-        if (role_it != user_record->end()) {
+        if (const auto role_it = user_record->find("role"); role_it != user_record->end()) {
             const auto role_value =
                 sea::http::utils::dynamic_value_to_string(role_it->second);
-
             if (role_value.has_value() && !role_value->empty()) {
                 role = *role_value;
             }
         }
 
-        // Construction des claims custom à inclure dans le JWT.
-        //
-        // Ces claims sont nécessaires pour l'autorisation ABAC.
-        // Exemple : department_id permet à AuthorizationMiddleware de vérifier
-        // que l'utilisateur peut accéder aux ressources de son département.
-        //
-        // Liste des champs systématiquement exclus du JWT :
-        // - id, email, role : déjà gérés via les claims standards
-        // - password : NE JAMAIS mettre dans un JWT
-        // - les champs system (created_at, updated_at, deleted_at, etc.)
+        // ─── 5. Additional claims pour ABAC ─────────────────────
         std::unordered_map<std::string, std::string> additional_claims;
 
         static const std::set<std::string> excluded_fields = {
@@ -164,67 +157,121 @@ LoginHandler::handle(const seastar::sstring&,
         };
 
         for (const auto& [field_name, field_value] : *user_record) {
-            if (excluded_fields.count(field_name)) {
-                continue;
-            }
-
+            if (excluded_fields.count(field_name)) continue;
             const auto value_str =
                 sea::http::utils::dynamic_value_to_string(field_value);
-
             if (value_str.has_value() && !value_str->empty()) {
                 additional_claims[field_name] = *value_str;
             }
         }
 
-        //  Génération JWT (async, hors reactor — libcrypto est CPU-bound)
+        // ─── 6. Generation des tokens ───────────────────────────
         const auto access_token =
             co_await auth_service_->generate_access_token_async(
-                *user_id,
-                email,
-                role,
-                additional_claims,
-                *blocking_executor_
+                *user_id, email, role, additional_claims, *blocking_executor_
                 );
 
         const auto refresh_token =
             co_await auth_service_->generate_refresh_token_async(
-                *user_id,
-                *blocking_executor_
+                *user_id, *blocking_executor_
                 );
 
-        /**
-         *  Nettoyage user
-         *
-         * Important : ne jamais renvoyer le password
-         */
-        json user_json =
-            json::parse(sea::http::utils::record_to_json(*user_record));
+        // ─── 7. Enregistrement du refresh dans l'allowlist ──────
+        // Extraction du jti depuis le refresh token genere (le JwtService
+        // a genere un UUID v4 si on n'a pas fourni de jti aux params)
+        std::string refresh_jti;
+        {
+            using namespace sea::infrastructure::security;
+            const auto verify_params = VerifyTokenParams{
+                .token           = refresh_token,
+                .secret          = auth_service_->config().jwt_secret(),
+                .expected_issuer = auth_service_->issuer(),
+                .expected_type   = TokenType::Refresh
+            };
+            const auto claims = JwtService::verify_token(verify_params);
+            if (claims.has_value()) {
+                refresh_jti = claims->jti;
+            }
+        }
 
+        if (token_tracking_ && !refresh_jti.empty()) {
+            // Capture device_info et IP pour audit
+            std::string device_info;
+            std::string ip_address;
+            if (const auto ua_it = req->_headers.find("User-Agent");
+                ua_it != req->_headers.end()) {
+                device_info = std::string(ua_it->second.data(), ua_it->second.size());
+            }
+            if (const auto fwd_it = req->_headers.find("X-Forwarded-For");
+                fwd_it != req->_headers.end()) {
+                ip_address = std::string(fwd_it->second.data(), fwd_it->second.size());
+            }
+
+            const auto now = std::chrono::system_clock::now();
+            co_await token_tracking_->register_refresh(
+                refresh_jti,
+                *user_id,
+                now,
+                now + refresh_token_ttl_,
+                device_info,
+                ip_address
+                );
+        }
+
+        // ─── 8. Construction de la reponse ──────────────────────
+        json user_json = json::parse(sea::http::utils::record_to_json(*user_record));
         user_json.erase("password");
 
+        const bool deliver_body =
+            (token_delivery_ == TokenDelivery::Body) ||
+            (token_delivery_ == TokenDelivery::Both);
+        const bool deliver_cookie =
+            (token_delivery_ == TokenDelivery::Cookie) ||
+            (token_delivery_ == TokenDelivery::Both);
+
+        // Body JSON : tokens inclus si Body ou Both
+        json response_body;
+        response_body["user"]       = user_json;
+        response_body["token_type"] = "Bearer";
+
+        if (deliver_body) {
+            response_body["access_token"]  = access_token;
+            response_body["refresh_token"] = refresh_token;
+        }
+
+        // Set-Cookie : si Cookie ou Both
+        if (deliver_cookie) {
+            const auto access_cookie = cookie_helper::build_access_cookie(
+                cookie_config_, access_token, access_token_ttl_
+                );
+            const auto refresh_cookie = cookie_helper::build_refresh_cookie(
+                cookie_config_, refresh_token, refresh_token_ttl_
+                );
+
+            // Seastar : on peut ajouter plusieurs Set-Cookie via _headers
+            // (chaine ou via insertion multiple selon l'API).
+            // Le pattern courant : on ajoute deux headers Set-Cookie.
+            // Si la map ne supporte qu'une valeur par cle, on les
+            // concatene avec une virgule (compatible HTTP/1.1 RFC 7230).
+            //
+            // Note Seastar : req->_headers est un std::unordered_map donc
+            // pas de doublons. On utilise add_header() si dispo,
+            // sinon concatenation avec "\r\nSet-Cookie: " (raw header).
+            rep->add_header("Set-Cookie", access_cookie);
+            rep->add_header("Set-Cookie", refresh_cookie);
+        }
+
         rep->set_status(seastar::http::reply::status_type::ok);
-        rep->write_body("application/json",
-                        json{
-                            {"access_token", access_token},
-                            {"refresh_token", refresh_token},
-                            {"token_type", "Bearer"},
-                            {"user", user_json}
-                        }.dump()
-                        );
+        rep->write_body("application/json", response_body.dump());
 
         co_return std::move(rep);
 
     } catch (...) {
-        /**
-         *️ Important en prod :
-         * ne pas exposer les erreurs internes
-         */
         rep->set_status(seastar::http::reply::status_type::bad_request);
         rep->write_body("application/json",
                         json{{"error", "Requete invalide"}}.dump());
-
         co_return std::move(rep);
     }
 }
 
-} // namespace
+} // namespace sea::http::handlers::auth

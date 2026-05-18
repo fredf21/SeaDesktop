@@ -13,8 +13,12 @@
 #include <utility>
 #include "mysql_schema_generator.h"
 #include "persistence/mysql/schema_differ.h"
+#include "persistence/mysql/sea_files_table.h"
+#include "spdlog/spdlog.h"
+#include <seastar/util/log.hh>
 
 namespace sea::infrastructure::persistence::mysql {
+//static seastar::logger sea_log("sea_backend");
 
 namespace {
 
@@ -58,8 +62,13 @@ MysqlBootstrapper::MysqlBootstrapper(
     , _pool(pool)
     , _executor(std::move(executor))
 {
-}
 
+}
+/*    error,
+    warn,
+    info,
+    debug,
+    trace,*/
 // ─────────────────────────────────────────────────────────────
 // ensure_database_exists
 //
@@ -71,7 +80,10 @@ seastar::future<bool>
 MysqlBootstrapper::ensure_database_exists()
 {
     if (!_config.migrations.create_database_if_missing) {
-        std::cerr << "[BOOTSTRAP] create_database_if_missing=false, skip\n";
+        spdlog::get("sea.persistence")->info(
+            "create_database_if_missing=false, skip"
+            );
+
         co_return true;
     }
 
@@ -85,8 +97,9 @@ MysqlBootstrapper::ensure_database_exists()
     std::ostringstream url;
     url << "tcp://" << host << ":" << port;
     const std::string mysql_url = url.str();
-
-    std::cerr << "[BOOTSTRAP] Checking database '" << dbname << "' on " << mysql_url << "\n";
+    spdlog::get("sea.persistence")->info(
+        "Checking database '{}' on {}", dbname, mysql_url
+        );
 
     const bool ok = co_await _executor->submit(
         [mysql_url, user, pass, dbname, dry_run]() -> bool {
@@ -112,7 +125,10 @@ MysqlBootstrapper::ensure_database_exists()
                 }
 
                 if (exists) {
-                    std::cerr << "[BOOTSTRAP] Database '" << dbname << "' already exists\n";
+                    spdlog::get("sea.persistence")->info(
+                        "Database '{}' already exists", dbname
+                        );
+
                     return true;
                 }
 
@@ -121,26 +137,70 @@ MysqlBootstrapper::ensure_database_exists()
                     MysqlSchemaGenerator::generate_create_database_sql(dbname);
 
                 if (dry_run) {
-                    std::cerr << "[BOOTSTRAP][DRY RUN] " << sql << "\n";
+                    spdlog::get("sea.persistence")->warn(
+                        "[DRY RUN] {}", sql
+                        );
                     return true;
                 }
 
-                std::cerr << "[BOOTSTRAP] Creating database: " << dbname << "\n";
+                spdlog::get("sea.persistence")->info(
+                    "Creating database: {}", dbname
+                    );
                 auto stmt = std::unique_ptr<sql::Statement>(conn->createStatement());
                 stmt->execute(sql);
-                std::cerr << "[BOOTSTRAP] Database '" << dbname << "' created\n";
+                spdlog::get("sea.persistence")->info(
+                    "Database '{}' created", dbname
+                    );
 
                 return true;
             } catch (const sql::SQLException& e) {
-                std::cerr << "[BOOTSTRAP] CREATE DATABASE error: " << e.what() << "\n";
+                spdlog::get("sea.persistence")->error(
+                    "CREATE DATABASE error: {}", e.what()
+                    );
                 return false;
             } catch (const std::exception& e) {
-                std::cerr << "[BOOTSTRAP] Connection error: " << e.what() << "\n";
+                spdlog::get("sea.persistence")->error(
+                    "Connection error: {}", e.what()
+                    );
                 return false;
             }
         }
         );
 
+    co_return ok;
+}
+
+// ─────────────────────────────────────────────────────────────
+// ensure_sea_files_table
+//
+// Crée la table système sea_files si elle n'existe pas. Doit être
+// appelée APRÈS ensure_database_exists() (la DB doit exister et
+// le pool doit être démarré) et AVANT compute_and_apply_diff()
+// (les entités peuvent y référer via des FK).
+//
+// Idempotent grâce au IF NOT EXISTS.
+// ─────────────────────────────────────────────────────────────
+seastar::future<bool>
+MysqlBootstrapper::ensure_sea_files_table()
+{
+    auto log = spdlog::get("sea.persistence");
+
+    const auto sql = SeaFilesTable::generate_create_table_sql();
+    log->info("Ensuring system table `{}` exists",
+              std::string(SeaFilesTable::TABLE_NAME));
+
+    if (_config.migrations.dry_run) {
+        log->info("[dry-run] {}", sql);
+        co_return true;
+    }
+
+    // Réutilise execute_sql() : passe par le pool comme tout
+    // autre statement DDL. Idempotent côté SQL (IF NOT EXISTS).
+    const bool ok = co_await execute_sql(sql);
+    if (!ok) {
+        log->error("Failed to create system table `{}`",
+                   std::string(SeaFilesTable::TABLE_NAME));
+    }
     co_return ok;
 }
 
@@ -153,7 +213,9 @@ MysqlBootstrapper::execute_sql(const std::string& sql)
     const bool dry_run = _config.migrations.dry_run;
 
     if (dry_run) {
-        std::cerr << "[BOOTSTRAP][DRY RUN] " << sql << "\n";
+        spdlog::get("sea.persistence")->warn(
+            "[DRY RUN] {}", sql
+            );
         co_return true;
     }
 
@@ -167,8 +229,10 @@ MysqlBootstrapper::execute_sql(const std::string& sql)
                 stmt->execute(sql);
                 return true;
             } catch (const sql::SQLException& e) {
-                std::cerr << "[BOOTSTRAP] SQL error: " << e.what() << "\n";
-                std::cerr << "[BOOTSTRAP] SQL was: " << sql << "\n";
+                spdlog::get("sea.persistence")->error(
+                    "SQL error: {} (SQL was: {})", e.what(), sql
+                    );
+
                 return false;
             }
         }
@@ -203,7 +267,9 @@ MysqlBootstrapper::execute_sql_without_database(const std::string& sql)
                 stmt->execute(sql);
                 return true;
             } catch (const sql::SQLException& e) {
-                std::cerr << "[BOOTSTRAP] SQL error (no db): " << e.what() << "\n";
+                spdlog::get("sea.persistence")->error(
+                    "SQL error (no db): {}", e.what()
+                    );
                 return false;
             }
         }
@@ -228,12 +294,15 @@ MysqlBootstrapper::compute_and_apply_diff(
     const SchemaSnapshot& snapshot,
     BootstrapResult& result)
 {
-    // ── 1. Tri topologique (Phase A) ────────────────────────────
+    // ── 1. Tri topologique ────────────────────────────
     const auto sorted_entities = MysqlSchemaGenerator::topological_sort(_schema.entities);
 
-    std::cerr << "[BOOTSTRAP] Topological order:\n";
-    for (const auto* entity : sorted_entities) {
-        std::cerr << "  - " << entity->name << "\n";
+    auto log = spdlog::get("sea.persistence");
+    if (log->should_log(spdlog::level::debug)) {
+        log->debug("Topological order:");
+        for (const auto& entity : sorted_entities) {  // adapte au nom reel
+            log->debug("  - {}", entity->name);
+        }
     }
 
     const auto mode = _config.migrations.mode;
@@ -244,8 +313,10 @@ MysqlBootstrapper::compute_and_apply_diff(
             !entity->table_name.empty() ? entity->table_name : entity->name;
 
         if (!snapshot.has_table(table_name)) {
-            // Table manquante : CREATE TABLE (Phase A)
-            std::cerr << "[BOOTSTRAP] CREATE TABLE: " << table_name << "\n";
+            // Table manquante : CREATE TABLE
+            spdlog::get("sea.persistence")->info(
+                "CREATE TABLE: {}", table_name
+                );
             const auto sql = MysqlSchemaGenerator::generate_create_table_sql(*entity);
             const bool ok = co_await execute_sql(sql);
             if (ok) {
@@ -264,7 +335,9 @@ MysqlBootstrapper::compute_and_apply_diff(
         const auto rename_diffs = SchemaDiffer::compute_renames(*entity, *table_info);
 
         for (const auto& diff : rename_diffs) {
-            std::cerr << "[BOOTSTRAP] " << table_name << ": " << diff.description << "\n";
+            spdlog::get("sea.persistence")->info(
+                "{}: {}", table_name, diff.description
+                );
 
             // Decision selon le mode et le type de rename :
             // - Score = 100 (annotation explicite) : applique en modified+aggressive
@@ -287,7 +360,9 @@ MysqlBootstrapper::compute_and_apply_diff(
             }
 
             if (!should_apply) {
-                std::cerr << "[BOOTSTRAP]   SKIP: " << skip_reason << "\n";
+                spdlog::get("sea.persistence")->warn(
+                    "  SKIP: {}", skip_reason
+                    );
                 result.warnings.push_back(diff.description + " skipped: " + skip_reason);
                 continue;
             }
@@ -317,16 +392,17 @@ MysqlBootstrapper::compute_and_apply_diff(
         // Pour V1 : on utilise le snapshot original mais on saute les fields/colonnes
         // deja gerees par les renames. Plus simple et evite un round-trip MySQL.
 
-        // ── 2a. Compute column diffs (Phase A + B.1) ────────────
+        // ── 2a. Compute column diffs ────────────
         const auto column_diffs = SchemaDiffer::compute_column_diffs(*entity, *table_info);
 
         for (const auto& diff : column_diffs) {
-            // ✨ Skip si le field a ete renomme (deja gere)
+            // Skip si le field a ete renomme (deja gere)
             if (SchemaDiffer::field_was_renamed(diff.column_name, rename_diffs)) {
                 continue;
             }
-
-            std::cerr << "[BOOTSTRAP] " << table_name << ": " << diff.description << "\n";
+            spdlog::get("sea.persistence")->info(
+                "{}: {}", table_name, diff.description
+                );
 
             switch (diff.kind) {
             case ColumnDiffKind::Added: {
@@ -363,7 +439,9 @@ MysqlBootstrapper::compute_and_apply_diff(
                 }
 
                 if (!should_apply) {
-                    std::cerr << "[BOOTSTRAP]   SKIP: " << skip_reason << "\n";
+                    spdlog::get("sea.persistence")->warn(
+                        "  SKIP: {}", skip_reason
+                        );
                     result.warnings.push_back(diff.description + " skipped: " + skip_reason);
                     break;
                 }
@@ -394,21 +472,22 @@ MysqlBootstrapper::compute_and_apply_diff(
             }
         }
 
-        // ── 2b. Compute index diffs (Phase B.2) ─────────────────
+        // ── 2b. Compute index diffs ─────────────────
         const auto index_diffs = SchemaDiffer::compute_index_diffs(*entity, *table_info);
 
         for (const auto& diff : index_diffs) {
-            // ✨ Skip si le field a ete renomme (l'index sera recalcule au prochain boot)
+            // Skip si le field a ete renomme (l'index sera recalcule au prochain boot)
             if (SchemaDiffer::field_was_renamed(diff.column_name, rename_diffs)) {
                 continue;
             }
-            // ✨ Skip si l'index pointe vers une colonne deja renommee
+            // Skip si l'index pointe vers une colonne deja renommee
             if (SchemaDiffer::column_was_renamed_from(diff.column_name, rename_diffs)) {
                 continue;
             }
 
-            std::cerr << "[BOOTSTRAP] " << table_name << ": " << diff.description << "\n";
-
+            spdlog::get("sea.persistence")->info(
+                "{}: {}", table_name, diff.description
+                );
             bool should_apply = false;
             std::string skip_reason;
 
@@ -425,7 +504,9 @@ MysqlBootstrapper::compute_and_apply_diff(
             }
 
             if (!should_apply) {
-                std::cerr << "[BOOTSTRAP]   SKIP: " << skip_reason << "\n";
+                spdlog::get("sea.persistence")->warn(
+                    "  SKIP: {}", skip_reason
+                    );
                 result.warnings.push_back(diff.description + " skipped: " + skip_reason);
                 continue;
             }
@@ -462,7 +543,7 @@ MysqlBootstrapper::compute_and_apply_diff(
         }
     }
 
-    // ── 3. Tables pivot M2M (Phase A, code existant inchange) ──
+    // ── 3. Tables pivot M2M  ──
     std::set<std::string> created_pivots;
 
     for (const auto& entity : _schema.entities) {
@@ -474,7 +555,9 @@ MysqlBootstrapper::compute_and_apply_diff(
 
             if (snapshot.has_table(relation.pivot_table)) continue;
 
-            std::cerr << "[BOOTSTRAP] CREATE PIVOT TABLE: " << relation.pivot_table << "\n";
+            spdlog::get("sea.persistence")->info(
+                "CREATE PIVOT TABLE: {}", relation.pivot_table
+                );
 
             const auto sql = MysqlSchemaGenerator::generate_pivot_table_sql(
                 relation.pivot_table,
@@ -511,15 +594,17 @@ MysqlBootstrapper::bootstrap()
     BootstrapResult result;
 
     if (!_config.migrations.enabled) {
-        std::cerr << "[BOOTSTRAP] migrations.enabled=false, skip\n";
+        spdlog::get("sea.persistence")->info(
+            "migrations.enabled=false, skip"
+            );
         result.success = true;
         co_return result;
     }
+    auto persist_log = spdlog::get("sea.persistence");
+    persist_log->info("=== Starting bootstrap ===");
+    persist_log->info("Mode: {}", to_string(_config.migrations.mode));
+    persist_log->info("Dry run: {}", _config.migrations.dry_run ? "YES" : "no");
 
-    std::cerr << "[BOOTSTRAP] ─── Starting bootstrap ───\n";
-    std::cerr << "[BOOTSTRAP] Mode: " << to_string(_config.migrations.mode) << "\n";
-    std::cerr << "[BOOTSTRAP] Dry run: "
-              << (_config.migrations.dry_run ? "YES" : "no") << "\n";
 
     // ── 1. Ensure database exists (avant le pool) ──────────────
     const bool db_ok = co_await ensure_database_exists();
@@ -529,57 +614,92 @@ MysqlBootstrapper::bootstrap()
         co_return result;
     }
 
+    // ── 1bis. Ensure system table sea_files exists (conditionnel) ─
+    // Crée la table uniquement si le schema utilise au moins un champ
+    // File. Sinon on skip pour eviter de polluer la DB avec une table
+    // inutile.
+    //
+    // Doit être créée AVANT l'introspection pour qu'elle apparaisse
+    // dans le snapshot (sinon le SchemaDiffer la verrait comme une
+    // table orpheline en mode Aggressive). Et AVANT les tables
+    // d'entités car celles-ci peuvent y référer via des FK.
+    if (_schema.has_file_fields()) {
+        const bool sea_files_ok = co_await ensure_sea_files_table();
+        if (!sea_files_ok) {
+            result.errors.push_back("Failed to ensure system table sea_files exists");
+            result.success = false;
+            co_return result;
+        }
+    } else {
+        spdlog::get("sea.persistence")->info(
+            "MysqlBootstrapper: schema has no File fields, skipping sea_files table creation");
+    }
+
     // ── 2. Introspect (le pool est deja demarre a ce stade) ────
     MysqlIntrospector introspector(_pool, _executor);
     const auto snapshot = co_await introspector.snapshot(_config.database_name);
 
-    std::cerr << "[BOOTSTRAP] Current schema: "
-              << snapshot.tables.size() << " table(s) in '"
-              << _config.database_name << "'\n";
-    for (const auto& [name, table] : snapshot.tables) {
-        std::cerr << "  - " << name << " (" << table.columns.size() << " cols)\n";
+    persist_log->info(
+        "Current schema: {} table(s) in '{}'",
+        snapshot.tables.size(), _config.database_name
+        );
+    if (persist_log->should_log(spdlog::level::debug)) {
+        for (const auto& [name, table] : snapshot.tables) {
+            persist_log->debug("  - {} ({} cols)", name, table.columns.size());
+        }
     }
+
 
     // ── 3. Compute diff and apply ──────────────────────────────
     co_await compute_and_apply_diff(snapshot, result);
 
     // ── 4. Resume ──────────────────────────────────────────────
-    std::cerr << "[BOOTSTRAP] ─── Summary ───\n";
-    std::cerr << "[BOOTSTRAP] Tables created: " << result.tables_created.size() << "\n";
+    persist_log->info("=== Summary ===");
+
+    persist_log->info("Tables created: {}", result.tables_created.size());
     for (const auto& t : result.tables_created) {
-        std::cerr << "  + " << t << "\n";
+        persist_log->info("  + {}", t);
     }
-    std::cerr << "[BOOTSTRAP] Columns added: " << result.columns_added.size() << "\n";
+
+    persist_log->info("Columns added: {}", result.columns_added.size());
     for (const auto& c : result.columns_added) {
-        std::cerr << "  + " << c << "\n";
+        persist_log->info("  + {}", c);
     }
-    std::cerr << "[BOOTSTRAP] Columns renamed: " << result.columns_renamed.size() << "\n";
+
+    persist_log->info("Columns renamed: {}", result.columns_renamed.size());
     for (const auto& r : result.columns_renamed) {
-        std::cerr << "  ↻ " << r << "\n";
+        persist_log->info("  ~ {}", r);
     }
 
-    std::cerr << "[BOOTSTRAP] Columns modified: " << result.columns_modified.size() << "\n";
+    persist_log->info("Columns modified: {}", result.columns_modified.size());
     for (const auto& c : result.columns_modified) {
-        std::cerr << "  ~ " << c << "\n";
+        persist_log->info("  ~ {}", c);
     }
 
-    std::cerr << "[BOOTSTRAP] Indexes changed: " << result.indexes_changed.size() << "\n";
+    persist_log->info("Indexes changed: {}", result.indexes_changed.size());
     for (const auto& i : result.indexes_changed) {
-        std::cerr << "  ~ " << i << "\n";
+        persist_log->info("  ~ {}", i);
     }
-    std::cerr << "[BOOTSTRAP] Pivots created: " << result.pivots_created.size() << "\n";
+
+    persist_log->info("Pivots created: {}", result.pivots_created.size());
     for (const auto& p : result.pivots_created) {
-        std::cerr << "  + " << p << "\n";
+        persist_log->info("  + {}", p);
     }
-    std::cerr << "[BOOTSTRAP] Errors: " << result.errors.size() << "\n";
+
+    // Errors -> niveau error (different)
+    persist_log->info("Errors: {}", result.errors.size());
     for (const auto& e : result.errors) {
-        std::cerr << "  ! " << e << "\n";
+        persist_log->error("  ! {}", e);
     }
+
 
     result.success = result.errors.empty();
-    std::cerr << "[BOOTSTRAP] ─── "
-              << (result.success ? "SUCCESS" : "FAILED")
-              << " ───\n";
+    if (result.success) {
+        persist_log->info("=== SUCCESS ===");
+    } else {
+        persist_log->error("=== FAILED ===");
+    }
+
 
     co_return result;
 }

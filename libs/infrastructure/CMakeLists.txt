@@ -26,7 +26,6 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/Thalhammer/jwt-cpp.git
     GIT_TAG v0.7.0
 )
-
 FetchContent_MakeAvailable(jwt-cpp)
 
 add_library(sea_infrastructure STATIC
@@ -57,6 +56,11 @@ add_library(sea_infrastructure STATIC
     persistence/mysql/mysql_bootstrapper.h persistence/mysql/mysql_bootstrapper.cpp
     persistence/mysql/schema_differ.h persistence/mysql/schema_differ.cpp
     persistence/mysql/seed_orchestrator.h persistence/mysql/seed_orchestrator.cpp
+    storage/i_file_storage.h
+    storage/filesystem_storage.h storage/filesystem_storage.cpp
+    persistence/mysql/sea_files_table.h persistence/mysql/sea_files_table.cpp
+
+    file_repository/filerepository.h file_repository/filerepository.cpp
 )
 
 add_library(Sea::infrastructure ALIAS sea_infrastructure)
@@ -110,8 +114,10 @@ target_link_libraries(sea_infrastructure
         OpenSSL::Crypto
         ${MYSQLCPP_LIBRARY}
         Seastar::seastar
+        Sea::errors
         pthread
-
+    PRIVATE
+        spdlog::spdlog_header_only
 )
 
 target_compile_features(sea_infrastructure PUBLIC cxx_std_20)
