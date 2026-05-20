@@ -58,7 +58,7 @@ template <typename T>
         return node[key].as<T>();
     } catch (const YAML::Exception& e) {
         throw sea::sea_errors_handling::YamlParsingException(
-            std::string("[YAML PARSING EXCEPTION] Valeur invalide pour '") + key + "': " + e.what()
+            std::string("[YAML PARSING EXCEPTION] Invalid value for '") + key + "': " + e.what()
             );
     }
 }
@@ -79,7 +79,7 @@ parse_string_list(const YAML::Node& node, const char* key, const std::string& co
                 out.push_back(item.as<std::string>());
             } catch (const YAML::Exception& e) {
                 throw sea::sea_errors_handling::YamlParsingException(
-                    std::string("[YAML PARSING EXCEPTION] Element invalide dans '") + key + "' (" + context + "): " + e.what()
+                    std::string("[YAML PARSING EXCEPTION] Invalid Element in '") + key + "' (" + context + "): " + e.what()
                     );
             }
         }
@@ -89,12 +89,12 @@ parse_string_list(const YAML::Node& node, const char* key, const std::string& co
             out.push_back(value.as<std::string>());
         } catch (const YAML::Exception& e) {
             throw sea::sea_errors_handling::YamlParsingException(
-                std::string("[YAML PARSING EXCEPTION] Valeur invalide pour '") + key + "' (" + context + "): " + e.what()
+                std::string("[YAML PARSING EXCEPTION] Invalid value for '") + key + "' (" + context + "): " + e.what()
                 );
         }
     } else {
         throw sea::sea_errors_handling::YamlParsingException(
-            std::string("[YAML PARSING EXCEPTION] '") + key + "' doit etre une liste dans " + context + "."
+            std::string("[YAML PARSING EXCEPTION] '") + key + "' must be a list in " + context + "."
             );
     }
 
@@ -113,7 +113,7 @@ std::string YamlSchemaParser::require_string(const YAML::Node& node,
                                              const char* context) const {
     if (!has_key(node, key)) {
         throw sea::sea_errors_handling::YamlParsingException(
-            std::string("[YAML PARSING EXCEPTION] Champ obligatoire manquant '") + key + "' dans " + context
+            std::string("[YAML PARSING EXCEPTION] Missing mandatory field '") + key + "' dans " + context
             );
     }
 
@@ -121,7 +121,7 @@ std::string YamlSchemaParser::require_string(const YAML::Node& node,
         return node[key].as<std::string>();
     } catch (const YAML::Exception& e) {
         throw sea::sea_errors_handling::YamlParsingException(
-            std::string("[YAML PARSING EXCEPTION] Champ '") + key + "' invalide dans " + context + ": " + e.what()
+            std::string("[YAML PARSING EXCEPTION] field '") + key + "' invalid in " + context + ": " + e.what()
             );
     }
 }
@@ -138,7 +138,7 @@ std::string YamlSchemaParser::resolve_env(const std::string &value) const
 
         if (env_value == nullptr) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] Variable d'environnement manquante: " + var_name
+                "[YAML PARSING EXCEPTION] Missing environment variable: " + var_name
                 );
         }
 
@@ -154,7 +154,7 @@ sea::domain::Project YamlSchemaParser::parse_project_file(const std::string& fil
         root = YAML::LoadFile(file_path);
     } catch (const YAML::Exception& e) {
         throw sea::sea_errors_handling::YamlParsingException(
-            "[YAML PARSING EXCEPTION] Impossible de charger le fichier YAML '" + file_path + "': " + e.what()
+            "[YAML PARSING EXCEPTION] Can't load Yaml file '" + file_path + "': " + e.what()
             );
     }
 
@@ -168,7 +168,7 @@ sea::domain::Service YamlSchemaParser::parse_service_file(const std::string& fil
         root = YAML::LoadFile(file_path);
     } catch (const YAML::Exception& e) {
         throw sea::sea_errors_handling::YamlParsingException(
-            "[YAML PARSING EXCEPTION] Impossible de charger le fichier YAML '" + file_path + "': " + e.what()
+            "[YAML PARSING EXCEPTION]  Can't load Yaml file '" + file_path + "': " + e.what()
             );
     }
 
@@ -177,7 +177,7 @@ sea::domain::Service YamlSchemaParser::parse_service_file(const std::string& fil
 
 sea::domain::Project YamlSchemaParser::parse_project_node(const YAML::Node& root) const {
     if (!root || !root.IsMap()) {
-        throw sea::sea_errors_handling::YamlParsingException("[YAML PARSING EXCEPTION] Le document YAML racine doit être un objet.");
+        throw sea::sea_errors_handling::YamlParsingException("[YAML PARSING EXCEPTION] The root YAML document must be an object.");
     }
 
     sea::domain::Project project{};
@@ -188,7 +188,7 @@ sea::domain::Project YamlSchemaParser::parse_project_node(const YAML::Node& root
         const YAML::Node project_node = root["project"];
 
         if (!project_node.IsMap()) {
-            throw sea::sea_errors_handling::YamlParsingException("[YAML PARSING EXCEPTION] 'project' doit être un objet.");
+            throw sea::sea_errors_handling::YamlParsingException("[YAML PARSING EXCEPTION] 'project' must be an object.");
         }
 
         project.name = require_string(project_node, "name", "project");
@@ -198,12 +198,12 @@ sea::domain::Project YamlSchemaParser::parse_project_node(const YAML::Node& root
 
     // services:
     if (!has_key(root, "services")) {
-        throw sea::sea_errors_handling::YamlParsingException("[YAML PARSING EXCEPTION] Le champ 'services' est obligatoire à la racine.");
+        throw sea::sea_errors_handling::YamlParsingException("[YAML PARSING EXCEPTION] The 'services' field is required at the root.");
     }
 
     const YAML::Node services_node = root["services"];
     if (!services_node.IsSequence()) {
-        throw sea::sea_errors_handling::YamlParsingException("[YAML PARSING EXCEPTION] 'services' doit être une liste.");
+        throw sea::sea_errors_handling::YamlParsingException("[YAML PARSING EXCEPTION] 'services' must be a list.");
     }
 
     for (const auto& service_node : services_node) {
@@ -215,7 +215,7 @@ sea::domain::Project YamlSchemaParser::parse_project_node(const YAML::Node& root
 
 sea::domain::Service YamlSchemaParser::parse_service_node(const YAML::Node& node) const {
     if (!node || !node.IsMap()) {
-        throw sea::sea_errors_handling::YamlParsingException("[YAML PARSING EXCEPTION] Un service YAML doit être un objet.");
+        throw sea::sea_errors_handling::YamlParsingException("[YAML PARSING EXCEPTION] A YAML service an object.");
     }
 
     sea::domain::Service service{};
@@ -235,7 +235,7 @@ sea::domain::Service YamlSchemaParser::parse_service_node(const YAML::Node& node
         const YAML::Node db_node = node["database"];
         if (!db_node.IsMap()) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] 'database' doit être un objet dans le service '" + service.name + "'."
+                "[YAML PARSING EXCEPTION] 'database' field must be an object in service '" + service.name + "'."
                 );
         }
 
@@ -250,7 +250,7 @@ sea::domain::Service YamlSchemaParser::parse_service_node(const YAML::Node& node
         const YAML::Node storage_node = node["storage"];
         if (!storage_node.IsMap()) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] 'storage' doit etre un objet dans le service '" +
+                "[YAML PARSING EXCEPTION] 'storage' field must be an object in service '" +
                 service.name + "'.");
         }
         service.storage = parse_storage_config_node(storage_node);
@@ -263,7 +263,7 @@ sea::domain::Service YamlSchemaParser::parse_service_node(const YAML::Node& node
         const YAML::Node security_node = node["security"];
         if(!security_node.IsMap()){
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] 'security' doit être un objet dans le service '" + service.name + "'."
+                "[YAML PARSING EXCEPTION] 'security' field must be an object in service  '" + service.name + "'."
                 );
         }
         service.security = parse_security_node(security_node);
@@ -324,7 +324,7 @@ sea::domain::Service YamlSchemaParser::parse_service_node(const YAML::Node& node
 
         if (!entities_node.IsSequence()) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] 'entities' doit être une liste dans le service '" + service.name + "'."
+                "[YAML PARSING EXCEPTION] 'entities' field must be a list in '" + service.name + "' service."
                 );
         }
 
@@ -340,7 +340,7 @@ sea::domain::Service YamlSchemaParser::parse_service_node(const YAML::Node& node
 
 sea::domain::Entity YamlSchemaParser::parse_entity_node(const YAML::Node& node, const sea::domain::access_control::AccessControlConfig& global_config) const {
     if (!node || !node.IsMap()) {
-        throw sea::sea_errors_handling::YamlParsingException("[YAML PARSING EXCEPTION] Une entité YAML doit être un objet.");
+        throw sea::sea_errors_handling::YamlParsingException("[YAML PARSING EXCEPTION] A YAML entity must be an object.");
     }
 
     sea::domain::Entity entity{};
@@ -355,7 +355,7 @@ sea::domain::Entity YamlSchemaParser::parse_entity_node(const YAML::Node& node, 
         const YAML::Node options_node = node["options"];
         if (!options_node.IsMap()) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] 'options' doit être un objet dans l'entité '" + entity.name + "'."
+                "[YAML PARSING EXCEPTION] 'options' field must be an object in '" + entity.name + "' entity."
                 );
         }
 
@@ -379,7 +379,7 @@ sea::domain::Entity YamlSchemaParser::parse_entity_node(const YAML::Node& node, 
 
         if (!fields_node.IsSequence()) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] 'fields' doit être une liste dans l'entité '" + entity.name + "'."
+                "[YAML PARSING EXCEPTION] 'fields' must be a list in '" + entity.name + "' entity."
                 );
         }
 
@@ -394,7 +394,7 @@ sea::domain::Entity YamlSchemaParser::parse_entity_node(const YAML::Node& node, 
 
         if (!relations_node.IsSequence()) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] 'relations' doit être une liste dans l'entité '" + entity.name + "'."
+                "[YAML PARSING EXCEPTION] 'relations' must be a list in '" + entity.name + "' entity."
                 );
         }
 
@@ -407,7 +407,7 @@ sea::domain::Entity YamlSchemaParser::parse_entity_node(const YAML::Node& node, 
         const YAML::Node seeds_node = node["seeds"];
         if (!seeds_node.IsSequence()) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] 'seeds' doit être une liste dans l'entité '" + entity.name + "'."
+                "[YAML PARSING EXCEPTION] 'seeds' must be a list in '" + entity.name + "' entity."
                 );
         }
         for (const auto& seed_node : seeds_node) {
@@ -419,7 +419,7 @@ sea::domain::Entity YamlSchemaParser::parse_entity_node(const YAML::Node& node, 
         const YAML::Node pagination_node = node["pagination"];
         if (!pagination_node.IsMap()) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] 'pagination' doit etre un objet dans l'entite '" + entity.name + "'."
+                "[YAML PARSING EXCEPTION] 'pagination' must be a list in '" + entity.name + "' entity."
                 );
         }
 
@@ -434,7 +434,7 @@ sea::domain::Entity YamlSchemaParser::parse_entity_node(const YAML::Node& node, 
 
 sea::domain::Field YamlSchemaParser::parse_field_node(const YAML::Node& node) const {
     if (!node || !node.IsMap()) {
-        throw sea::sea_errors_handling::YamlParsingException("[YAML PARSING EXCEPTION] Un champ YAML doit être un objet.");
+        throw sea::sea_errors_handling::YamlParsingException("[YAML PARSING EXCEPTION] A YAML field must be an object.");
     }
 
     sea::domain::Field field{};
@@ -451,20 +451,20 @@ sea::domain::Field YamlSchemaParser::parse_field_node(const YAML::Node& node) co
     const std::string type_str = require_string(node, "type", "field");
     const auto field_type = sea::domain::field_type_from_string(type_str);
     if (!field_type.has_value()) {
-        throw sea::sea_errors_handling::YamlParsingException("[YAML PARSING EXCEPTION] Type de champ inconnu: '" + type_str + "'.");
+        throw sea::sea_errors_handling::YamlParsingException("[YAML PARSING EXCEPTION] Unknown field type: '" + type_str + "'.");
     }
     field.type = *field_type;
 
     if (field.type != domain::FieldType::Native && has_key(node, "native")) {
         throw sea::sea_errors_handling::YamlParsingException(
-            "[YAML PARSING EXCEPTION] Le noeud 'native' est autorisé uniquement avec type=native"
+            "[YAML PARSING EXCEPTION] The native node is allowed only with type=native."
             );
     }
 
     if (field.type == domain::FieldType::Native) {
         if(!has_key(node, "native"))
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] Le noeud 'native' est autorisé uniquement avec type=native"
+                "[YAML PARSING EXCEPTION] The native node is allowed only with type=native."
                 );
         const auto native_node = node["native"];
 
@@ -472,13 +472,13 @@ sea::domain::Field YamlSchemaParser::parse_field_node(const YAML::Node& node) co
         if (!has_key(native_node, "dialect")) {
             throw sea::sea_errors_handling::YamlParsingException(
                 "[YAML PARSING EXCEPTION] Le noeud native du champ '" + field.name +
-                "' doit contenir 'dialect'"
+                "' must contain 'dialect'"
                 );
         }
         if (!has_key(native_node, "type")) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] Le noeud native du champ '" + field.name +
-                "' doit contenir 'type'"
+                "[YAML PARSING EXCEPTION] The native node of the field '" + field.name +
+                "' must contain 'type'"
                 );
         }
         sea::domain::NativeDbType native_type;
@@ -509,7 +509,7 @@ sea::domain::Field YamlSchemaParser::parse_field_node(const YAML::Node& node) co
             field.max_length = node["max_length"].as<std::size_t>();
         } catch (const YAML::Exception& e) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] max_length invalide pour le champ '" + field.name + "': " + e.what()
+                "[YAML PARSING EXCEPTION] max_length invalid for the field '" + field.name + "': " + e.what()
                 );
         }
     }
@@ -524,7 +524,7 @@ sea::domain::Field YamlSchemaParser::parse_field_node(const YAML::Node& node) co
             }
         } catch (const YAML::Exception& e) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] min_value invalide pour le champ '" + field.name + "': " + e.what()
+                "[YAML PARSING EXCEPTION] min_value invalid for the field '" + field.name + "': " + e.what()
                 );
         }
     }
@@ -539,7 +539,7 @@ sea::domain::Field YamlSchemaParser::parse_field_node(const YAML::Node& node) co
             }
         } catch (const YAML::Exception& e) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] max_value invalide pour le champ '" + field.name + "': " + e.what()
+                "[YAML PARSING EXCEPTION] max_value invalid for the field '" + field.name + "': " + e.what()
                 );
         }
     }
@@ -576,17 +576,17 @@ sea::domain::Field YamlSchemaParser::parse_field_node(const YAML::Node& node) co
 
             case sea::domain::FieldType::Binary:
                 throw sea::sea_errors_handling::YamlParsingException(
-                    "[YAML PARSING EXCEPTION] Le champ '" + field.name + "' est de type Binary et ne peut pas avoir de valeur par défaut"
+                    "[YAML PARSING EXCEPTION] Le champ '" + field.name + "' is of type Binary and cannot have a default value."
                     );
 
             case sea::domain::FieldType::File:
                 throw sea::sea_errors_handling::YamlParsingException(
-                    "[YAML PARSING EXCEPTION] Le champ '" + field.name + "' est de type File et ne peut pas avoir de valeur par défaut (un fichier doit être uploadé explicitement)."
+                    "[YAML PARSING EXCEPTION] Le champ '" + field.name + "' is of type File and cannot have a default value; a file must be uploaded explicitly."
                     );
             }
         } catch (const YAML::Exception& e) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] Valeur par défaut invalide pour le champ '" + field.name + "': " + e.what()
+                "[YAML PARSING EXCEPTION] Invalid default value for field '" + field.name + "': " + e.what()
                 );
         }
     }
@@ -607,16 +607,17 @@ sea::domain::Field YamlSchemaParser::parse_field_node(const YAML::Node& node) co
     if (field.type == sea::domain::FieldType::File) {
         if (!has_file_block) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] Le champ '" + field.name +
-                "' est de type 'file' mais ne déclare pas le sous-bloc 'file:' (obligatoire pour configurer max_size, mime, extensions, storage_path, on_delete)."
+                "[YAML PARSING EXCEPTION] Field '" + field.name +
+                "' is of type 'file' but does not declare the 'file:' sub-block "
+                "(required to configure max_size, mime, extensions, storage_path, on_delete)."
                 );
         }
         field.file_config = parse_file_field_config_node(node["file"], field.name);
     } else if (has_file_block) {
         throw sea::sea_errors_handling::YamlParsingException(
-            "[YAML PARSING EXCEPTION] Le champ '" + field.name +
-            "' déclare un sous-bloc 'file:' mais n'est pas de type 'file' (type actuel: '" +
-            std::string(sea::domain::to_string(field.type)) + "')."
+            "[YAML PARSING EXCEPTION] Field '" + field.name +
+            "' declares a 'file:' sub-block but is not of type 'file' "
+            "(current type: '" + std::string(sea::domain::to_string(field.type)) + "')."
             );
     }
 
@@ -645,8 +646,8 @@ YamlSchemaParser::parse_file_field_config_node(const YAML::Node& node,
 {
     if (!node || !node.IsMap()) {
         throw sea::sea_errors_handling::YamlParsingException(
-            "[YAML PARSING EXCEPTION] Le sous-bloc 'file:' du champ '" + field_name +
-            "' doit être un objet (map)."
+            "[YAML PARSING EXCEPTION] The 'file:' sub-block of field '" + field_name +
+            "' must be an object (map)."
             );
     }
 
@@ -661,14 +662,14 @@ YamlSchemaParser::parse_file_field_config_node(const YAML::Node& node,
             const std::uint64_t parsed = parse_size(raw);
             if (parsed == 0) {
                 throw sea::sea_errors_handling::YamlParsingException(
-                    "[YAML PARSING EXCEPTION] max_size du champ '" + field_name +
-                    "' doit être > 0 (valeur reçue: '" + raw + "')."
+                    "[YAML PARSING EXCEPTION] max_size of field '" + field_name +
+                    "' must be > 0 (received value: '" + raw + "')."
                     );
             }
             cfg.max_size_bytes = static_cast<std::size_t>(parsed);
         } catch (const YAML::Exception& e) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] max_size invalide pour le champ '" + field_name +
+                "[YAML PARSING EXCEPTION] Invalid max_size for field '" + field_name +
                 "': " + e.what()
                 );
         }
@@ -685,9 +686,9 @@ YamlSchemaParser::parse_file_field_config_node(const YAML::Node& node,
         for (const auto& mime : cfg.allowed_mime_types) {
             if (mime.find('/') == std::string::npos) {
                 throw sea::sea_errors_handling::YamlParsingException(
-                    "[YAML PARSING EXCEPTION] MIME type invalide '" + mime +
-                    "' pour le champ '" + field_name +
-                    "' (format attendu: 'type/subtype', ex: 'image/png')."
+                    "[YAML PARSING EXCEPTION] Invalid MIME type '" + mime +
+                    "' for field '" + field_name +
+                    "' (expected format: 'type/subtype', e.g. 'image/png')."
                     );
             }
         }
@@ -707,7 +708,7 @@ YamlSchemaParser::parse_file_field_config_node(const YAML::Node& node,
         for (auto& ext : raw_exts) {
             if (ext.empty()) {
                 throw sea::sea_errors_handling::YamlParsingException(
-                    "[YAML PARSING EXCEPTION] Extension vide dans allowed_extensions du champ '" +
+                    "[YAML PARSING EXCEPTION] Empty extension in allowed_extensions of field '" +
                     field_name + "'."
                     );
             }
@@ -730,8 +731,8 @@ YamlSchemaParser::parse_file_field_config_node(const YAML::Node& node,
             if (normalized.find('/') != std::string::npos ||
                 normalized.find('\\') != std::string::npos) {
                 throw sea::sea_errors_handling::YamlParsingException(
-                    "[YAML PARSING EXCEPTION] Extension contient un séparateur de chemin invalide: '" +
-                    ext + "' (champ '" + field_name + "')."
+                    "[YAML PARSING EXCEPTION] Extension contains an invalid path separator: '" +
+                    ext + "' (field '" + field_name + "')."
                     );
             }
 
@@ -751,8 +752,8 @@ YamlSchemaParser::parse_file_field_config_node(const YAML::Node& node,
         const auto parsed = sea::domain::on_delete_file_from_string(raw);
         if (!parsed.has_value()) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] on_delete invalide pour le champ '" + field_name +
-                "': '" + raw + "' (valeurs acceptées: cascade, set_null, restrict)."
+                "[YAML PARSING EXCEPTION] Invalid on_delete for field '" + field_name +
+                "': '" + raw + "' (accepted values: cascade, set_null, restrict)."
                 );
         }
         cfg.on_delete = *parsed;
@@ -785,7 +786,8 @@ YamlSchemaParser::parse_storage_config_node(const YAML::Node& node) const
 {
     if (!node || !node.IsMap()) {
         throw sea::sea_errors_handling::YamlParsingException(
-            "[YAML PARSING EXCEPTION] Le bloc 'storage:' doit etre un objet (map).");
+            "[YAML PARSING EXCEPTION] The 'storage:' block must be an object (map)."
+            );
     }
 
     sea::domain::StorageConfig cfg{};
@@ -806,8 +808,9 @@ YamlSchemaParser::parse_storage_config_node(const YAML::Node& node) const
         // Futurs backends : "s3", "gcs", "azure" — ajouter ici.
         else {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] storage.backend invalide : '" + raw +
-                "' (valeurs acceptees pour le moment : filesystem).");
+                "[YAML PARSING EXCEPTION] Invalid storage.backend: '" + raw +
+                "' (currently accepted values: filesystem)."
+                );
         }
     }
     // Sinon : default Filesystem (cf. StorageConfig).
@@ -828,7 +831,8 @@ YamlSchemaParser::parse_storage_config_node(const YAML::Node& node) const
                 std::stoul(raw, nullptr, 8));
         } catch (const std::exception& e) {
             throw sea::sea_errors_handling::YamlParsingException(
-                std::string("[YAML PARSING EXCEPTION] storage.file_mode invalide : ") + e.what());
+                std::string("[YAML PARSING EXCEPTION] Invalid storage.file_mode: ") + e.what()
+                );
         }
     }
 
@@ -840,7 +844,8 @@ YamlSchemaParser::parse_storage_config_node(const YAML::Node& node) const
                 std::stoul(raw, nullptr, 8));
         } catch (const std::exception& e) {
             throw sea::sea_errors_handling::YamlParsingException(
-                std::string("[YAML PARSING EXCEPTION] storage.directory_mode invalide : ") + e.what());
+                std::string("[YAML PARSING EXCEPTION] Invalid storage.directory_mode: ") + e.what()
+                );
         }
     }
 
@@ -866,7 +871,9 @@ domain::DatabaseDialect YamlSchemaParser::parse_database_dialect_node(const std:
 
 sea::domain::Relation YamlSchemaParser::parse_relation_node(const YAML::Node& node) const {
     if (!node || !node.IsMap()) {
-        throw sea::sea_errors_handling::YamlParsingException("[YAML PARSING EXCEPTION] Une relation YAML doit être un objet.");
+        throw sea::sea_errors_handling::YamlParsingException(
+            "[YAML PARSING EXCEPTION] A YAML relation must be an object."
+            );
     }
 
     sea::domain::Relation relation{};
@@ -889,22 +896,22 @@ sea::domain::Relation YamlSchemaParser::parse_relation_node(const YAML::Node& no
     if (relation.kind == sea::domain::RelationKind::ManyToMany) {
         if (relation.pivot_table.empty()) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] La relation many_to_many '" + relation.name +
-                "' doit definir 'pivot_table'."
+                "[YAML PARSING EXCEPTION] The many_to_many relation '" + relation.name +
+                "' must define 'pivot_table'."
                 );
         }
 
         if (relation.source_fk_column.empty()) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] La relation many_to_many '" + relation.name +
-                "' doit definir 'source_fk_column'."
+                "[YAML PARSING EXCEPTION] The many_to_many relation '" + relation.name +
+                "' must define 'source_fk_column'."
                 );
         }
 
         if (relation.target_fk_column.empty()) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] La relation many_to_many '" + relation.name +
-                "' doit definir 'target_fk_column'."
+                "[YAML PARSING EXCEPTION] The many_to_many relation '" + relation.name +
+                "' must define 'target_fk_column'."
                 );
         }
     }
@@ -915,7 +922,9 @@ sea::domain::security::SecurityConfig YamlSchemaParser::parse_security_node(cons
 {
     using SecurityConfig = sea::domain::security::SecurityConfig;
     if (!node || !node.IsMap()) {
-        throw sea::sea_errors_handling::YamlParsingException("[YAML PARSING EXCEPTION] Un champ YAML doit être un objet.");
+        throw sea::sea_errors_handling::YamlParsingException(
+            "[YAML PARSING EXCEPTION] A YAML field must be an object."
+            );
     }
     SecurityConfig security_config = SecurityConfig::safe_defaults();
 
@@ -923,7 +932,7 @@ sea::domain::security::SecurityConfig YamlSchemaParser::parse_security_node(cons
     if (const YAML::Node auth_node = node["authentication"]) {
         if (!auth_node.IsMap()) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] Le champ 'authentication' doit être un objet dans service '"
+                "[YAML PARSING EXCEPTION] The 'authentication' field must be an object in service '"
                 );
         }
         security_config.set_authentication(parse_auth_node(auth_node));
@@ -933,7 +942,7 @@ sea::domain::security::SecurityConfig YamlSchemaParser::parse_security_node(cons
     if (const YAML::Node cors_node = node["cors"]) {
         if (!cors_node.IsMap()) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] Le champ 'cors' doit être un objet dans securitE '"
+                "[YAML PARSING EXCEPTION] The 'cors' field must be an object in security '"
                 );
         }
         security_config.set_cors(parse_cors_node(cors_node));
@@ -943,7 +952,7 @@ sea::domain::security::SecurityConfig YamlSchemaParser::parse_security_node(cons
     if (const YAML::Node rate_limits_node = node["rate_limits"]) {
         if (!rate_limits_node.IsSequence()) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] Le champ 'rate_limits' doit être une liste dans service '"
+                "[YAML PARSING EXCEPTION] The 'rate_limits' field must be a list in service '"
                 );
         }
         std::vector<domain::security::RateLimitRule> rules;
@@ -957,7 +966,7 @@ sea::domain::security::SecurityConfig YamlSchemaParser::parse_security_node(cons
     if (const YAML::Node headers_node = node["headers"]) {
         if (!headers_node.IsMap()) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] Le champ 'headers' doit être un objet dans service '"
+                "[YAML PARSING EXCEPTION] The 'headers' field must be an object in service '"
                 );
         }
         security_config.set_security_headers(parse_security_headers_node(headers_node));
@@ -967,7 +976,7 @@ sea::domain::security::SecurityConfig YamlSchemaParser::parse_security_node(cons
     if (const YAML::Node limits_node = node["http_limits"]) {
         if (!limits_node.IsMap()) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] Le champ 'http_limits' doit être un objet dans service '"
+                "[YAML PARSING EXCEPTION] The 'http_limits' field must be an object in service '"
                 );
         }
         security_config.set_http_limits(parse_http_limits_node(limits_node));
@@ -978,7 +987,7 @@ sea::domain::security::SecurityConfig YamlSchemaParser::parse_security_node(cons
         security_config.validate();
     } catch (const std::exception& e) {
         throw sea::sea_errors_handling::YamlParsingException(
-            "[YAML PARSING EXCEPTION] Configuration de sécurité invalide dans service '"
+            "[YAML PARSING EXCEPTION] Invalid security configuration in service '"
             );
     }
 
@@ -987,7 +996,9 @@ sea::domain::security::SecurityConfig YamlSchemaParser::parse_security_node(cons
 domain::security::AuthentificationConfig YamlSchemaParser::parse_auth_node(const YAML::Node &node) const
 {
     if (!node || !node.IsMap()) {
-        throw sea::sea_errors_handling::YamlParsingException("[YAML PARSING EXCEPTION] Un champ YAML doit être un objet.");
+        throw sea::sea_errors_handling::YamlParsingException(
+            "[YAML PARSING EXCEPTION] A YAML field must be an object."
+            );
     }
     using AuthentificationConfig = domain::security::AuthentificationConfig;
     AuthentificationConfig auth_config;
@@ -997,7 +1008,7 @@ domain::security::AuthentificationConfig YamlSchemaParser::parse_auth_node(const
         auth_config.set_type(domain::security::auth_type_from_string(type_str));
     } catch (const std::exception& e) {
         throw sea::sea_errors_handling::YamlParsingException(
-            std::string("[YAML PARSING EXCEPTION] Type d'authentification invalide dans service '") + e.what()
+            std::string("[YAML PARSING EXCEPTION] Invalid authentication type in service '") + e.what()
             );
     }
 
@@ -1009,7 +1020,7 @@ domain::security::AuthentificationConfig YamlSchemaParser::parse_auth_node(const
             auth_config.set_jwt_algorithm(domain::security::jwt_algorithm_from_string(algo_str));
         } catch (const std::exception& e) {
             throw sea::sea_errors_handling::YamlParsingException(
-                std::string("[YAML PARSING EXCEPTION] Algorithme JWT invalide dans service '") + e.what()
+                std::string("[YAML PARSING EXCEPTION] Invalid JWT algorithm in service '") + e.what()
                 );
         }
 

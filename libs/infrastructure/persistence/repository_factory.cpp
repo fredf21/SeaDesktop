@@ -22,7 +22,7 @@ RepositoryFactory::create(
          * Il permet de connaître les entités, champs, types, tables, etc.
          */
         if (!schema_registry) {
-            throw std::runtime_error("RepositoryFactory: schema_registry manquant.");
+            throw std::runtime_error("RepositoryFactory: missing schema_registry.");
         }
 
         switch (config.type) {
@@ -34,10 +34,10 @@ RepositoryFactory::create(
             return std::make_shared<InMemoryGenericRepository>();
 
         case sea::domain::DatabaseType::PostgreSQL:
-            throw std::runtime_error("PostgreSQL n'est pas encore implemente dans le MVP.");
+            throw std::runtime_error("PostgreSQL is not implemented yet in the MVP.");
 
         case sea::domain::DatabaseType::MongoDB:
-            throw std::runtime_error("MongoDB n'est pas encore implemente dans le MVP.");
+            throw std::runtime_error("MongoDB is not implemented yet in the MVP.");
 
         case sea::domain::DatabaseType::MySQL:
             /**
@@ -49,13 +49,13 @@ RepositoryFactory::create(
              */
             if (!resources.mysql_pool) {
                 throw std::runtime_error(
-                    "RepositoryFactory: mysql_pool manquant pour une configuration MySQL."
+                    "RepositoryFactory: missing mysql_pool for a MySQL configuration."
                     );
             }
 
             if (!blocking_executor) {
                 throw std::runtime_error(
-                    "RepositoryFactory: blocking_executor manquant pour une configuration MySQL."
+                    "RepositoryFactory: missing blocking_executor for a MySQL configuration."
                     );
             }
 
@@ -66,7 +66,7 @@ RepositoryFactory::create(
                 );
         }
 
-        throw sea::sea_errors_handling::PersistenceException("Type de base de donnees inconnu.");
+        throw sea::sea_errors_handling::PersistenceException("Unknown database type.");
     } catch (const sea::sea_errors_handling::PersistenceException& e){
         return std::shared_ptr<IGenericRepository>();
     }

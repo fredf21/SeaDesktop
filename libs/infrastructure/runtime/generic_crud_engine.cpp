@@ -38,13 +38,13 @@ dynamic_value_to_id_string(const runtime::DynamicValue& value)
 } // namespace
 seastar::future<GenericCrudEngine::OperationResult>
 GenericCrudEngine::create(const std::string& entity_name,
-                              runtime::DynamicRecord record)
+                          runtime::DynamicRecord record)
 {
     GenericCrudEngine::OperationResult result{};
 
     const auto* entity = registry_->find_entity(entity_name);
     if (!entity) {
-        result.errors.push_back("Entite inconnue: " + entity_name);
+        result.errors.push_back("Unknown entity: " + entity_name);
         return seastar::make_ready_future<GenericCrudEngine::OperationResult>(std::move(result));
     }
 
@@ -79,7 +79,7 @@ GenericCrudEngine::create(const std::string& entity_name,
 
                     if (existing_it->second == incoming_value) {
                         result.errors.push_back(
-                            "Valeur dupliquee pour un champ unique: " + field.name
+                            "Duplicate value for unique field: " + field.name
                             );
                         return seastar::make_ready_future<GenericCrudEngine::OperationResult>(std::move(result));
                     }
@@ -97,14 +97,14 @@ GenericCrudEngine::create(const std::string& entity_name,
                            const auto fk_it = record.find(relation.fk_column);
                            if (fk_it == record.end()) {
                                if (relation.on_delete == sea::domain::OnDelete::Restrict) {
-                                   result.errors.push_back("Champ FK manquant: " + relation.fk_column);
+                                   result.errors.push_back("Missing FK field: " + relation.fk_column);
                                }
                                return seastar::make_ready_future<>();
                            }
 
                            auto fk_value_opt = dynamic_value_to_id_string(fk_it->second);
                            if (!fk_value_opt.has_value()) {
-                               result.errors.push_back("FK invalide: " + relation.fk_column);
+                               result.errors.push_back("Invalid FK: " + relation.fk_column);
                                return seastar::make_ready_future<>();
                            }
 
@@ -114,8 +114,8 @@ GenericCrudEngine::create(const std::string& entity_name,
                                [&result, relation, fk_value](std::optional<runtime::DynamicRecord> target) {
                                    if (!target.has_value()) {
                                        result.errors.push_back(
-                                           "Entite cible introuvable: " + relation.target_entity +
-                                           " avec id=" + fk_value
+                                           "Target entity not found: " + relation.target_entity +
+                                           " with id=" + fk_value
                                            );
                                    }
                                }
@@ -136,7 +136,7 @@ GenericCrudEngine::create(const std::string& entity_name,
                             -> seastar::future<GenericCrudEngine::OperationResult>
                             {
                                 if (!created.has_value()) {
-                                    result.errors.push_back("Echec lors de la creation de l'entite");
+                                    result.errors.push_back("Failed to create entity");
                                     return seastar::make_ready_future<GenericCrudEngine::OperationResult>(std::move(result));
                                 }
 
@@ -205,7 +205,7 @@ GenericCrudEngine::update(const std::string& entity_name,
 
     const auto* entity = registry_->find_entity(entity_name);
     if (!entity) {
-        result.errors.push_back("Entite inconnue: " + entity_name);
+        result.errors.push_back("Unknown entity: " + entity_name);
         return seastar::make_ready_future<OperationResult>(result);
     }
 
@@ -223,7 +223,7 @@ GenericCrudEngine::update(const std::string& entity_name,
         const auto fk_it = record.find(relation.fk_column);
         if (fk_it == record.end()) {
             if (relation.on_delete == sea::domain::OnDelete::Restrict) {
-                result.errors.push_back("Champ FK manquant: " + relation.fk_column);
+                result.errors.push_back("Missing FK field: " + relation.fk_column);
             }
             continue;
         }
@@ -235,7 +235,7 @@ GenericCrudEngine::update(const std::string& entity_name,
         else if (std::holds_alternative<std::int64_t>(fk_it->second))
             fk_value = std::to_string(std::get<std::int64_t>(fk_it->second));
         else {
-            result.errors.push_back("FK invalide: " + relation.fk_column);
+            result.errors.push_back("Invalid FK: " + relation.fk_column);
             continue;
         }
 
@@ -243,8 +243,8 @@ GenericCrudEngine::update(const std::string& entity_name,
         return repository_->find_by_id(relation.target_entity, fk_value).then([this, result, fk_value, relation, entity_name, id, record](std::optional<runtime::DynamicRecord> target) mutable{
             if (!target.has_value()) {
                 result.errors.push_back(
-                    "Entite cible introuvable: " + relation.target_entity +
-                    " avec id=" + fk_value
+                    "Target entity not found: " + relation.target_entity +
+                    " with id=" + fk_value
                     );
             }
             if (!result.errors.empty()) return seastar::make_ready_future<GenericCrudEngine::OperationResult>(result);
@@ -253,7 +253,7 @@ GenericCrudEngine::update(const std::string& entity_name,
                 result.success = updateResponse.status;
                 result.record = updateResponse.record;
                 if (!result.success) {
-                    result.errors.push_back("Impossible de mettre a jour l'enregistrement.");
+                    result.errors.push_back("Unable to update record.");
                 }
 
                 return seastar::make_ready_future<OperationResult>(result);
@@ -286,13 +286,13 @@ GenericCrudEngine::create_many_to_many_links(
 
     const auto created_id_it = created_record.find("id");
     if (created_id_it == created_record.end()) {
-        errors.push_back("ID manquant sur l'entite creee");
+        errors.push_back("Missing ID on created entity");
         return seastar::make_ready_future<std::vector<std::string>>(std::move(errors));
     }
 
     auto source_id_opt = dynamic_value_to_id_string(created_id_it->second);
     if (!source_id_opt.has_value()) {
-        errors.push_back("Type d'id invalide sur l'entite creee");
+        errors.push_back("Invalid ID type on created entity");
         return seastar::make_ready_future<std::vector<std::string>>(std::move(errors));
     }
 
@@ -313,8 +313,8 @@ GenericCrudEngine::create_many_to_many_links(
                    auto target_ids_opt = extract_many_to_many_ids(rel_it->second);
                    if (!target_ids_opt.has_value()) {
                        errors.push_back(
-                           "La relation many-to-many '" + relation.name +
-                           "' doit etre une liste de string"
+                           "The many-to-many relation '" + relation.name +
+                           "' must be a list of strings"
                            );
                        return seastar::make_ready_future<>();
                    }
@@ -329,8 +329,8 @@ GenericCrudEngine::create_many_to_many_links(
                                (std::optional<runtime::DynamicRecord> target) -> seastar::future<> {
                                    if (!target.has_value()) {
                                        errors.push_back(
-                                           "Entite cible introuvable: " + relation.target_entity +
-                                           " avec id=" + target_id
+                                           "Target entity not found: " + relation.target_entity +
+                                           " with id=" + target_id
                                            );
                                        return seastar::make_ready_future<>();
                                    }
@@ -346,7 +346,7 @@ GenericCrudEngine::create_many_to_many_links(
                                            [&errors, &relation, target_id](bool ok) {
                                                if (!ok) {
                                                    errors.push_back(
-                                                       "Impossible de creer le lien many-to-many '" +
+                                                       "Unable to create many-to-many link '" +
                                                        relation.name + "' avec id=" + target_id
                                                        );
                                                }

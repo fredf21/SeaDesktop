@@ -72,14 +72,14 @@ inline bool validate_sql_identifier(const std::string& id, ValidationResult& val
     validation_result.errors.clear();
     if (id.empty()) {
         validation_result.add(ErrorCode::InvalidSqlIdentifier,
-                   "Identifiant SQL vide");
+                              "Empty SQL identifier");
         return false;
     }
 
     for (char c : id) {
         if (!(std::isalnum(c) || c == '_')) {
 
-            validation_result.add(ErrorCode::InvalidSqlIdentifier, "Identifiant SQL invalide: " + id);
+            validation_result.add(ErrorCode::InvalidSqlIdentifier, "Invalid SQL identifier: " + id);
             return false;
         }
     }
@@ -101,7 +101,7 @@ inline const sea::domain::Entity* get_required_entity(
 
     if (entity == nullptr) {
         validation_result.add(ErrorCode::EntityNotFound,
-                   "Entité introuvable: " + entity_name);
+                              "Entity not found: " + entity_name);
         return nullptr;
     }
 
@@ -128,7 +128,7 @@ inline bool validate_record_keys(
     validation_result.errors.clear();
     for (const auto& [key, _] : record) {
         if (registry.find_field(entity_name, key) == nullptr) {
-            validation_result.add(ErrorCode::FieldNotFound, "Champ ou entite non trouvee");
+            validation_result.add(ErrorCode::FieldNotFound, "Field or entity not found");
             return false;
         }
         if(!validate_sql_identifier(key, validation_result))
@@ -145,7 +145,7 @@ inline const runtime::DynamicValue* get_required_value(
     validation_result.errors.clear();
     auto it = record.find(key);
     if (it == record.end()) {
-        validation_result.add(ErrorCode::MissingRequiredField, "Champ manquant: " + key);
+        validation_result.add(ErrorCode::MissingRequiredField, "Missing field: " + key);
         return nullptr;
     }
     return &it->second;

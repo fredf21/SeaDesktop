@@ -21,15 +21,15 @@ namespace {
                                  const std::string& path,
                                  const std::error_code& ec) {
     throw sea::sea_errors_handling::StorageException(
-        "[FilesystemStorage] " + operation + " a echoue sur '" + path +
+        "[FilesystemStorage] " + operation + " failed on '" + path +
         "': " + ec.message() + " (code=" + std::to_string(ec.value()) + ").");
 }
 
 [[noreturn]] void throw_sandbox_violation(const std::string& relative_path,
                                           const std::string& reason) {
     throw sea::sea_errors_handling::StorageException(
-        "[FilesystemStorage] Acces refuse pour '" + relative_path +
-        "' : " + reason + ".");
+        "[FilesystemStorage] Access denied for '" + relative_path +
+        "': " + reason + ".");
 }
 
 // Applique chmod sur un path (best-effort : on log mais on n'échoue
@@ -54,7 +54,7 @@ FilesystemStorage::FilesystemStorage(sea::domain::StorageConfig cfg)
 
     if (!config_.has_root_path()) {
         throw sea::sea_errors_handling::StorageException(
-            "[FilesystemStorage] StorageConfig::root_path est vide.");
+            "[FilesystemStorage] StorageConfig::root_path is empty.");
     }
 
     // Crée le dossier racine s'il n'existe pas.
@@ -63,7 +63,7 @@ FilesystemStorage::FilesystemStorage(sea::domain::StorageConfig cfg)
     std::error_code ec;
     fs::create_directories(config_.root_path, ec);
     if (ec) {
-        throw_io_error("création de la racine", config_.root_path, ec);
+        throw_io_error("root directory creation", config_.root_path, ec);
     }
 
     // Vérifie que la racine est bien un dossier (pas un fichier
@@ -71,7 +71,7 @@ FilesystemStorage::FilesystemStorage(sea::domain::StorageConfig cfg)
     if (!fs::is_directory(config_.root_path, ec)) {
         throw sea::sea_errors_handling::StorageException(
             "[FilesystemStorage] root_path '" + config_.root_path +
-            "' n'est pas un dossier.");
+            "' is not a directory.");
     }
 
     // Applique les permissions sur la racine (best-effort).
@@ -82,7 +82,7 @@ FilesystemStorage::FilesystemStorage(sea::domain::StorageConfig cfg)
     // vérifications de sandbox.
     root_canonical_ = fs::canonical(config_.root_path, ec);
     if (ec) {
-        throw_io_error("canonicalisation de la racine",
+        throw_io_error("root canonicalization",
                        config_.root_path, ec);
     }
 }
@@ -95,13 +95,13 @@ fs::path FilesystemStorage::resolve_safe_path(
     bool must_exist) const
 {
     if (relative_path.empty()) {
-        throw_sandbox_violation(relative_path, "chemin vide");
+        throw_sandbox_violation(relative_path, "empty path");
     }
 
     // Refuse explicitement les paths absolus (premier rempart).
     const fs::path raw(relative_path);
     if (raw.is_absolute()) {
-        throw_sandbox_violation(relative_path, "chemin absolu interdit");
+        throw_sandbox_violation(relative_path, "absolute paths are not allowed");
     }
 
     // Construit le chemin candidat : root/relative.
@@ -128,7 +128,7 @@ fs::path FilesystemStorage::resolve_safe_path(
         if (cand_str.size() < root_str.size() ||
             cand_str.compare(0, root_str.size(), root_str) != 0) {
             throw_sandbox_violation(relative_path,
-                                    "chemin resolu sort du sandbox");
+                                    "resolved path escapes the sandbox");
         }
 
         // Évite "/root/foo_evil" qui matcherait "/root/foo" par prefix
@@ -137,7 +137,7 @@ fs::path FilesystemStorage::resolve_safe_path(
         if (cand_str.size() > root_str.size()) {
             if (cand_str[root_str.size()] != '/') {
                 throw_sandbox_violation(relative_path,
-                                        "chemin resolu n'est pas un sous-chemin direct du sandbox");
+                                        "resolved path is not a direct subpath of the sandbox");
             }
         }
     }
@@ -162,7 +162,7 @@ fs::path FilesystemStorage::resolve_safe_path(
         if (resolved_str.size() < root_str.size() ||
             resolved_str.compare(0, root_str.size(), root_str) != 0) {
             throw_sandbox_violation(relative_path,
-                                    "symlink pointant hors du sandbox");
+                                    "symlink points outside the sandbox");
         }
         return resolved;
     }
@@ -182,7 +182,7 @@ void FilesystemStorage::store(const std::string& relative_path,
     std::error_code ec;
     fs::create_directories(target.parent_path(), ec);
     if (ec) {
-        throw_io_error("création des dossiers parents", relative_path, ec);
+        throw_io_error("parent directory creation", relative_path, ec);
     }
 
     // Applique le mode aux dossiers créés (best-effort, descend
@@ -202,15 +202,15 @@ void FilesystemStorage::store(const std::string& relative_path,
     std::ofstream ofs(target, std::ios::binary | std::ios::trunc);
     if (!ofs) {
         throw sea::sea_errors_handling::StorageException(
-            "[FilesystemStorage] Impossible d'ouvrir '" + relative_path +
-            "' en ecriture.");
+            "[FilesystemStorage] Cannot open '" + relative_path +
+            "' for writing.");
     }
 
     ofs.write(content.data(), static_cast<std::streamsize>(content.size()));
     if (!ofs) {
         throw sea::sea_errors_handling::StorageException(
-            "[FilesystemStorage] Echec de l'ecriture de '" + relative_path +
-            "' (disque plein ? quota ?).");
+            "[FilesystemStorage] Failed to write '" + relative_path +
+            "' (disk full? quota?).");
     }
     ofs.close();
 
@@ -227,19 +227,19 @@ std::string FilesystemStorage::retrieve(const std::string& relative_path)
     std::error_code ec;
     if (!fs::exists(target, ec)) {
         throw sea::sea_errors_handling::StorageException(
-            "[FilesystemStorage] Fichier introuvable: '" + relative_path + "'.");
+            "[FilesystemStorage] File not found: '" + relative_path + "'.");
     }
     if (!fs::is_regular_file(target, ec)) {
         throw sea::sea_errors_handling::StorageException(
             "[FilesystemStorage] '" + relative_path +
-            "' n'est pas un fichier regulier.");
+            "' is not a regular file.");
     }
 
     std::ifstream ifs(target, std::ios::binary);
     if (!ifs) {
         throw sea::sea_errors_handling::StorageException(
-            "[FilesystemStorage] Impossible d'ouvrir '" + relative_path +
-            "' en lecture.");
+            "[FilesystemStorage] Cannot open '" + relative_path +
+            "' for reading.");
     }
 
     // Lecture en une fois. Pour les très gros fichiers, on
@@ -255,7 +255,7 @@ std::string FilesystemStorage::retrieve(const std::string& relative_path)
     ifs.read(content.data(), static_cast<std::streamsize>(file_size));
     if (!ifs && !ifs.eof()) {
         throw sea::sea_errors_handling::StorageException(
-            "[FilesystemStorage] Echec de lecture de '" + relative_path + "'.");
+            "[FilesystemStorage] Failed to read '" + relative_path + "'.");
     }
 
     return content;
@@ -304,7 +304,7 @@ std::size_t FilesystemStorage::size(const std::string& relative_path)
     std::error_code ec;
     if (!fs::exists(target, ec)) {
         throw sea::sea_errors_handling::StorageException(
-            "[FilesystemStorage] Fichier introuvable: '" + relative_path + "'.");
+            "[FilesystemStorage] File not found: '" + relative_path + "'.");
     }
 
     const auto sz = fs::file_size(target, ec);

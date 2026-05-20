@@ -5,6 +5,13 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+#-----------------------------
+# tests
+#-----------------------------
+# Option pour compiler ou non les tests Qt
+option(BUILD_QT_TESTS "Build Qt unit tests" OFF)
+
+
 # ───────────────────────────────────────────────────
 # spdlog via FetchContent
 # ───────────────────────────────────────────────────
@@ -34,3 +41,6 @@ add_subdirectory(libs/application)
 add_subdirectory(libs/infrastructure)
 add_subdirectory(apps/Backend_Seastar)
 add_subdirectory(apps/SeaUI)
+if (BUILD_QT_TESTS)
+    add_subdirectory(tests)
+endif()

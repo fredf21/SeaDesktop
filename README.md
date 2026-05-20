@@ -3,28 +3,32 @@
 [![Commercial License Available](https://img.shields.io/badge/Commercial-Available-green.svg)](COMMERCIAL-LICENSE.md)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/23)
 [![Seastar](https://img.shields.io/badge/Seastar-shared--nothing-orange.svg)](https://seastar.io/)
+[![Version](https://img.shields.io/badge/version-0.2.0-brightgreen.svg)](./Release_Notes.md)
 
-> **Une plateforme low-code C++ qui transforme un fichier YAML en serveur ultra rapide API REST + GUI desktop, avec sécurité intégrée.**
+> **A low-code C++ platform that turns a YAML file into an ultra-fast REST API server + desktop GUI, with built-in security.**
 
 ---
 
 ## 🎯 Vision
 
-SeaDesktop génère **automatiquement** depuis un seul fichier YAML :
+SeaDesktop automatically generates from a single YAML file:
 
-- 🛢️ Une **BASE DE DONNEES** en fonction des entites et de leur relation dans le Yaml
-- 🌐 Une **API REST CRUD** complète, performante (Seastar shared-nothing SMP)
-- 🖥️ Une **interface graphique** desktop multi-plateforme (Qt 6)
-- 🔐 Un système d'**authentification JWT** + **autorisation RBAC + ABAC** complet
-- 📊 Des **routes relationnelles** auto-générées (HasMany, BelongsTo, M2M)
+- 🛢️ A **database** based on entities and their relationships
+- 🌐 A complete, high-performance **CRUD REST API** (Seastar shared-nothing SMP)
+- 🖥️ A cross-platform desktop **graphical interface** (Qt 6)
+- 🔐 A complete **JWT authentication** system with HttpOnly cookies, rotation, and revocation
+- 🛡️ Declarative **RBAC + ABAC authorization** at the operation level
+- 📊 Auto-generated **relationship routes** (HasMany, BelongsTo, M2M)
+- 📝 **Structured logging** with spdlog, rotation, JSON, and REST exposure
+- 📄 **OpenAPI documentation** and a Swagger UI explorer at `/docs`
 
-**Pas de boilerplate. Pas de framework lourd. Juste du C++ moderne et un YAML.**
+**No boilerplate. No heavy framework. Just modern C++ and YAML.**
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Définir vos entités dans un YAML
+### 1. Define your entities in YAML
 
 ```yaml
 project:
@@ -36,10 +40,7 @@ services:
 
     security:
       authentication:
-        type: none   # pas d'auth (mode dev rapide)
-
-      # Pas d'authorization → toutes les routes ouvertes
-      # Pas de rate_limit, pas de CORS, pas de headers
+        type: none   # no auth (quick dev mode)
 
     database:
       type: memory
@@ -54,12 +55,10 @@ services:
             type: uuid
             required: true
             unique: true
-
           - name: name
             type: string
             required: true
             unique: true
-
         relations:
           - name: employees
             kind: has_many
@@ -76,242 +75,306 @@ services:
             type: uuid
             required: true
             unique: true
-
           - name: name
             type: string
             required: true
-
           - name: email
             type: email
             required: true
             unique: true
-
           - name: age
             type: int
             required: false
-
           - name: department_id
             type: uuid
             required: false
-
         relations:
           - name: department
             kind: belongs_to
             target_entity: Department
             fk_column: department_id
             on_delete: restrict
-
-      - name: Student
-        options:
-          enable_crud: true
-          public_routes: true
-        fields:
-          - name: id
-            type: uuid
-            required: true
-            unique: true
-
-          - name: name
-            type: string
-            required: true
-
-          - name: email
-            type: email
-            required: true
-            unique: true
-
-          - name: age
-            type: int
-            required: false
-
-      - name: Program
-        options:
-          enable_crud: true
-          public_routes: true
-        fields:
-          - name: id
-            type: uuid
-            required: true
-            unique: true
-
-          - name: name
-            type: string
-            required: true
-            unique: true
 ```
 
-### 2. Lancer le serveur
+### 2. Start the server
 
 ```bash
 ./Backend_Seastar
 ```
 
-### 3. C'est prêt 🎉
+### 3. It is ready 🎉
 
-Routes automatiquement générées :
+Automatically generated routes:
+
 ```
-GET /users                                                  List + filtre ABAC
-POST /users                                                 Create + check ABAC
-GET /departments                                            List + filtre ABAC
-POST /departments                                           Create + check ABAC
-GET /employees                                              List + filtre ABAC
-POST /employees                                             Create + check ABAC
-GET /students                                               
-POST /students
-GET /programs
-POST /programs
-GET /studentPrograms
-POST /studentPrograms
-GET /departments/{id}/employees
-GET /departments_with_employees/{id}                        Parent + children
-GET /employees/filter/with_department_name?name=<value>     Recherche par parent.name
-GET /students/{id}/programs
-GET /programs/{id}/students
-GET /users/{id}
-PUT /users/{id}
-DELETE /users/{id}
-GET /departments/{id}
-PUT /departments/{id}
+# Standard CRUD
+GET    /departments               GET /departments/{id}
+POST   /departments               PUT /departments/{id}
 DELETE /departments/{id}
-GET /employees/{id}                                          Detail + check ABAC
-PUT /employees/{id}                                          Update + check ABAC
-DELETE /employees/{id}                                       Delete + check ABAC
-GET /students/{id}
-PUT /students/{id}
-DELETE /students/{id}
-GET /programs/{id}
-PUT /programs/{id}
-DELETE /programs/{id}
-GET /studentPrograms/{id}
-PUT /studentPrograms/{id}
-DELETE /studentPrograms/{id}
+GET    /employees                 GET /employees/{id}
+POST   /employees                 PUT /employees/{id}
+DELETE /employees/{id}
 
-GET    /openapi.json                                       Documentation auto
+# Relationship routes (auto-generated)
+GET /departments/{id}/employees
+GET /departments_with_employees/{id}                    Parent + grouped children
+GET /employees/filter/with_department_name?name=<value> Search by parent.name
+
+# Documentation and system endpoints
+GET  /openapi.json                                      OpenAPI 3.0 specification
+GET  /docs                                              Swagger UI interface
+GET  /health                                            Healthcheck
 ```
 
 ---
 
-## 🔐 Sécurité enterprise-grade
+## 🆕 What's New in v0.2.0
 
-SeaDesktop implémente **6 modules de sécurité** chaînés :
+### 🔐 Enhanced JWT Authentication
 
+#### HttpOnly cookies (native XSS protection)
+
+Three token delivery modes depending on your clients:
+
+```yaml
+security:
+  authentication:
+    token_delivery: cookie   # body | cookie | both
+    cookie:
+      domain: ".example.com"
+      path: "/"
+      secure: true
+      same_site: lax
+      access_token_name: sea_access
+      refresh_token_name: sea_refresh
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  Module 1 : Domain (PolicySubject, PolicyResource, PolicyContext) │
-├──────────────────────────────────────────────────────────────────┤
-│  Module 2 : PolicyEngine (évaluation des règles)                  │
-├──────────────────────────────────────────────────────────────────┤
-│  Module 3 : YAML Parser (parsing des access_control)              │
-├──────────────────────────────────────────────────────────────────┤
-│  Module 4 : JWT avec claims custom (department_id, role, etc.)    │
-├──────────────────────────────────────────────────────────────────┤
-│  Module 5 : AuthorizationMiddleware (Stratégie C double check)    │
-├──────────────────────────────────────────────────────────────────┤
-│  Module 6 : ResourceAuthorizationHelper (ABAC resource-aware)     │
-└──────────────────────────────────────────────────────────────────┘
+
+- **`body`**: tokens in the JSON response (mobile API, CLI)
+- **`cookie`**: tokens in HttpOnly cookies (web applications)
+- **`both`**: combination of both for progressive migrations
+
+#### Token tracking: immediate revocation + rotation
+
+```yaml
+authentication:
+  token_tracking:
+    enabled: true
+    rotation:
+      enabled: true        # new refresh token on every /auth/refresh
+    cache:
+      enabled: true
+      ttl: "5m"
+      max_size: 10000
+    auto_cleanup:
+      enabled: true
+      interval: "1h"
+      keep_revoked_for: "30d"
 ```
 
-### Capacités
+- Allowlist of active refresh tokens
+- Denylist of revoked access tokens (approximately 200 ns check via cache)
+- Automatic rotation: detection of stolen refresh token reuse
+- Automatic periodic cleanup of expired tokens
 
-✅ **Authentification JWT** (access + refresh tokens)
-✅ **RBAC** (rôles + permissions)
-✅ **ABAC** :
-  - `own_resource` : un user peut voir/modifier ses propres données
-  - `same_scope` : un manager voit uniquement son département
-  - `allow_roles` : restriction par rôles
-✅ **Filtre silencieux** sur listings (records refusés exclus du résultat)
-✅ **403 cross-scope** sur GetById/Update/Delete
-✅ **Admin bypass** automatique
-✅ **Logs détaillés** `[AUTHZ]` et `[AUTHZ-RES]` pour audit
+#### Complete auth routes
 
-### Exemple concret
+| Method | Route | Description |
+|---|---|---|
+| `POST` | `/auth/register` | Registration |
+| `POST` | `/auth/login` | Login (tokens in body or cookies) |
+| `POST` | `/auth/refresh` | Renewal with rotation |
+| `POST` | `/auth/logout` | Immediate access token revocation |
+| `GET` | `/auth/me` | Connected account information |
 
-Avec ce YAML, un **manager du département IT** :
+---
 
-| Action | Résultat |
+### 📝 Structured Logging with spdlog
+
+#### Complete declarative configuration
+
+```yaml
+logging:
+  level: info
+  modules:
+    sea.http: debug
+    sea.persistence: info
+    seastar: warn
+  sinks:
+    - type: console
+      format: text
+      enabled: true
+    - type: file
+      format: json
+      enabled: true
+      path: "./logs/service.log"
+      rotation:
+        max_size: "100MB"
+        time_pattern: daily
+        max_files: 30
+  flush_level: error
+  async:
+    enabled: true
+    queue_size: 8192
+    overflow_policy: overrun_oldest
+```
+
+- **7 named loggers** configurable independently (`sea.http`, `sea.persistence`, etc.)
+- **Multiple sinks**: console + file(s) simultaneously
+- **Size-based and/or time-based rotation** (`100MB`, `daily`, etc.)
+- **Text and JSON formats** (line-delimited JSON for Loki/ELK ingestion)
+- Non-blocking **asynchronous mode** for the Seastar reactor
+- **Capture of internal Seastar logs** routed to the `seastar` logger
+
+#### REST endpoint `/admin/logs`
+
+An in-memory ring buffer keeps the **last 10,000 messages**, accessible from SeaUI or any authorized client:
+
+```bash
+# Filtered retrieval
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8081/admin/logs?level=warn&logger=sea.http&limit=50"
+
+# Real-time incremental polling
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8081/admin/logs?since=12345"
+```
+
+Protected by JWT authentication + administrator role (configurable through `authorization.admin_role`).
+
+---
+
+### 📖 Complete User Documentation
+
+Four new reference documents, based exclusively on the source code:
+
+| Document | Contents |
 |---|---|
-| `GET /employees` | ✅ 200, voit uniquement employees IT (filtre silencieux) |
-| `GET /employees/{Bob_IT}` | ✅ 200, accès accordé |
-| `GET /employees/{David_HR}` | ❌ 403, cross-département refusé |
-| `PUT /employees/{David_HR}` | ❌ 403, **avant** UPDATE SQL |
-| `POST /employees {dept: HR}` | ❌ 403, création cross-dept refusée |
-| `DELETE /employees/{Bob_IT}` | ❌ 403, seul admin peut delete |
+| [`seadesktop_user_guide.md`](./docs/seadesktop_user_guide.md) | Global guide: all YAML keys, accepted values, defaults, behavior |
+| [`auth.md`](./docs/auth.md) | Authentication: tokens, cookies, tracking, rotation |
+| [`pagination.md`](./docs/pagination.md) | Pagination: 3 modes (page/offset/cursor), examples |
+| [`logging.md`](./docs/logging.md) | Logging: levels, modules, sinks, rotation, async, /admin/logs |
+| [`FILE_FEATURE_USER_GUIDE.md`](./docs/FILE_FEATURE_USER_GUIDE.md) | File storage: declaration, upload, download, sharing |
+
+---
+
+## 🔐 Enterprise-grade Security
+
+SeaDesktop implements a complete multi-layer security system:
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  JWT authentication (access + refresh tokens, HS256/RS256/ES256)     │
+│  + Flexible delivery: Authorization header OR HttpOnly cookies        │
+├──────────────────────────────────────────────────────────────────────┤
+│  Token Tracking: refresh allowlist + access denylist                  │
+│  + Automatic rotation + local cache + periodic cleanup                │
+├──────────────────────────────────────────────────────────────────────┤
+│  RBAC (roles + configurable admin bypass)                             │
+├──────────────────────────────────────────────────────────────────────┤
+│  Declarative ABAC by operation:                                      │
+│    • own_resource: a user accesses their own data                     │
+│    • same_scope: a manager operates only within their scope           │
+│    • allow_roles: restriction by role list                            │
+├──────────────────────────────────────────────────────────────────────┤
+│  Silent ABAC filter on listings (denied records excluded)             │
+│  Immediate 403 on cross-scope GetById/Update/Delete/Create            │
+├──────────────────────────────────────────────────────────────────────┤
+│  CORS, rate limits, HTTP security headers, payload limits             │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### Concrete Example
+
+With YAML declaring a manager from the IT department:
+
+| Action | Result |
+|---|---|
+| `GET /employees` | ✅ 200, sees only IT employees (silent filter) |
+| `GET /employees/{Bob_IT}` | ✅ 200, access granted |
+| `GET /employees/{David_HR}` | ❌ 403, cross-department access denied |
+| `PUT /employees/{David_HR}` | ❌ 403, **before** SQL UPDATE |
+| `POST /employees {dept: HR}` | ❌ 403, cross-department creation denied |
+| `POST /auth/logout` (alice) | ✅ 200, access token immediately blacklisted |
+| Next request with revoked token | ❌ 401, denylist checked |
 
 ---
 
 ## 🏗️ Architecture
 
-SeaDesktop suit le **Domain-Driven Design** avec une séparation stricte des couches :
+SeaDesktop follows **Domain-Driven Design** with strict layer separation:
 
 ```
 SeaDesktop/
 │
 ├── apps/                                # Applications
-│   ├── Backend_Seastar/                 # Serveur HTTP Seastar
+│   ├── Backend_Seastar/                 # Seastar HTTP server
 │   │   └── src/
 │   │       ├── http/
-│   │       │   ├── handlers/            # Handlers CRUD + relations
+│   │       │   ├── handlers/            # CRUD + relations + auth + admin
 │   │       │   ├── middlewares/         # Auth, CORS, RateLimit, etc.
-│   │       │   ├── routing/             # Enregistrement des routes
-│   │       │   └── utils/               # Helpers HTTP
+│   │       │   ├── routing/             # Route registration
+│   │       │   └── utils/               # HTTP helpers (cookies, multipart)
 │   │       └── main.cpp                 # Bootstrap
 │   │
-│   └── SeaUI/                           # GUI Qt6
-│       └── src/                         # Interface administrative
+│   └── SeaUI/                           # Qt6 GUI
+│       └── src/                         # Administrative interface
 │
-├── libs/                                # Bibliothèques DDD
-│   ├── sea_domain/                      # Couche Domain (entités, règles métier)
+├── libs/                                # DDD libraries
+│   ├── sea_domain/                      # Domain Layer
 │   │   ├── access_control/              # PolicySubject, PolicyResource, etc.
 │   │   ├── schema/                      # Entity, Field, Relation
-│   │   └── ...
+│   │   ├── security_scheme/             # AuthConfig, CookieConfig, TokenTracking
+│   │   └── logging/                     # LoggingConfig
 │   │
-│   ├── sea_application/                 # Couche Application (use cases)
+│   ├── sea_application/                 # Application Layer
 │   │   ├── access_control/              # PolicyEngine, evaluators
-│   │   ├── auth/                        # AuthService, JWT
+│   │   ├── auth/                        # AuthService, JWT, TokenTracking
+│   │   ├── logging/                     # LoggingInitializer, RingBufferSink
 │   │   └── ...
 │   │
-│   └── sea_infrastructure/              # Couche Infrastructure (DB, YAML)
-│       ├── yaml/                        # Parser YAML
+│   └── sea_infrastructure/              # Infrastructure Layer
+│       ├── yaml/                        # YAML Parser
 │       ├── runtime/                     # CRUD engines
 │       └── persistence/                 # MySQL, Memory backends
 │
-└── SeaDesktopDemo1.yaml                 # Exemple de configuration
+└── SeaDesktopDemo1.yaml                 # Complete sample configuration
 ```
 
 ---
 
-## 🔧 Stack technique
+## 🔧 Technical Stack
 
-| Couche | Technologie |
+| Layer | Technology |
 |---|---|
-| Langage | **C++20** |
-| HTTP serveur | **Seastar** (shared-nothing SMP, futures/continuations) |
-| GUI desktop | **Qt 6.8.3** |
+| Language | **C++20** |
+| HTTP server | **Seastar** (shared-nothing SMP, futures/continuations) |
+| Desktop GUI | **Qt 6.8.3** |
 | Build | **CMake** (monorepo) |
-| Base de données | **MySQL 8** (via Connector/C++) |
-| Auth | **JWT HS256** (access + refresh tokens) |
-| Hashing passwords | **bcrypt** |
+| Database | **MySQL 8** (via Connector/C++) |
+| Auth | **JWT HS256/RS256/ES256** (access + refresh + tracking) |
+| Password hashing | **bcrypt** |
+| Logging | **spdlog 1.14** (header-only via FetchContent) |
 | JSON | **nlohmann/json** |
 | YAML | **yaml-cpp** |
-| OS supportés | Linux (testé Ubuntu 24.04) |
+| Supported OS | Linux (tested on Ubuntu 24.04) |
 
 ---
 
-## 🎨 Pourquoi Seastar ?
+## 🎨 Why Seastar?
 
-Seastar est un framework C++ pour serveurs **haute performance** :
-- **Shared-nothing SMP** : 1 thread par core, pas de mutex
-- **Futures/continuations** : I/O asynchrone non-bloquant
-- **DPDK** : networking userspace (optionnel)
-- **Linux-specific primitives** : aio, epoll, etc.
+Seastar is a C++ framework for **high-performance** servers:
+- **Shared-nothing SMP**: 1 thread per core, no mutexes
+- **Futures/continuations**: non-blocking asynchronous I/O
+- **DPDK**: userspace networking (optional)
+- **Linux-specific primitives**: aio, epoll, etc.
 
-Utilisé par **ScyllaDB**, **Redpanda**, et d'autres systèmes de niveau industriel.
+Used by **ScyllaDB**, **Redpanda**, and other industrial-grade systems.
 
 ---
 
-## 📦 Installation (développement)
+## 📦 Installation (Development)
 
-### Prérequis
+### Prerequisites
 
 ```bash
 # Ubuntu 24.04
@@ -322,7 +385,7 @@ sudo apt install build-essential cmake git \
                  libssl-dev
 
 # Qt 6.8.3 via Qt Online Installer
-# Seastar depuis source : /opt/seastar
+# Seastar from source: /opt/seastar
 ```
 
 ### Build
@@ -335,16 +398,16 @@ cmake -DCMAKE_PREFIX_PATH=/path/to/Qt6.8.3 ..
 cmake --build . --target Backend_Seastar SeaUI -j$(nproc)
 ```
 
-### Lancement
+### Run
 
 ```bash
-# Variable d'environnement requise
-export SEA_DESKTOP_JWT_SECRET="votre-secret-jwt-ici"
+# Required environment variable (or auto-generated if secret: "")
+export SEA_DESKTOP_JWT_SECRET="your-jwt-secret-32-characters-minimum"
 
-# Lancer le serveur
-./apps/Backend_Seastar/Backend_Seastar
+# Start the server
+./apps/Backend_Seastar/Backend_Seastar --config=./SeaDesktopDemo1.yaml --service_name=CCNBService
 
-# Lancer la GUI (séparément)
+# Start the GUI (separately)
 ./apps/SeaUI/SeaUI
 ```
 
@@ -352,93 +415,111 @@ export SEA_DESKTOP_JWT_SECRET="votre-secret-jwt-ici"
 
 ## 🗺️ Roadmap
 
-### ✅ v0.5.0 (Actuel)
-- Modules 1-6 complets (Domain → ABAC)
-- API CRUD auto-générée
-- Routes relationnelles (HasMany, BelongsTo, M2M)
-- Filtre ABAC silencieux
-- Tests end-to-end validés
+### ✅ v0.1.0 - Foundations
+- Complete Domain model (PolicySubject, PolicyResource, PolicyContext)
+- PolicyEngine with operators and evaluators
+- ABAC YAML Parser (`own_resource`, `same_scope`, `allow_roles`)
+- JWT with custom claims (basic refresh tokens)
+- AuthorizationMiddleware (Strategy C double check)
+- ResourceAuthorizationHelper (resource-aware ABAC)
+- Auto-generated CRUD API + relationship routes
+- Silent ABAC filter + 403 cross-scope
 
-### 🚧 v0.6.0 (En cours)
-- Plugin system (`dlopen`/`dlsym` avec C ABI)
-- Custom validators
-- Custom routes utilisateurs
-
-### 📋 v0.7.0 (Planifié)
-- Migrations automatiques (schema versioning)
-- WebSocket pour notifications real-time
-- OAuth2 providers (Google, GitHub)
+### ✅ v0.2.0 - JWT Cookies, Token Tracking & Logging (Current)
+- HttpOnly cookies with complete configuration (domain, path, same_site)
+- Token tracking: refresh allowlist + access denylist + rotation + cache
+- Automatic cleanup of expired tokens
+- Structured logging with spdlog (7 named modules)
+- Multiple sinks (console + file) with size/time rotation
+- Text and JSON formats (line-delimited)
+- REST endpoint `/admin/logs` with incremental polling
+- Seastar → spdlog hook for internal log capture
+- Complete user documentation
+- Refactoring of `std::cerr` calls to spdlog
 
 ### 🌟 v1.0.0 (Vision)
 - Production-ready
-- Documentation complète
-- Marketplace de plugins
-- Hosting Cloud (Oracle Cloud Always Free)
+- Complete documentation
+- Cloud hosting
+- Import and export YAML files from the graphical interface
+- Language preference
+- Editing and logs from the menu bar
 
+### 🌟 v1.1.0
+- WebSocket for real-time notifications
+- OAuth2 providers (Google, GitHub)
+- PostgreSQL support
+- MongoDB support
+- Versioned migrations (with rollback)
+- Streaming for large files
+- Extended file storage (multi-backend filesystem/S3)
 ---
 
-## 🎓 Pour qui ?
+## 🎓 Who Is It For?
 
-- **Startups** qui veulent un backend + GUI en quelques heures
-- **Équipes internes** qui ont besoin de tooling admin sécurisé
-- **Développeurs C++** qui veulent un boilerplate moderne
+- **Startups** that want a backend + GUI in a few hours
+- **Internal teams** that need secure admin tooling
+- **C++ developers** who want modern, high-performance boilerplate
+- **Architects** who value a declarative approach (Infrastructure-as-Code)
 
 ---
 
 ## 📚 Documentation
 
-- [Release Notes](./RELEASE_NOTES.md) - Changelog détaillé
-- [docs/ABAC.md](./docs/ABAC.md) - Guide complet du système d'autorisation
-- [docs/YAML_REFERENCE.md](./docs/YAML_REFERENCE.md) - Référence YAML *(à venir)*
-- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) - Architecture détaillée *(à venir)*
+| Document | Contents |
+|---|---|
+| [`Release_Notes.md`](./Release_Notes.md) | Detailed changelog by version |
+| [`docs/seadesktop_user_guide.md`](./docs/seadesktop_user_guide.md) | Complete user guide (YAML reference) |
+| [`docs/auth.md`](./docs/auth.md) | Authentication: JWT, cookies, token tracking |
+| [`docs/pagination.md`](./docs/pagination.md) | Pagination: page, offset, cursor |
+| [`docs/logging.md`](./docs/logging.md) | Logging: modules, sinks, rotation, `/admin/logs` |
+| [`docs/FILE_FEATURE_USER_GUIDE.md`](./docs/FILE_FEATURE_USER_GUIDE.md) | File storage |
 
 ---
 
-## 🤝 Contribuer
+## 🤝 Contributing
 
-Le projet est en **alpha**. Les contributions sont bienvenues, en particulier sur :
-- Tests unitaires
-- Support PostgreSQL
-- Documentation
-- Examples / templates YAML
+The project is in **alpha**. Contributions are welcome, especially on:
+- Unit tests and integration tests
+- PostgreSQL and MongoDB support
+- Documentation and YAML examples
+- Project templates for typical use cases
 
 ---
 
-## 📜 Licence
+## 📜 License
 
-## Open Source License (AGPL v3)
+### Open Source License (AGPL v3)
 
 The default license is **GNU Affero General Public License v3.0**.
 See the [LICENSE](LICENSE) file for the full text.
 
 Under AGPL v3, you can use SeaDesktop freely, **provided that**:
 - If you modify the code, you must publish your modifications.
-- If you provide SeaDesktop as a network service (SaaS), you must
-  publish the source code of the entire service.
+- If you provide SeaDesktop as a network service (SaaS), you must publish the source code of the entire service.
 - Any derivative work must also be licensed under AGPL v3.
 
-## Commercial License (paid)
+### Commercial License (paid)
 
-If you want to use SeaDesktop **without the AGPL constraints**, you
-need a commercial license. This applies if:
+If you want to use SeaDesktop **without the AGPL constraints**, you need a commercial license. This applies if:
 
 - You want to integrate SeaDesktop into a proprietary product.
-- You want to provide SeaDesktop as a SaaS without publishing your
-  source code.
+- You want to provide SeaDesktop as a SaaS without publishing your source code.
 - Your organization has a policy against AGPL/GPL software.
 - You want premium support, SLA, or enterprise features.
 
+See [COMMERCIAL-LICENSE.md](./COMMERCIAL-LICENSE.md) for details.
+
 ---
 
-## 👤 Auteur
+## 👤 Author
 
-**Frédéric** - Architecte & développeur C++
+**Frédéric** — Architect & C++ Developer
 
-> Si vous êtes recruteur, investisseur, ou collaborateur potentiel,
-> n'hésitez pas à me contacter sur LinkedIn.
+> Recruiters, investors, and potential collaborators are welcome to contact me on LinkedIn.
 
 ---
 
 <p align="center">
-  <strong>SeaDesktop</strong> — Du YAML à un produit complet, en quelques minutes.
+  <strong>SeaDesktop v0.2.0</strong> — From YAML to a complete product in minutes.
 </p>

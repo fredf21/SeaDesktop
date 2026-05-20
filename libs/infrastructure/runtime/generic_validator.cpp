@@ -64,7 +64,7 @@ GenericValidator::validate(const sea::domain::Entity& entity,
         // Champ absent
         if (it == record.end()) {
             if (field.required && !field.has_default()) {
-                errors.push_back("Champ requis manquant: " + field.name);
+                errors.push_back("Missing required field: " + field.name);
             }
             continue;
         }
@@ -74,14 +74,14 @@ GenericValidator::validate(const sea::domain::Entity& entity,
         // null logique / monostate
         if (std::holds_alternative<std::monostate>(value)) {
             if (field.required) {
-                errors.push_back("Champ requis null: " + field.name);
+                errors.push_back("Required field is null: " + field.name);
             }
             continue;
         }
 
         // Vérification du type
         if (!matches_type(field.type, value)) {
-            errors.push_back("Type invalide pour le champ: " + field.name);
+            errors.push_back("Invalid type for field: " + field.name);
             continue;
         }
 
@@ -89,7 +89,7 @@ GenericValidator::validate(const sea::domain::Entity& entity,
         if (field.type == sea::domain::FieldType::Email) {
             const auto& email = std::get<std::string>(value);
             if (!is_valid_email(email)) {
-                errors.push_back("Format email invalide pour le champ: " + field.name);
+                errors.push_back("Invalid email format for field: " + field.name);
             }
         }
 
@@ -98,7 +98,7 @@ GenericValidator::validate(const sea::domain::Entity& entity,
             if (std::holds_alternative<std::string>(value)) {
                 const auto& s = std::get<std::string>(value);
                 if (s.size() > *field.max_length) {
-                    errors.push_back("Champ trop long: " + field.name);
+                    errors.push_back("Field too long: " + field.name);
                 }
             }
         }
@@ -108,12 +108,12 @@ GenericValidator::validate(const sea::domain::Entity& entity,
             if (std::holds_alternative<std::int64_t>(value) &&
                 std::holds_alternative<std::int64_t>(*field.min_value)) {
                 if (std::get<std::int64_t>(value) < std::get<std::int64_t>(*field.min_value)) {
-                    errors.push_back("Champ inferieur au minimum: " + field.name);
+                    errors.push_back("Field below minimum: " + field.name);
                 }
             } else if (std::holds_alternative<double>(value) &&
                        std::holds_alternative<double>(*field.min_value)) {
                 if (std::get<double>(value) < std::get<double>(*field.min_value)) {
-                    errors.push_back("Champ inferieur au minimum: " + field.name);
+                    errors.push_back("Field below minimum: " + field.name);
                 }
             }
         }
@@ -122,12 +122,12 @@ GenericValidator::validate(const sea::domain::Entity& entity,
             if (std::holds_alternative<std::int64_t>(value) &&
                 std::holds_alternative<std::int64_t>(*field.max_value)) {
                 if (std::get<std::int64_t>(value) > std::get<std::int64_t>(*field.max_value)) {
-                    errors.push_back("Champ superieur au maximum: " + field.name);
+                    errors.push_back("Field above maximum: " + field.name);
                 }
             } else if (std::holds_alternative<double>(value) &&
                        std::holds_alternative<double>(*field.max_value)) {
                 if (std::get<double>(value) > std::get<double>(*field.max_value)) {
-                    errors.push_back("Champ superieur au maximum: " + field.name);
+                    errors.push_back("Field above maximum: " + field.name);
                 }
             }
         }
@@ -153,14 +153,14 @@ std::vector<std::string> GenericValidator::validate_partial(const domain::Entity
         // null logique / monostate
         if (std::holds_alternative<std::monostate>(value)) {
             if (field.required) {
-                errors.push_back("Champ requis null: " + field.name);
+                errors.push_back("Required field is null: " + field.name);
             }
             continue;
         }
 
         // Vérification du type
         if (!matches_type(field.type, value)) {
-            errors.push_back("Type invalide pour le champ: " + field.name);
+            errors.push_back("Invalid type for field: " + field.name);
             continue;
         }
 
@@ -168,7 +168,7 @@ std::vector<std::string> GenericValidator::validate_partial(const domain::Entity
         if (field.type == sea::domain::FieldType::Email) {
             const auto& email = std::get<std::string>(value);
             if (!is_valid_email(email)) {
-                errors.push_back("Format email invalide pour le champ: " + field.name);
+                errors.push_back("Invalid email format for field: " + field.name);
             }
         }
 
@@ -177,7 +177,7 @@ std::vector<std::string> GenericValidator::validate_partial(const domain::Entity
             if (std::holds_alternative<std::string>(value)) {
                 const auto& s = std::get<std::string>(value);
                 if (s.size() > *field.max_length) {
-                    errors.push_back("Champ trop long: " + field.name);
+                    errors.push_back("Field too long: " + field.name);
                 }
             }
         }
@@ -187,12 +187,12 @@ std::vector<std::string> GenericValidator::validate_partial(const domain::Entity
             if (std::holds_alternative<std::int64_t>(value) &&
                 std::holds_alternative<std::int64_t>(*field.min_value)) {
                 if (std::get<std::int64_t>(value) < std::get<std::int64_t>(*field.min_value)) {
-                    errors.push_back("Champ inferieur au minimum: " + field.name);
+                    errors.push_back("Field below minimum: " + field.name);
                 }
             } else if (std::holds_alternative<double>(value) &&
                        std::holds_alternative<double>(*field.min_value)) {
                 if (std::get<double>(value) < std::get<double>(*field.min_value)) {
-                    errors.push_back("Champ inferieur au minimum: " + field.name);
+                    errors.push_back("Field below minimum: " + field.name);
                 }
             }
         }
@@ -201,12 +201,12 @@ std::vector<std::string> GenericValidator::validate_partial(const domain::Entity
             if (std::holds_alternative<std::int64_t>(value) &&
                 std::holds_alternative<std::int64_t>(*field.max_value)) {
                 if (std::get<std::int64_t>(value) > std::get<std::int64_t>(*field.max_value)) {
-                    errors.push_back("Champ superieur au maximum: " + field.name);
+                    errors.push_back("Field above maximum: " + field.name);
                 }
             } else if (std::holds_alternative<double>(value) &&
                        std::holds_alternative<double>(*field.max_value)) {
                 if (std::get<double>(value) > std::get<double>(*field.max_value)) {
-                    errors.push_back("Champ superieur au maximum: " + field.name);
+                    errors.push_back("Field above maximum: " + field.name);
                 }
             }
         }

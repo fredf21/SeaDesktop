@@ -16,7 +16,7 @@ MysqlConnexionPool::MysqlConnexionPool(
     , _executor(std::move(executor))
 {
     if (!_executor) {
-        throw std::runtime_error("MysqlConnexionPool: executor manquant.");
+        throw std::runtime_error("MysqlConnexionPool: Missing executor.");
     }
 }
 

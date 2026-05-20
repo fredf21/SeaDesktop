@@ -154,7 +154,7 @@ void bindValue(
             }
         }
         else {
-            throw sea::sea_errors_handling::PersistenceException("[MYSQL] Impossible de binder cette valeur sur une colonne SQL simple");
+            throw sea::sea_errors_handling::PersistenceException("[MYSQL] Unable to bind this value to a simple SQL column");
         }
     } catch(const sea::sea_errors_handling::PersistenceException& e){
 
@@ -678,12 +678,12 @@ MySQLGenericRepository::insert_pivot(
     using namespace sea::infrastructure::persistence::utilities;
 
     if (values.empty()) {
-        throw std::runtime_error("insert_pivot: aucune valeur fournie");
+        throw std::runtime_error("insert_pivot: no value provided");
     }
 
     ValidationResult validation_result;
     if (!validate_sql_identifier(pivot_table, validation_result)) {
-        throw std::runtime_error("insert_pivot: nom de table pivot invalide");
+        throw std::runtime_error("insert_pivot: invalid pivot table name");
     }
 
     auto& pool = _pool.local();
