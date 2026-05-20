@@ -35,7 +35,7 @@ project:
   name: SeaDesktopDemo
 
 services:
-  - name: CCNBService
+  - name: Office
     port: 8080
 
     security:
