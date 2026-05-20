@@ -17,7 +17,10 @@
 #include "../middlewares/security_headers_middleware.h"
 #include "../utils/http_utils.h"
 #include "../middlewares/authorization_middleware.h"
+#include "http/handlers/relation_handlers/attach_many_to_many_handler.h"
+#include "http/handlers/relation_handlers/detach_many_to_many_handler.h"
 #include "http/handlers/relation_handlers/list_by_fk_field_handler.h"
+#include "http/routing/paginated_match_rule.h"
 #include "relation.h"
 #include "service.h"
 #include "runtime/generic_crud_engine.h"
@@ -560,15 +563,23 @@ void register_many_to_many_routes(
             const std::string base =
                 "/" + sea::http::utils::lower_first(entity.name) + "s";
 
-            const std::string path =
+            // ─────────────────────────────────────────────────────
+            // GET /<entity>s/{id}/<relation>
+            //
+            // Liste les ressources cibles associees a la source.
+            // (Comportement preserve, inchange par rapport a la version
+            // precedente.)
+            // ─────────────────────────────────────────────────────
+            const std::string list_path =
                 base + "/{id}/" + relation.name;
+
             spdlog::get("sea.boot")->info(
                 "[ROUTE] GET {} -> ListManyToManyHandler {}",
-                path,
+                list_path,
                 requires_auth ? " 🔒" : " 🌐"
                 );
 
-            auto handler = std::make_unique<sea::http::handlers::relation::ListManyToManyHandler>(
+            auto list_handler = std::make_unique<sea::http::handlers::relation::ListManyToManyHandler>(
                 crud_engine,
                 relation.pivot_table,
                 relation.target_entity,
@@ -577,8 +588,8 @@ void register_many_to_many_routes(
                 context.resource_auth_helper
                 );
 
-            auto wrapped = wrap_with_middlewares(
-                std::move(handler),
+            auto list_wrapped = wrap_with_middlewares(
+                std::move(list_handler),
                 requires_auth,
                 context
                 );
@@ -586,11 +597,90 @@ void register_many_to_many_routes(
             routes.add(
                 seastar::httpd::operation_type::GET,
                 seastar::httpd::url(base).remainder("id"),
-                wrapped.release()
+                list_wrapped.release()
                 );
+
+            // ─────────────────────────────────────────────────────
+            // POST /<entity>s/{id}/<relation>/{target_id}
+            //
+            // Cree une association dans la table pivot.
+            //
+            // Cette route a DEUX path params, donc on doit utiliser
+            // un match_rule (l'API .remainder() de Seastar n'accepte
+            // qu'un seul path param).
+            // ─────────────────────────────────────────────────────
+            const std::string attach_path =
+                base + "/{id}/" + relation.name + "/{target_id}";
+
+            spdlog::get("sea.boot")->info(
+                "[ROUTE] POST {} -> AttachManyToManyHandler {}",
+                attach_path,
+                requires_auth ? " 🔒" : " 🌐"
+                );
+
+            auto attach_handler = std::make_unique<sea::http::handlers::relation::AttachManyToManyHandler>(
+                crud_engine,
+                entity.name,               // source_entity
+                relation.target_entity,
+                relation.pivot_table,
+                relation.source_fk_column,
+                relation.target_fk_column,
+                context.resource_auth_helper
+                );
+
+            auto attach_wrapped = wrap_with_middlewares(
+                std::move(attach_handler),
+                requires_auth,
+                context
+                );
+
+            // build_match_rule_from_template parse le template
+            // "{id}" et "{target_id}" et construit un match_rule
+            // qui les exposera via req->get_path_param().
+            auto* attach_rule = build_match_rule_from_template(
+                attach_path,
+                attach_wrapped.release()
+                );
+
+            routes.add(attach_rule, seastar::httpd::operation_type::POST);
+
+            // ─────────────────────────────────────────────────────
+            // DELETE /<entity>s/{id}/<relation>/{target_id}
+            //
+            // Supprime une association dans la table pivot.
+            // ─────────────────────────────────────────────────────
+            spdlog::get("sea.boot")->info(
+                "[ROUTE] DELETE {} -> DetachManyToManyHandler {}",
+                attach_path,
+                requires_auth ? " 🔒" : " 🌐"
+                );
+
+            auto detach_handler = std::make_unique<sea::http::handlers::relation::DetachManyToManyHandler>(
+                crud_engine,
+                entity.name,               // source_entity
+                relation.target_entity,
+                relation.pivot_table,
+                relation.source_fk_column,
+                relation.target_fk_column,
+                context.resource_auth_helper
+                );
+
+            auto detach_wrapped = wrap_with_middlewares(
+                std::move(detach_handler),
+                requires_auth,
+                context
+                );
+
+            auto* detach_rule = build_match_rule_from_template(
+                attach_path,        // meme template que POST
+                detach_wrapped.release()
+                );
+
+            routes.add(detach_rule, seastar::httpd::operation_type::DELETE);
         }
     }
 }
+
 
 // ─────────────────────────────────────────────
 // Routes de download de fichiers

@@ -59,6 +59,21 @@ public:
     seastar::future<OperationResult> update(const std::string& entity_name,
                                             const std::string& id,
                                             DynamicRecord record);
+    // ─────────────────────────────────────────────────────────
+    // pivot_exists / delete_pivot
+    //
+    // Operations sur une table pivot many-to-many. Le crud_engine
+    // est un simple passe-plat vers le repository, car aucune
+    // validation ni transformation specifique a un entity
+    // metier ne s'applique aux pivots.
+    // ─────────────────────────────────────────────────────────
+    seastar::future<bool>
+    pivot_exists(const std::string& pivot_table,
+                 runtime::DynamicRecord values);
+
+    seastar::future<bool>
+    delete_pivot(const std::string& pivot_table,
+                 runtime::DynamicRecord values);
 
     seastar::future<bool> remove(const std::string& entity_name,
                                  const std::string& id);

@@ -764,6 +764,174 @@ MySQLGenericRepository::insert_pivot(
         );
 }
 
+seastar::future<bool>
+MySQLGenericRepository::delete_pivot(
+    const std::string& pivot_table,
+    runtime::DynamicRecord values)
+{
+    using namespace sea::infrastructure::persistence::utilities;
+
+    if (values.empty()) {
+        throw std::runtime_error("delete_pivot: no value provided");
+    }
+
+    ValidationResult validation_result;
+    if (!validate_sql_identifier(pivot_table, validation_result)) {
+        throw std::runtime_error("delete_pivot: invalid pivot table name");
+    }
+
+    auto& pool = _pool.local();
+    co_return co_await run_blocking_mysql<bool>(
+        pool,
+        *_executor,
+        _active_txn_connection,
+        [pivot_table, values = std::move(values)](sql::Connection* conn) mutable -> bool {
+            try {
+                std::vector<std::string> columns;
+                std::vector<runtime::DynamicValue> bind_values;
+                columns.reserve(values.size());
+                bind_values.reserve(values.size());
+
+                for (auto& [key, value] : values) {
+                    columns.push_back(key);
+                    bind_values.push_back(value);
+                }
+
+                // Meme heuristique UUID que dans insert_pivot
+                auto is_uuid_string = [](const runtime::DynamicValue& v) -> bool {
+                    if (!std::holds_alternative<std::string>(v)) return false;
+                    const auto& s = std::get<std::string>(v);
+                    if (s.size() != 36) return false;
+                    return s[8] == '-' && s[13] == '-' && s[18] == '-' && s[23] == '-';
+                };
+
+                std::ostringstream query;
+                query << "DELETE FROM `" << pivot_table << "` WHERE ";
+                for (std::size_t i = 0; i < columns.size(); ++i) {
+                    if (i > 0) {
+                        query << " AND ";
+                    }
+                    query << "`" << columns[i] << "` = ";
+                    if (is_uuid_string(bind_values[i])) {
+                        query << "UUID_TO_BIN(?, 1)";
+                    } else {
+                        query << "?";
+                    }
+                }
+
+                auto stmt = std::unique_ptr<sql::PreparedStatement>(
+                    conn->prepareStatement(query.str())
+                    );
+
+                for (std::size_t i = 0; i < bind_values.size(); ++i) {
+                    bindValue(stmt.get(), static_cast<int>(i + 1), bind_values[i]);
+                }
+
+                // executeUpdate retourne le nombre de lignes affectees.
+                // > 0 -> au moins une association supprimee
+                // = 0 -> aucune association ne correspondait
+                const int affected = stmt->executeUpdate();
+                return affected > 0;
+
+            } catch (const sql::SQLException& e) {
+                spdlog::get("sea.persistence")->error(
+                    "delete_pivot SQL error: {} (code={})",
+                    e.what(), e.getErrorCode()
+                    );
+                return false;
+            } catch (const std::exception& e) {
+                spdlog::get("sea.persistence")->error(
+                    "delete_pivot error: {}", e.what()
+                    );
+                return false;
+            }
+        }
+        );
+}
+
+
+seastar::future<bool>
+MySQLGenericRepository::pivot_exists(
+    const std::string& pivot_table,
+    runtime::DynamicRecord values)
+{
+    using namespace sea::infrastructure::persistence::utilities;
+
+    if (values.empty()) {
+        throw std::runtime_error("pivot_exists: no value provided");
+    }
+
+    ValidationResult validation_result;
+    if (!validate_sql_identifier(pivot_table, validation_result)) {
+        throw std::runtime_error("pivot_exists: invalid pivot table name");
+    }
+
+    auto& pool = _pool.local();
+    co_return co_await run_blocking_mysql<bool>(
+        pool,
+        *_executor,
+        _active_txn_connection,
+        [pivot_table, values = std::move(values)](sql::Connection* conn) mutable -> bool {
+            try {
+                std::vector<std::string> columns;
+                std::vector<runtime::DynamicValue> bind_values;
+                columns.reserve(values.size());
+                bind_values.reserve(values.size());
+
+                for (auto& [key, value] : values) {
+                    columns.push_back(key);
+                    bind_values.push_back(value);
+                }
+
+                auto is_uuid_string = [](const runtime::DynamicValue& v) -> bool {
+                    if (!std::holds_alternative<std::string>(v)) return false;
+                    const auto& s = std::get<std::string>(v);
+                    if (s.size() != 36) return false;
+                    return s[8] == '-' && s[13] == '-' && s[18] == '-' && s[23] == '-';
+                };
+
+                std::ostringstream query;
+                query << "SELECT 1 FROM `" << pivot_table << "` WHERE ";
+                for (std::size_t i = 0; i < columns.size(); ++i) {
+                    if (i > 0) {
+                        query << " AND ";
+                    }
+                    query << "`" << columns[i] << "` = ";
+                    if (is_uuid_string(bind_values[i])) {
+                        query << "UUID_TO_BIN(?, 1)";
+                    } else {
+                        query << "?";
+                    }
+                }
+                query << " LIMIT 1";
+
+                auto stmt = std::unique_ptr<sql::PreparedStatement>(
+                    conn->prepareStatement(query.str())
+                    );
+
+                for (std::size_t i = 0; i < bind_values.size(); ++i) {
+                    bindValue(stmt.get(), static_cast<int>(i + 1), bind_values[i]);
+                }
+
+                auto rs = std::unique_ptr<sql::ResultSet>(stmt->executeQuery());
+                return rs->next();
+
+            } catch (const sql::SQLException& e) {
+                spdlog::get("sea.persistence")->error(
+                    "pivot_exists SQL error: {} (code={})",
+                    e.what(), e.getErrorCode()
+                    );
+                return false;
+            } catch (const std::exception& e) {
+                spdlog::get("sea.persistence")->error(
+                    "pivot_exists error: {}", e.what()
+                    );
+                return false;
+            }
+        }
+        );
+}
+
 
 // ────────────────────────────────────────────────────────────────────────
 // in_transaction

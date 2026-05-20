@@ -91,6 +91,8 @@ add_executable(backend_seastar
     src/http/utils/multipart_parser.h src/http/utils/multipart_parser.cpp
     src/http/handlers/file_handlers/file_upload_extractor.h src/http/handlers/file_handlers/file_upload_extractor.cpp
     src/http/handlers/file_handlers/file_download_by_field_handler.h src/http/handlers/file_handlers/file_download_by_field_handler.cpp
+    src/http/handlers/relation_handlers/attach_many_to_many_handler.h src/http/handlers/relation_handlers/attach_many_to_many_handler.cpp
+    src/http/handlers/relation_handlers/detach_many_to_many_handler.h src/http/handlers/relation_handlers/detach_many_to_many_handler.cpp
 
 
 

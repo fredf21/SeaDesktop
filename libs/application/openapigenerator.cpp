@@ -802,6 +802,130 @@ void OpenApiGenerator::add_relation_paths(
                 }
 
                 paths[m2m_path]["get"] = op;
+                // ─────────────────────────────────────────────────────
+                // POST /<entity>s/{id}/<relation>/{target_id}
+                // DELETE /<entity>s/{id}/<relation>/{target_id}
+                //
+                // Routes attach/detach pour gerer les associations
+                // many-to-many. Le chemin est construit a partir de
+                // l'entite SOURCE (qui declare la relation) et pas de
+                // l'entite cible : c'est /articles/{id}/tags/{target_id}
+                // et pas /tags/{id}/articles/{target_id}.
+                //
+                // Le chemin doit correspondre EXACTEMENT a celui declare
+                // dans route_registration.cpp et route_generator.cpp.
+                // ─────────────────────────────────────────────────────
+                const std::string attach_path =
+                    parent_plural + "/{id}/" + relation.name + "/{target_id}";
+
+                // Parametres path partages entre POST et DELETE
+                json attach_params = json::array({
+                    {
+                        {"name", "id"},
+                        {"in", "path"},
+                        {"required", true},
+                        {"description", "ID of the source resource (" + entity.name + ")"},
+                        {"schema", {{"type", "string"}}}
+                    },
+                    {
+                        {"name", "target_id"},
+                        {"in", "path"},
+                        {"required", true},
+                        {"description", "ID of the target resource (" + relation.target_entity + ")"},
+                        {"schema", {{"type", "string"}}}
+                    }
+                });
+
+                // ─── POST attach ───────────────────────────────────────
+                json attach_op = {
+                    {"tags", json::array({entity.name})},
+                    {"summary",
+                     "Associate a " + relation.target_entity + " with a " + entity.name},
+                    {"description",
+                     "Creates an association between " + entity.name +
+                         " and " + relation.target_entity +
+                         " in the pivot table '" + relation.pivot_table + "'."},
+                    {"parameters", attach_params},
+                    {"responses", {
+                                      {"201", {
+                                                  {"description", "Association created"},
+                                                  {"content", {
+                                                                  {"application/json", {
+                                                                                           {"schema", {
+                                                                                                          {"type", "object"},
+                                                                                                          {"properties", {
+                                                                                                                             {"status",    {{"type", "string"}, {"example", "associated"}}},
+                                                                                                                             {"source_id", {{"type", "string"}}},
+                                                                                                                             {"target_id", {{"type", "string"}}}
+                                                                                                                         }}
+                                                                                                      }}
+                                                                                       }}
+                                                              }}
+                                              }},
+                                      {"400", {
+                                                  {"description", "Missing parameters"},
+                                                  {"content", {{"application/json", {{"schema", {{"$ref", "#/components/schemas/ErrorResponse"}}}}}}}
+                                              }},
+                                      {"401", {{"description", "Unauthenticated"}}},
+                                      {"403", {
+                                                  {"description", "Forbidden by ABAC"},
+                                                  {"content", {{"application/json", {{"schema", {{"$ref", "#/components/schemas/ErrorResponse"}}}}}}}
+                                              }},
+                                      {"404", {
+                                                  {"description", "Source or target resource not found"},
+                                                  {"content", {{"application/json", {{"schema", {{"$ref", "#/components/schemas/ErrorResponse"}}}}}}}
+                                              }},
+                                      {"409", {
+                                                  {"description", "Association already exists"},
+                                                  {"content", {{"application/json", {{"schema", {{"$ref", "#/components/schemas/ErrorResponse"}}}}}}}
+                                              }}
+                                  }}
+                };
+
+                if (requires_auth) {
+                    attach_op["security"] = json::array({bearer_security()});
+                } else {
+                    attach_op["security"] = json::array();
+                }
+
+                paths[attach_path]["post"] = attach_op;
+
+                // ─── DELETE detach ─────────────────────────────────────
+                json detach_op = {
+                    {"tags", json::array({entity.name})},
+                    {"summary",
+                     "Remove a " + relation.target_entity + " from a " + entity.name},
+                    {"description",
+                     "Removes an association between " + entity.name +
+                         " and " + relation.target_entity +
+                         " from the pivot table '" + relation.pivot_table + "'."},
+                    {"parameters", attach_params},
+                    {"responses", {
+                                      {"204", {{"description", "Association deleted"}}},
+                                      {"400", {
+                                                  {"description", "Missing parameters"},
+                                                  {"content", {{"application/json", {{"schema", {{"$ref", "#/components/schemas/ErrorResponse"}}}}}}}
+                                              }},
+                                      {"401", {{"description", "Unauthenticated"}}},
+                                      {"403", {
+                                                  {"description", "Forbidden by ABAC"},
+                                                  {"content", {{"application/json", {{"schema", {{"$ref", "#/components/schemas/ErrorResponse"}}}}}}}
+                                              }},
+                                      {"404", {
+                                                  {"description", "Source/target resource not found or association does not exist"},
+                                                  {"content", {{"application/json", {{"schema", {{"$ref", "#/components/schemas/ErrorResponse"}}}}}}}
+                                              }}
+                                  }}
+                };
+
+                if (requires_auth) {
+                    detach_op["security"] = json::array({bearer_security()});
+                } else {
+                    detach_op["security"] = json::array();
+                }
+
+                paths[attach_path]["delete"] = detach_op;
+
             }
         }
     }

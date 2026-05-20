@@ -126,6 +126,46 @@ public:
     virtual seastar::future<bool>
     insert_pivot(const std::string& pivot_table,
                  runtime::DynamicRecord values) = 0;
+    // ─────────────────────────────────────────────────────────
+    // delete_pivot
+    //
+    // Supprime une association dans une table pivot many-to-many.
+    //
+    // 'values' contient les colonnes identifiant l'association a
+    // supprimer (ex : {source_fk: id_a, target_fk: id_b}).
+    //
+    // Retourne :
+    //   - true si au moins une ligne a ete supprimee (association
+    //     trouvee et supprimee)
+    //   - false si aucune ligne ne correspondait (association
+    //     inexistante)
+    //
+    // Symetrique d'insert_pivot.
+    // ─────────────────────────────────────────────────────────
+    virtual seastar::future<bool>
+    delete_pivot(const std::string& pivot_table,
+                 runtime::DynamicRecord values) = 0;
+
+    // ─────────────────────────────────────────────────────────
+    // pivot_exists
+    //
+    // Verifie si une association existe dans une table pivot
+    // many-to-many.
+    //
+    // 'values' contient les colonnes identifiant l'association
+    // recherchee (ex : {source_fk: id_a, target_fk: id_b}).
+    //
+    // Retourne :
+    //   - true si l'association existe
+    //   - false sinon
+    //
+    // Utilise par les handlers Attach/Detach pour distinguer :
+    //   - association existante (409 sur attach, 200/204 sur detach)
+    //   - association inexistante (200/204 sur attach, 404 sur detach)
+    // ─────────────────────────────────────────────────────────
+    virtual seastar::future<bool>
+    pivot_exists(const std::string& pivot_table,
+                 runtime::DynamicRecord values) = 0;
 
     // ─────────────────────────────────────────────────────────
     // Pagination

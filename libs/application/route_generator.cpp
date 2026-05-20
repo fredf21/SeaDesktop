@@ -267,16 +267,16 @@ RouteGenerator::generate(const sea::domain::Service& service) const {
                 // ─────────────────────────────────────────────────────────────────────
 
             }
-
             if (relation.kind == sea::domain::RelationKind::ManyToMany) {
                 const std::string target_path = plural_path_from_entity(relation.target_entity);
 
+                // ─── GET /<target>s/filter/with_<parent>/{id} (existant) ───
                 routes.push_back({
                     .method = HttpMethod::Get,
                     .path = target_path + "/filter/with_" + parent_name + "/{id}",
                     .entity_name = relation.target_entity,
                     .operation_name = "list_many_to_many",
-                    .requires_auth = needs_auth         // ← AJOUT
+                    .requires_auth = needs_auth
                 });
 
                 const auto* m2m_target = find_entity_in_schema(schema, relation.target_entity);
@@ -291,7 +291,32 @@ RouteGenerator::generate(const sea::domain::Service& service) const {
                         );
                 }
 
+                // ─── POST /<entity>s/{id}/<relation>/{target_id} (NOUVEAU) ───
+                //
+                // Cree une association dans la table pivot.
+                //
+                // entity_name est volontairement celui de l'ENTITE SOURCE
+                // (pas la cible), car c'est elle qui porte la relation et
+                // c'est sur elle qu'OpenAPI groupe la route via le tag.
+                routes.push_back({
+                    .method = HttpMethod::Post,
+                    .path = parent_path + "/{id}/" + relation.name + "/{target_id}",
+                    .entity_name = entity.name,
+                    .operation_name = "attach_many_to_many",
+                    .requires_auth = needs_auth
+                });
+
+                // ─── DELETE /<entity>s/{id}/<relation>/{target_id} (NOUVEAU) ───
+                routes.push_back({
+                    .method = HttpMethod::Delete,
+                    .path = parent_path + "/{id}/" + relation.name + "/{target_id}",
+                    .entity_name = entity.name,
+                    .operation_name = "detach_many_to_many",
+                    .requires_auth = needs_auth
+                });
             }
+
+
         }
     }
 

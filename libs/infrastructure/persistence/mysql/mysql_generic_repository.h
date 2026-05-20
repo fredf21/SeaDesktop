@@ -29,6 +29,8 @@ public:
     seastar::future<sea::infrastructure::persistence::UpdateResponse> update(const std::string &entity_name, const std::string &id, runtime::DynamicRecord record) override;
     seastar::future<bool> insert_pivot(const std::string& pivot_table,
                                        runtime::DynamicRecord values) override;
+    seastar::future<bool> delete_pivot(const std::string &pivot_table, runtime::DynamicRecord values);
+    seastar::future<bool> pivot_exists(const std::string &pivot_table, runtime::DynamicRecord values);
     seastar::future<std::optional<runtime::DynamicRecord>>
     find_one_by_field(const std::string& entity_name,
                       const std::string& field_name,
@@ -78,6 +80,9 @@ private:
 
     // Helpers internes
     bool is_in_transaction() const noexcept { return _active_txn_connection != nullptr; }
+
+
+
 };
 
 } // namespace sea::infrastructure::persistence:mysql

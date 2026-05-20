@@ -140,7 +140,7 @@ std::string MysqlSchemaGenerator::generate_create_database_sql(
 // ─────────────────────────────────────────────────────────────
 std::string MysqlSchemaGenerator::resolve_table_name(const sea::domain::Entity& entity)
 {
-    return !entity.table_name.empty() ? entity.table_name : entity.name;
+    return !entity.table_name.empty() ? entity.table_name : sea::domain::Entity::to_route_plural(entity.name);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -219,7 +219,8 @@ std::string MysqlSchemaGenerator::generate_create_table_sql(
         if (relation.fk_column.empty()) {
             continue;
         }
-
+        const std::string target_table =
+            sea::domain::Entity::to_route_plural(relation.target_entity);
         // Index sur la FK (perfs des JOIN)
         sql << ",\n  INDEX `idx_" << relation.fk_column
             << "` (`" << relation.fk_column << "`)";
@@ -227,7 +228,7 @@ std::string MysqlSchemaGenerator::generate_create_table_sql(
         // Contrainte FK
         sql << ",\n  CONSTRAINT `fk_" << table_name << "_" << relation.fk_column << "`"
             << "\n    FOREIGN KEY (`" << relation.fk_column << "`)"
-            << "\n    REFERENCES `" << relation.target_entity << "` (`id`)"
+            << "\n    REFERENCES `" << target_table << "` (`id`)"
             << "\n    ON DELETE " << on_delete_to_sql(relation.on_delete);
     }
 
@@ -324,7 +325,7 @@ std::string MysqlSchemaGenerator::generate_add_index_sql(
 }
 
 // ─────────────────────────────────────────────────────────────
-// generate_drop_index_sql (Phase B.2)
+// generate_drop_index_sql
 // ─────────────────────────────────────────────────────────────
 std::string MysqlSchemaGenerator::generate_drop_index_sql(
     const std::string& table_name,
@@ -337,9 +338,9 @@ std::string MysqlSchemaGenerator::generate_drop_index_sql(
 }
 
 // ─────────────────────────────────────────────────────────────
-// generate_add_unique_sql (Phase B.2)
+// generate_add_unique_sql
 //
-// Convention : UNIQUE constraint nomme `uk_<column>` (coherent avec Phase A).
+// Convention : UNIQUE constraint nomme `uk_<column>`.
 // ─────────────────────────────────────────────────────────────
 std::string MysqlSchemaGenerator::generate_add_unique_sql(
     const std::string& table_name,

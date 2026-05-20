@@ -619,7 +619,7 @@ int main(int argc, char** argv)
         }
 
         // ─────────────────────────────────────────────────────
-        // 14. PolicyEngine (Module 5 - Authorization)
+        // 14. PolicyEngine
         // ─────────────────────────────────────────────────────
         std::shared_ptr<sea::application::access_control::PolicyEngine>
             policy_engine = nullptr;
@@ -702,7 +702,7 @@ int main(int argc, char** argv)
         // ─────────────────────────────────────────────────────
         auto server =
             std::make_shared<seastar::httpd::http_server_control>();
-
+        std::exception_ptr boot_error;
         try {
             co_await server->start();
 
@@ -1007,18 +1007,33 @@ int main(int argc, char** argv)
         }
 
         // ─────────────────────────────────────────────────────
-        // 18. Cleanup
+        // 18. Cleanup garanti — execute toujours, meme apres exception
         // ─────────────────────────────────────────────────────
-        co_await server->stop();
+        try {
+            co_await server->stop();
+        } catch (const std::exception& e) {
+            spdlog::get("sea.boot")->error("server->stop() failed: {}", e.what());
+        }
 
         if (service.database_config.type == sea::domain::DatabaseType::MySQL) {
-            co_await mysql_pool->stop();
+            try {
+                co_await mysql_pool->stop();
+            } catch (const std::exception& e) {
+                spdlog::get("sea.boot")->error("mysql_pool->stop() failed: {}", e.what());
+            }
         }
 
         if (rate_limits_enabled) {
-            co_await rate_limit_store->stop();
+            try {
+                co_await rate_limit_store->stop();
+            } catch (const std::exception& e) {
+                spdlog::get("sea.boot")->error("rate_limit_store->stop() failed: {}", e.what());
+            }
         }
 
+        if (boot_error) {
+            std::rethrow_exception(boot_error);
+        }
         co_return;
     });
 }

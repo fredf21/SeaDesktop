@@ -267,6 +267,21 @@ GenericCrudEngine::update(const std::string& entity_name,
 
 
 }
+seastar::future<bool>
+GenericCrudEngine::pivot_exists(
+    const std::string& pivot_table,
+    runtime::DynamicRecord values)
+{
+    return repository_->pivot_exists(pivot_table, std::move(values));
+}
+
+seastar::future<bool>
+GenericCrudEngine::delete_pivot(
+    const std::string& pivot_table,
+    runtime::DynamicRecord values)
+{
+    return repository_->delete_pivot(pivot_table, std::move(values));
+}
 
 seastar::future<bool> GenericCrudEngine::remove(const std::string& entity_name,
                                                 const std::string& id) {

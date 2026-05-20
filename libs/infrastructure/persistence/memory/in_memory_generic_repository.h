@@ -150,6 +150,11 @@ private:
     collect_all_sorted(const std::string& entity_name,
                        const std::optional<std::string>& sort_field,
                        bool sort_desc) const;
+
+    // IGenericRepository interface
+public:
+    seastar::future<bool> delete_pivot(const std::string &pivot_table, runtime::DynamicRecord values);
+    seastar::future<bool> pivot_exists(const std::string &pivot_table, runtime::DynamicRecord values);
 };
 
 } // namespace sea::infrastructure::persistence

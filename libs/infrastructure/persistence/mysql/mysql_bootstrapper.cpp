@@ -563,8 +563,8 @@ MysqlBootstrapper::compute_and_apply_diff(
                 relation.pivot_table,
                 relation.source_fk_column,
                 relation.target_fk_column,
-                entity.name,
-                relation.target_entity,
+                sea::domain::Entity::to_route_plural(entity.name),
+                sea::domain::Entity::to_route_plural(relation.target_entity),
                 relation.on_delete
                 );
 

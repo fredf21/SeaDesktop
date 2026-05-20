@@ -1,4 +1,5 @@
 #include "in_memory_generic_repository.h"
+#include "spdlog/spdlog.h"
 
 #include <variant>
 #include <algorithm>
@@ -592,6 +593,32 @@ InMemoryGenericRepository::increment_field(const std::string& entity_name,
         value);
 
     return seastar::make_ready_future<bool>(incremented);
+}
+// Le backend in-memory ne supporte pas les pivots (utile uniquement
+// pour les tests). Les stubs retournent false et logguent un warning.
+
+seastar::future<bool>
+InMemoryGenericRepository::delete_pivot(
+    const std::string& pivot_table,
+    runtime::DynamicRecord values)
+{
+    (void)pivot_table;
+    (void)values;
+    spdlog::get("sea.persistence")->warn(
+        "InMemoryGenericRepository::delete_pivot not implemented");
+    return seastar::make_ready_future<bool>(false);
+}
+
+seastar::future<bool>
+InMemoryGenericRepository::pivot_exists(
+    const std::string& pivot_table,
+    runtime::DynamicRecord values)
+{
+    (void)pivot_table;
+    (void)values;
+    spdlog::get("sea.persistence")->warn(
+        "InMemoryGenericRepository::pivot_exists not implemented");
+    return seastar::make_ready_future<bool>(false);
 }
 
 } // namespace sea::infrastructure::persistence
