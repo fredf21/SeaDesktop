@@ -48,7 +48,7 @@ public:
         std::unique_ptr<seastar::httpd::handler_base> inner,
         const sea::domain::Schema* schema,
         const sea::domain::access_control::AccessControlConfig* config,
-        std::shared_ptr<sea::application::access_control::PolicyEngine> policy_engine
+        std::shared_ptr<sea::domain::access_control::PolicyEngine> policy_engine
         );
 
     seastar::future<std::unique_ptr<seastar::http::reply>> handle(
@@ -61,7 +61,7 @@ private:
     std::unique_ptr<seastar::httpd::handler_base> inner_;
     const sea::domain::Schema* schema_;
     const sea::domain::access_control::AccessControlConfig* config_;
-    std::shared_ptr<sea::application::access_control::PolicyEngine> policy_engine_;
+    std::shared_ptr<sea::domain::access_control::PolicyEngine> policy_engine_;
     RouteAuthorizationResolver resolver_;
 };
 
@@ -75,7 +75,7 @@ std::unique_ptr<seastar::httpd::handler_base> apply_authorization(
     std::unique_ptr<seastar::httpd::handler_base> handler,
     const sea::domain::Schema& schema,
     const sea::domain::access_control::AccessControlConfig& config,
-    std::shared_ptr<sea::application::access_control::PolicyEngine> policy_engine
+    std::shared_ptr<sea::domain::access_control::PolicyEngine> policy_engine
     );
 
 } // namespace sea::http::middlewares

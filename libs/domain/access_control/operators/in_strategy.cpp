@@ -1,7 +1,7 @@
 #include "in_strategy.h"
 #include <algorithm>
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 bool InStrategy::evaluate(
     const ResolvedValue& left,

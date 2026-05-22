@@ -7,7 +7,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 /**
  * Évalue un regex_match en utilisant les regex pré-compilées au boot.

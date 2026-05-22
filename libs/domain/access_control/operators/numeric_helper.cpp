@@ -1,6 +1,6 @@
 #include "numeric_helper.h"
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 std::optional<double> NumericHelper::parse(const std::string& s) noexcept
 {

@@ -3,7 +3,7 @@
 
 #include "operator_strategy.h"
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 /**
  * Égalité stricte de valeurs.
@@ -24,6 +24,6 @@ public:
     std::string_view name() const noexcept override { return "equals"; }
 };
 
-} // namespace sea::application::access_control
+} // namespace sea::domain::access_control
 
 #endif

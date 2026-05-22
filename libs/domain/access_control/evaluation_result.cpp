@@ -2,7 +2,7 @@
 
 #include <sstream>
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 std::string EvaluationResult::format_for_log() const
 {
@@ -30,4 +30,4 @@ std::string EvaluationResult::format_for_log() const
     return oss.str();
 }
 
-} // namespace sea::application::access_control
+} // namespace sea::domain::access_control

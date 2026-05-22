@@ -21,12 +21,35 @@ std::optional<std::string> dynamic_value_to_string(const runtime::DynamicValue& 
     if (std::holds_alternative<std::string>(value)) {
         return std::get<std::string>(value);
     }
+
+    if (std::holds_alternative<std::int16_t>(value)) {
+        return std::to_string(std::get<std::int16_t>(value));
+    }
+
+    if (std::holds_alternative<std::uint16_t>(value)) {
+        return std::to_string(std::get<std::uint16_t>(value));
+    }
+
+    if (std::holds_alternative<std::int32_t>(value)) {
+        return std::to_string(std::get<std::int32_t>(value));
+    }
+
+    if (std::holds_alternative<std::uint32_t>(value)) {
+        return std::to_string(std::get<std::uint32_t>(value));
+    }
+
     if (std::holds_alternative<std::int64_t>(value)) {
         return std::to_string(std::get<std::int64_t>(value));
     }
+
+    if (std::holds_alternative<std::uint64_t>(value)) {
+        return std::to_string(std::get<std::uint64_t>(value));
+    }
+
     if (std::holds_alternative<double>(value)) {
         return std::to_string(std::get<double>(value));
     }
+
     if (std::holds_alternative<bool>(value)) {
         return std::get<bool>(value) ? "true" : "false";
     }
@@ -326,13 +349,49 @@ InMemoryGenericRepository::insert_pivot(const std::string& pivot_table,
 }
 
 /**
- * Pour le backend Memory, "in_transaction" est essentiellement un no-op :
- * - Pas de vraie ACID en memoire
- * - Mais on respecte le contrat : execute la lambda et retourne le resultat
+ * Exécute une unité de travail dans une "transaction" mémoire.
  *
- * Note : si la lambda retourne false ou throw, on NE peut PAS rollback les
- * modifications deja faites (pas de snapshot). C'est une limitation acceptable
- * pour un backend de dev/test.
+ * Important :
+ * Le backend InMemoryGenericRepository ne possède pas de vraie transaction
+ * ACID. Il n'y a ni BEGIN, ni COMMIT réel, ni ROLLBACK réel. Cette méthode
+ * existe uniquement pour respecter le contrat de IGenericRepository et pour
+ * permettre au runtime d'utiliser la même API avec tous les backends.
+ *
+ * Comportement :
+ * - Si work() retourne true :
+ *     la transaction est considérée comme validée.
+ *
+ * - Si work() retourne false :
+ *     la transaction est considérée comme échouée.
+ *     Un message d'erreur est retourné.
+ *
+ * - Si work() lance une exception :
+ *     l'exception est capturée.
+ *     La transaction est considérée comme échouée.
+ *     Le message d'erreur contient le détail de l'exception.
+ *
+ * Limitation importante :
+ * Comme il n'y a pas de vrai rollback en mémoire, les modifications effectuées
+ * dans work() restent appliquées, même si work() retourne false ou lance une
+ * exception après avoir modifié le repository.
+ *
+ * Pourquoi cette implémentation n'utilise pas co_await :
+ * Les méthodes du backend mémoire retournent des futures déjà résolus avec
+ * seastar::make_ready_future(...). Dans les tests unitaires QtTest, il n'y a
+ * pas de reactor Seastar actif. Utiliser co_await ici forcerait Seastar à
+ * planifier une continuation dans le reactor, ce qui peut provoquer un crash.
+ *
+ * Cette fonction consomme donc uniquement un future déjà disponible.
+ * Si work() retourne un future non résolu, la transaction échoue proprement
+ * avec un message explicite.
+ *
+ * @param work Fonction représentant le travail transactionnel à exécuter.
+ *             Elle doit retourner un seastar::future<bool> déjà résolu.
+ *
+ * @return Un ready future contenant TransactionResult :
+ *         - committed = true si work() retourne true
+ *         - committed = false si work() retourne false, lance une exception,
+ *           ou retourne un future non disponible immédiatement.
  */
 seastar::future<sea::infrastructure::persistence::TransactionResult>
 InMemoryGenericRepository::in_transaction(std::function<seastar::future<bool>()> work)
@@ -341,22 +400,39 @@ InMemoryGenericRepository::in_transaction(std::function<seastar::future<bool>()>
     std::string error_message;
 
     try {
-        committed = co_await work();
+        auto future = work();
+
+        if (!future.available()) {
+            return seastar::make_ready_future<TransactionResult>(
+                TransactionResult{
+                    .committed = false,
+                    .error_message =
+                    "Memory transaction work returned a non-ready future"
+                }
+                );
+        }
+
+        committed = std::move(future).get();
+
         if (!committed) {
-            error_message = "Transaction returned false (no real rollback in Memory backend)";
+            error_message =
+                "Transaction returned false (no real rollback in Memory backend)";
         }
     } catch (const std::exception& e) {
         committed = false;
-        error_message = std::string("Exception in Memory transaction: ") + e.what();
+        error_message =
+            std::string("Exception in Memory transaction: ") + e.what();
     } catch (...) {
         committed = false;
         error_message = "Unknown exception in Memory transaction";
     }
 
-    co_return sea::infrastructure::persistence::TransactionResult{
-        .committed = committed,
-        .error_message = std::move(error_message)
-    };
+    return seastar::make_ready_future<TransactionResult>(
+        TransactionResult{
+            .committed = committed,
+            .error_message = std::move(error_message)
+        }
+        );
 }
 
 // ═══════════════════════════════════════════════════════════════════

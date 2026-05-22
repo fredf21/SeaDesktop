@@ -16,20 +16,21 @@ bool GenericValidator::matches_type(sea::domain::FieldType type,
     case sea::domain::FieldType::Email:
     case sea::domain::FieldType::Timestamp:
     case sea::domain::FieldType::Decimal:
+    case sea::domain::FieldType::File:
         return std::holds_alternative<std::string>(value);
-
-    case sea::domain::FieldType::Int:
-    case sea::domain::FieldType::BigInt:
     case sea::domain::FieldType::SmallInt:
-
-        return std::holds_alternative<std::int64_t>(value);
-
+        return std::holds_alternative<std::int16_t>(value)
+               || std::holds_alternative<std::uint16_t>(value);
+    case sea::domain::FieldType::Int:
+        return std::holds_alternative<std::int32_t>(value)
+               || std::holds_alternative<std::uint32_t>(value);
+    case sea::domain::FieldType::BigInt:
+        return std::holds_alternative<std::int64_t>(value)
+               || std::holds_alternative<std::uint64_t>(value);
     case sea::domain::FieldType::Float:
         return std::holds_alternative<double>(value);
-
     case sea::domain::FieldType::Bool:
         return std::holds_alternative<bool>(value);
-
     case sea::domain::FieldType::Binary:
         return std::holds_alternative<std::vector<std::uint8_t>>(value);
     case sea::domain::FieldType::Json:
@@ -116,6 +117,18 @@ GenericValidator::validate(const sea::domain::Entity& entity,
                     errors.push_back("Field below minimum: " + field.name);
                 }
             }
+            else if (std::holds_alternative<std::uint32_t>(value) &&
+                     std::holds_alternative<std::uint32_t>(*field.min_value)) {
+                if (std::get<std::uint32_t>(value) < std::get<std::uint32_t>(*field.min_value)) {
+                    errors.push_back("Field below minimum: " + field.name);
+                }
+            }
+            else if (std::holds_alternative<std::int32_t>(value) &&
+                     std::holds_alternative<std::int32_t>(*field.min_value)) {
+                if (std::get<std::int32_t>(value) < std::get<std::int32_t>(*field.min_value)) {
+                    errors.push_back("Field below minimum: " + field.name);
+                }
+            }
         }
 
         if (field.max_value.has_value()) {
@@ -127,6 +140,18 @@ GenericValidator::validate(const sea::domain::Entity& entity,
             } else if (std::holds_alternative<double>(value) &&
                        std::holds_alternative<double>(*field.max_value)) {
                 if (std::get<double>(value) > std::get<double>(*field.max_value)) {
+                    errors.push_back("Field above maximum: " + field.name);
+                }
+            }
+            else if (std::holds_alternative<std::uint32_t>(value) &&
+                     std::holds_alternative<std::uint32_t>(*field.max_value)) {
+                if (std::get<std::uint32_t>(value) > std::get<std::uint32_t>(*field.max_value)) {
+                    errors.push_back("Field above maximum: " + field.name);
+                }
+            }
+            else if (std::holds_alternative<std::int32_t>(value) &&
+                     std::holds_alternative<std::int32_t>(*field.max_value)) {
+                if (std::get<std::int32_t>(value) > std::get<std::int32_t>(*field.max_value)) {
                     errors.push_back("Field above maximum: " + field.name);
                 }
             }
@@ -195,6 +220,18 @@ std::vector<std::string> GenericValidator::validate_partial(const domain::Entity
                     errors.push_back("Field below minimum: " + field.name);
                 }
             }
+            else if (std::holds_alternative<std::uint32_t>(value) &&
+                     std::holds_alternative<std::uint32_t>(*field.min_value)) {
+                if (std::get<std::uint32_t>(value) < std::get<std::uint32_t>(*field.min_value)) {
+                    errors.push_back("Field below minimum: " + field.name);
+                }
+            }
+            else if (std::holds_alternative<std::int32_t>(value) &&
+                     std::holds_alternative<std::int32_t>(*field.min_value)) {
+                if (std::get<std::int32_t>(value) < std::get<std::int32_t>(*field.min_value)) {
+                    errors.push_back("Field below minimum: " + field.name);
+                }
+            }
         }
 
         if (field.max_value.has_value()) {
@@ -206,6 +243,18 @@ std::vector<std::string> GenericValidator::validate_partial(const domain::Entity
             } else if (std::holds_alternative<double>(value) &&
                        std::holds_alternative<double>(*field.max_value)) {
                 if (std::get<double>(value) > std::get<double>(*field.max_value)) {
+                    errors.push_back("Field above maximum: " + field.name);
+                }
+            }
+            else if (std::holds_alternative<std::uint32_t>(value) &&
+                     std::holds_alternative<std::uint32_t>(*field.max_value)) {
+                if (std::get<std::uint32_t>(value) > std::get<std::uint32_t>(*field.max_value)) {
+                    errors.push_back("Field above maximum: " + field.name);
+                }
+            }
+            else if (std::holds_alternative<std::int32_t>(value) &&
+                     std::holds_alternative<std::int32_t>(*field.max_value)) {
+                if (std::get<std::int32_t>(value) > std::get<std::int32_t>(*field.max_value)) {
                     errors.push_back("Field above maximum: " + field.name);
                 }
             }

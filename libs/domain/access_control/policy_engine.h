@@ -15,7 +15,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 /**
  * Le moteur d'évaluation principal.
@@ -104,6 +104,6 @@ private:
     const OperatorRegistry& registry_;
 };
 
-} // namespace sea::application::access_control
+} // namespace sea::domain::access_control
 
 #endif // SEA_APPLICATION_ACCESS_CONTROL_POLICY_ENGINE_H

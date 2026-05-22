@@ -114,6 +114,26 @@ std::string mysql_column_type_for_field(const sea::domain::Field& field)
         }
         return "VARCHAR(255)";
     }
+    // ── Types numeriques entiers : suffixe UNSIGNED si demande ──
+    case FieldType::Int:
+    case FieldType::BigInt:
+    case FieldType::SmallInt: {
+        std::string base = std::string(sea::domain::to_mysql_type(field.type));
+        if (field.unsigned_value) {
+            base += " UNSIGNED";
+        }
+        return base;
+    }
+
+    // ── Decimal et Float peuvent aussi etre UNSIGNED en MySQL ──
+    case FieldType::Decimal:
+    case FieldType::Float: {
+        std::string base = std::string(sea::domain::to_mysql_type(field.type));
+        if (field.unsigned_value) {
+            base += " UNSIGNED";
+        }
+        return base;
+    }
     default:
         // Tous les autres types : utilise le mapping basique
         return std::string(sea::domain::to_mysql_type(field.type));

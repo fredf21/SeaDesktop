@@ -1,5 +1,5 @@
 #include "contains_strategy.h"
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 bool ContainsStrategy::evaluate(const ResolvedValue& l, const ResolvedValue& r) const
 {
     // List contains scalar

@@ -9,7 +9,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 /**
  * Catalogue des stratégies d'opérateurs.

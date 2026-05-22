@@ -1,6 +1,6 @@
 #include "regex_match_strategy.h"
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 RegexMatchStrategy::RegexMatchStrategy(
     std::unordered_map<std::string, std::regex> regex_cache)

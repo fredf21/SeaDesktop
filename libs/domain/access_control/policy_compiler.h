@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 /**
  * Pré-compile et valide les règles d'autorisation au boot du serveur.
@@ -54,6 +54,6 @@ private:
         std::vector<std::string>& patterns);
 };
 
-} // namespace sea::application::access_control
+} // namespace sea::domain::access_control
 
 #endif // SEA_APPLICATION_ACCESS_CONTROL_POLICY_COMPILER_H

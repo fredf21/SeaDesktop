@@ -2,7 +2,7 @@
 #define STARTS_WITH_STRATEGY_H
 
 #include "operator_strategy.h"
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 class StartsWithStrategy : public OperatorStrategy {
 public:

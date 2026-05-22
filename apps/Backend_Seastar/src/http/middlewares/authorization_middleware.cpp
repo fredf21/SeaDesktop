@@ -29,8 +29,8 @@ using sea::domain::access_control::AbacMode;
 using sea::domain::access_control::CrudOperation;
 using sea::domain::access_control::PolicySubject;
 using sea::domain::access_control::PolicyContext;
-using sea::application::access_control::EvaluationOptions;
-using sea::application::access_control::EvaluationResult;
+using sea::domain::access_control::EvaluationOptions;
+using sea::domain::access_control::EvaluationResult;
 
 // ──────────────────────────────────────────────────────────────────
 // Helpers strings
@@ -240,7 +240,7 @@ CheckResult evaluate_single_check(
     const AuthorizationCheck& check,
     const sea::domain::Schema& schema,
     const sea::domain::access_control::AccessControlConfig& config,
-    const sea::application::access_control::PolicyEngine& engine,
+    const sea::domain::access_control::PolicyEngine& engine,
     const PolicySubject& subject,
     const PolicyContext& context)
 {
@@ -318,7 +318,7 @@ AuthorizationMiddleware::AuthorizationMiddleware(
     std::unique_ptr<seastar::httpd::handler_base> inner,
     const sea::domain::Schema* schema,
     const sea::domain::access_control::AccessControlConfig* config,
-    std::shared_ptr<sea::application::access_control::PolicyEngine> policy_engine)
+    std::shared_ptr<sea::domain::access_control::PolicyEngine> policy_engine)
     : inner_(std::move(inner))
     , schema_(schema)
     , config_(config)
@@ -432,7 +432,7 @@ std::unique_ptr<seastar::httpd::handler_base> apply_authorization(
     std::unique_ptr<seastar::httpd::handler_base> handler,
     const sea::domain::Schema& schema,
     const sea::domain::access_control::AccessControlConfig& config,
-    std::shared_ptr<sea::application::access_control::PolicyEngine> policy_engine)
+    std::shared_ptr<sea::domain::access_control::PolicyEngine> policy_engine)
 {
     if (!config.enabled()) {
         return handler;

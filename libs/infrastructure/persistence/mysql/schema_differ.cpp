@@ -40,7 +40,12 @@ std::size_t extract_varchar_size(const std::string& mysql_type)
 
 std::string extract_type_base(const std::string& mysql_type)
 {
-    const auto lower = to_lower(mysql_type);
+    auto lower = to_lower(mysql_type);
+    // Retire le suffixe " unsigned" si present
+    const auto uns = lower.find(" unsigned");
+    if (uns != std::string::npos) {
+        lower = lower.substr(0, uns);
+    }
     const auto paren = lower.find('(');
     if (paren != std::string::npos) {
         return lower.substr(0, paren);
@@ -76,6 +81,18 @@ std::string SchemaDiffer::field_to_target_type(const sea::domain::Field& field)
             return "varchar(" + std::to_string(max) + ")";
         }
         return "varchar(255)";
+    }
+    // ── Types numeriques : suffixe " unsigned" si demande ──
+    case FieldType::Int:
+    case FieldType::BigInt:
+    case FieldType::SmallInt:
+    case FieldType::Decimal:
+    case FieldType::Float: {
+        std::string base = to_lower(std::string(sea::domain::to_mysql_type(field.type)));
+        if (field.unsigned_value) {
+            base += " unsigned";
+        }
+        return base;
     }
     default:
         return to_lower(std::string(sea::domain::to_mysql_type(field.type)));
@@ -224,7 +241,7 @@ SchemaDiffer::compute_column_diffs(
 
             std::ostringstream desc;
             desc << "MODIFY COLUMN " << field.name << ": "
-                 << current_column->column_type << " → " << target_type
+                 << current_column->column_type << " -> " << target_type
                  << (diff.is_safe ? " (safe)" : " (UNSAFE)");
             diff.description = desc.str();
 
@@ -246,7 +263,7 @@ SchemaDiffer::compute_column_diffs(
 
             std::ostringstream desc;
             desc << "NULLABILITY: " << field.name
-                 << (mysql_nullable ? " NULL → NOT NULL" : " NOT NULL → NULL")
+                 << (mysql_nullable ? " NULL -> NOT NULL" : " NOT NULL → NULL")
                  << (diff.is_safe ? " (safe)" : " (UNSAFE)");
             diff.description = desc.str();
 
@@ -277,7 +294,7 @@ SchemaDiffer::compute_column_diffs(
 }
 
 // ─────────────────────────────────────────────────────────────
-// compute_index_diffs (Phase B.2) - inchange depuis B.2
+// compute_index_diffs
 // ─────────────────────────────────────────────────────────────
 std::vector<ColumnDiff>
 SchemaDiffer::compute_index_diffs(
@@ -495,7 +512,7 @@ SchemaDiffer::compute_renames(
         diff.is_safe = true;  // annotation explicite est toujours safe
 
         std::ostringstream desc;
-        desc << "RENAME COLUMN " << old_name << " → " << new_name
+        desc << "RENAME COLUMN " << old_name << " -> " << new_name
              << " (explicit, safe)";
         diff.description = desc.str();
 

@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <stdexcept>
 
 namespace sea::domain::access_control {
 

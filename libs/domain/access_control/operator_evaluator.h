@@ -5,7 +5,7 @@
 #include "operators/operator_registry.h"
 #include "value_resolver.h"
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 /**
  * Façade qui délègue l'évaluation à la stratégie appropriée

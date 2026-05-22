@@ -45,7 +45,7 @@ struct NativeDbType {
 // Contraintes numériques génériques
 // Permet de supporter à la fois Int et Float
 // ─────────────────────────────────────────────────────────────
-using NumericConstraint = std::variant<std::int64_t, std::uint64_t, double>;
+using NumericConstraint = std::variant<std::int64_t, std::int32_t, std::uint32_t, std::uint64_t, double>;
 
 // ─────────────────────────────────────────────────────────────
 // Représente un champ appartenant à une entité métier

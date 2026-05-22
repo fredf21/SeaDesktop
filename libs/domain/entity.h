@@ -39,6 +39,9 @@ using SeedValue = std::variant<
     std::monostate,
     std::string,
     std::int64_t,
+    std::int32_t,
+    std::uint64_t,
+    std::uint32_t,
     double,
     bool
     >;

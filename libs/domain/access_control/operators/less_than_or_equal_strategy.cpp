@@ -2,7 +2,7 @@
 
 #include "numeric_helper.h"
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 bool LessThanOrEqualStrategy::evaluate(const ResolvedValue& l, const ResolvedValue& r) const
 {

@@ -1,5 +1,5 @@
 #include "ends_with_strategy.h"
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 bool EndsWithStrategy::evaluate(const ResolvedValue& l, const ResolvedValue& r) const
 {

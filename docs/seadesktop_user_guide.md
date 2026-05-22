@@ -476,6 +476,18 @@ fields:
 
 **`file` type**: Binary content is stored in the filesystem according to the `storage` configuration. The database column contains a UUID pointing to the `sea_files` system table. See [section 10](#10-file-field).
 
+**Type `decimal`**: The `decimal` type stores an exact fixed-point number, suitable for
+monetary amounts.
+
+**Important**: `decimal` values must be sent as **JSON strings**, not as numbers:
+
+```json
+✅ Correct
+{ "price": "19.99" }
+
+❌ Incorrect — returns a 400 error
+{ "price": 19.99 }
+```
 ---
 
 ## 7. Common field attributes

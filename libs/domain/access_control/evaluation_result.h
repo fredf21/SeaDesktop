@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 /**
  * Détail d'un prédicat évalué (utilisé dans DetailLevel::Verbose).
@@ -47,6 +47,6 @@ struct EvaluationResult {
     std::string format_for_log() const;
 };
 
-} // namespace sea::application::access_control
+} // namespace sea::domain::access_control
 
 #endif // SEA_APPLICATION_ACCESS_CONTROL_EVALUATION_RESULT_H

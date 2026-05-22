@@ -2,7 +2,7 @@
 
 #include <stdexcept>
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 using namespace sea::domain::access_control;
 
@@ -73,4 +73,4 @@ void PolicyCompiler::collect_regex_patterns(
     }
 }
 
-} // namespace sea::application::access_control
+} // namespace sea::domain::access_control

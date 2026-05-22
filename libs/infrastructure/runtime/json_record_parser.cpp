@@ -3,6 +3,7 @@
 #include "persistence/utilities.h"
 
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -51,7 +52,8 @@ DynamicRecord JsonRecordParser::parse(const sea::domain::Entity& entity,
             case sea::domain::FieldType::Password:
             case sea::domain::FieldType::Email:
             case sea::domain::FieldType::Timestamp:
-            case sea::domain::FieldType::Decimal:{
+            case sea::domain::FieldType::Decimal:
+            case sea::domain::FieldType::File:{
                 if (!value.is_string()) {
                     throw sea::sea_errors_handling::RUNTIME_EXECUTION("[RUNTIME EXECUTION] Field '" + field.name + "' must be a string.");
                 }
@@ -67,54 +69,71 @@ DynamicRecord JsonRecordParser::parse(const sea::domain::Entity& entity,
                 if (!value.is_number_integer()) {
                     throw sea::sea_errors_handling::RUNTIME_EXECUTION("[RUNTIME EXECUTION] Field '" + field.name + "' must be an integer.");
                 }
-                if(unsignedvalue)
-                    record[field.name] = static_cast<std::uint64_t>(value.get<std::uint64_t>());
-                else record[field.name] = static_cast<std::int64_t>(value.get<std::int64_t>());
+                if (unsignedvalue) {
+                    // Un BIGINT non signé refuse les valeurs négatives.
+                    // is_number_unsigned() est vrai uniquement si la
+                    // valeur JSON tient dans un entier non signé.
+                    if (!value.is_number_unsigned()) {
+                        throw sea::sea_errors_handling::RUNTIME_EXECUTION("[RUNTIME EXECUTION] Field '" + field.name + "' must be a positive integer (unsigned BIGINT).");
+                    }
+                    record[field.name] = value.get<std::uint64_t>();
+                }
+                else {
+                    record[field.name] = value.get<std::int64_t>();
+                }
                 break;
             }
             case sea::domain::FieldType::SmallInt:
-
-                {
-                    if (!value.is_number_integer()) {
-                        throw sea::sea_errors_handling::RUNTIME_EXECUTION("[RUNTIME EXECUTION] Field '" + field.name + "' must be an integer.");
-                    }
-                    if(unsignedvalue){
-                        if(value.get<std::uint16_t>() < std::numeric_limits<std::uint16_t>::min() ||  value.get<std::uint16_t>() > std::numeric_limits<std::uint16_t>::max()){
-                            throw sea::sea_errors_handling::RUNTIME_EXECUTION("[RUNTIME EXECUTION] Field '" + field.name + "' is outside the range of an unsigned SMALLINT.");
-                        }
-
-                        else record[field.name] = static_cast<std::uint16_t>(value.get<std::uint16_t>());
-                    }
-                    else{
-                        if(value.get<std::int16_t>() < std::numeric_limits<std::int16_t>::min() ||  value.get<std::int16_t>() > std::numeric_limits<std::int16_t>::max()){
-                            throw sea::sea_errors_handling::RUNTIME_EXECUTION("[RUNTIME EXECUTION] Field '" + field.name + "' is outside the range of a SMALLINT.");
-                        }
-                        else record[field.name] = static_cast<std::int16_t>(value.get<std::int16_t>());
-                    }
-                    break;
+            {
+                if (!value.is_number_integer()) {
+                    throw sea::sea_errors_handling::RUNTIME_EXECUTION("[RUNTIME EXECUTION] Field '" + field.name + "' must be an integer.");
                 }
+                // On lit la valeur dans un type large (int64_t) AVANT
+                // toute conversion, puis on vérifie qu'elle tient dans
+                // le type cible. Lire directement en int16_t tronque
+                // la valeur et rend le contrôle de plage inopérant.
+                const std::int64_t raw = value.get<std::int64_t>();
+                if (unsignedvalue) {
+                    if (raw < 0 ||
+                        raw > static_cast<std::int64_t>(std::numeric_limits<std::uint16_t>::max())) {
+                        throw sea::sea_errors_handling::RUNTIME_EXECUTION("[RUNTIME EXECUTION] Field '" + field.name + "' is outside the range of an unsigned SMALLINT.");
+                    }
+                    record[field.name] = static_cast<std::uint16_t>(raw);
+                }
+                else {
+                    if (raw < static_cast<std::int64_t>(std::numeric_limits<std::int16_t>::min()) ||
+                        raw > static_cast<std::int64_t>(std::numeric_limits<std::int16_t>::max())) {
+                        throw sea::sea_errors_handling::RUNTIME_EXECUTION("[RUNTIME EXECUTION] Field '" + field.name + "' is outside the range of a SMALLINT.");
+                    }
+                    record[field.name] = static_cast<std::int16_t>(raw);
+                }
+                break;
+            }
 
             case sea::domain::FieldType::Int:
-
-                {
-                    if (!value.is_number_integer()) {
-                        throw sea::sea_errors_handling::RUNTIME_EXECUTION("[RUNTIME EXECUTION] Field '" + field.name + "' must be an integer.");
-                    }
-                    if(unsignedvalue){
-                        if(value.get<std::uint32_t>() < std::numeric_limits<std::uint32_t>::min() ||  value.get<std::uint32_t>() > std::numeric_limits<std::uint32_t>::max()){
-                            throw sea::sea_errors_handling::RUNTIME_EXECUTION("[RUNTIME EXECUTION] Field '" + field.name + "' is outside the range of an unsigned INT.");
-                        }
-
-                        else record[field.name] = static_cast<std::uint32_t>(value.get<std::uint32_t>());
-                    }
-                    else{
-                        if(value.get<std::int32_t>() < std::numeric_limits<std::int32_t>::min() ||  value.get<std::int32_t>() > std::numeric_limits<std::int32_t>::max()){
-                            throw sea::sea_errors_handling::RUNTIME_EXECUTION("[RUNTIME EXECUTION] Field '" + field.name + "' is outside the range of an INT.");
-                        }
-                        else record[field.name] = static_cast<std::int64_t>(value.get<std::int32_t>());
-                    }
-                    break;
+            {
+                if (!value.is_number_integer()) {
+                    throw sea::sea_errors_handling::RUNTIME_EXECUTION("[RUNTIME EXECUTION] Field '" + field.name + "' must be an integer.");
                 }
+                // Lecture en type large AVANT conversion : voir le
+                // commentaire de la branche SmallInt.
+                const std::int64_t raw = value.get<std::int64_t>();
+                if (unsignedvalue) {
+                    if (raw < 0 ||
+                        raw > static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max())) {
+                        throw sea::sea_errors_handling::RUNTIME_EXECUTION("[RUNTIME EXECUTION] Field '" + field.name + "' is outside the range of an unsigned INT.");
+                    }
+                    record[field.name] = static_cast<std::uint32_t>(raw);
+                }
+                else {
+                    if (raw < static_cast<std::int64_t>(std::numeric_limits<std::int32_t>::min()) ||
+                        raw > static_cast<std::int64_t>(std::numeric_limits<std::int32_t>::max())) {
+                        throw sea::sea_errors_handling::RUNTIME_EXECUTION("[RUNTIME EXECUTION] Field '" + field.name + "' is outside the range of an INT.");
+                    }
+                    record[field.name] = static_cast<std::int32_t>(raw);
+                }
+                break;
+            }
             case sea::domain::FieldType::Float: {
                 if (!value.is_number()) {
                     throw sea::sea_errors_handling::RUNTIME_EXECUTION("[RUNTIME EXECUTION] Field '" + field.name + "' must be a number.");
@@ -150,8 +169,13 @@ DynamicRecord JsonRecordParser::parse(const sea::domain::Entity& entity,
                 break;
             }
             }
-        } catch(const sea::sea_errors_handling::RUNTIME_EXECUTION& e){
-
+        } catch (const sea::sea_errors_handling::RUNTIME_EXECUTION&) {
+            // Une erreur de type sur un champ doit faire échouer tout
+            // le parsing : on ne masque pas un champ invalide en
+            // l'omettant silencieusement du record. Le message porté
+            // par l'exception identifie déjà le champ fautif ; on le
+            // propage tel quel pour que le handler réponde 400.
+            throw;
         }
     }
 

@@ -3,7 +3,7 @@
 
 #include <string_view>
 #include "operator_strategy.h"
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 class GreaterThanStrategy : public OperatorStrategy {
 public:

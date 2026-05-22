@@ -2,7 +2,7 @@
 #define GREATER_THAN_OR_EQUAL_STRATEGY_H
 
 #include "operator_strategy.h"
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 class GreaterThanOrEqualStrategy : public OperatorStrategy {
 public:

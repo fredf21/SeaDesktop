@@ -2,7 +2,7 @@
 
 #include <stdexcept>
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 namespace {
 
@@ -27,14 +27,14 @@ std::vector<std::string> split_path(const std::string& path)
     return segments;
 }
 
-ResolvedValue make_scalar(std::string value) {
-    ResolvedValue r;
+domain::access_control::ResolvedValue make_scalar(std::string value) {
+    domain::access_control::ResolvedValue r;
     r.scalar = std::move(value);
     return r;
 }
 
-ResolvedValue make_list(std::vector<std::string> values) {
-    ResolvedValue r;
+domain::access_control::ResolvedValue make_list(std::vector<std::string> values) {
+    domain::access_control::ResolvedValue r;
     r.list = std::move(values);
     return r;
 }
@@ -185,4 +185,4 @@ ResolvedValue ValueResolver::handle_not_found(const std::string& full_path) cons
     return {};
 }
 
-} // namespace sea::application::access_control
+} // namespace sea::domain::access_control

@@ -1,5 +1,5 @@
 #include "intersects_strategy.h"
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 bool IntersectsStrategy::evaluate(const ResolvedValue& l, const ResolvedValue& r) const
 {

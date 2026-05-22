@@ -476,6 +476,27 @@ fields:
 
 **Type `file`** : Le contenu binaire est stocké dans le système de fichiers selon la configuration `storage`. La colonne en base contient un identifiant UUID pointant vers une table système `sea_files`. Voir [section 10](#10-le-champ-file).
 
+**Type `decimal`** : Le type `decimal` stocke un nombre à virgule fixe exact, adapté aux
+montants monétaires.
+**Important** : les valeurs `decimal` doivent être envoyées comme des
+**chaînes JSON**, pas comme des nombres :
+
+```json
+✅ Correct
+{ "price": "19.99" }
+
+❌ Incorrect — retourne une erreur 400
+{ "price": 19.99 }
+```
+
+Cette contrainte garantit la préservation de la précision exacte : un
+nombre JSON serait décodé comme un flottant IEEE 754, introduisant des
+erreurs d'arrondi. En passant par une chaîne, la valeur traverse le
+système et atteint la colonne `DECIMAL` MySQL sans aucune perte.
+
+Pour stocker un nombre à virgule flottante approximatif (mesures,
+pourcentages, coordonnées), utilisez le type `float` qui, lui, accepte
+les nombres JSON.
 ---
 
 ## 7. Attributs communs aux champs

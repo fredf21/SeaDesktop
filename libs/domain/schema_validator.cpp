@@ -127,6 +127,7 @@ void SchemaValidator::validate_entity(const Entity& entity,
 
     validate_fields(entity, errors);
     validate_relations(entity, schema, errors);
+    validate_pagination(entity, errors);
 }
 
 void SchemaValidator::validate_fields(const Entity& entity,
@@ -193,7 +194,16 @@ void SchemaValidator::validate_fields(const Entity& entity,
                                  "' cannot have max_length = 0.");
             }
         }
-
+        if (field.unsigned_value
+            && field.type != FieldType::Int
+            && field.type != FieldType::BigInt
+            && field.type != FieldType::SmallInt
+            && field.type != FieldType::Decimal
+            && field.type != FieldType::Float) {
+            errors.push_back(
+                "Field '" + field.name + "': unsigned_value is valid for only numeric types (int, bigint, smallint, float, double)."
+                );
+        }
         // min/max cohérents
         if (field.min_value.has_value() && field.max_value.has_value()) {
             // comparaison uniquement si les deux variantes ont le même type

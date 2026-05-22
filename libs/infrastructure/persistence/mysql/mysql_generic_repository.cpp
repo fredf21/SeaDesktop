@@ -5,6 +5,7 @@
 #include <cppconn/resultset.h>
 #include <cppconn/resultset_metadata.h>
 #include <cppconn/statement.h>
+#include "database_mappings/mysql_type_mapping.h"
 #include "exception_handling.h"
 #include "persistence/utilities.h"
 #include "spdlog/spdlog.h"
@@ -34,20 +35,25 @@ runtime::DynamicValue read_typed_value(
     case FieldType::Email:
     case FieldType::Timestamp:
     case FieldType::Decimal:
+    case FieldType::File:
         return std::string(rs->getString(field_name));
-    case FieldType::Int:
     case FieldType::SmallInt:
-    {
-        if(unsigned_value)
+        if (unsigned_value)
+            return static_cast<std::uint16_t>(rs->getUInt(field_name));
+        else
+            return static_cast<std::int16_t>(rs->getInt(field_name));
+
+    case FieldType::Int:
+        if (unsigned_value)
             return static_cast<std::uint32_t>(rs->getUInt(field_name));
-        else return static_cast<std::int32_t>(rs->getInt(field_name));
-    }
+        else
+            return static_cast<std::int32_t>(rs->getInt(field_name));
+
     case FieldType::BigInt:
-    {
-        if(unsigned_value)
+        if (unsigned_value)
             return static_cast<std::uint64_t>(rs->getUInt64(field_name));
-        else return static_cast<std::int64_t>(rs->getInt64(field_name));
-    }
+        else
+            return static_cast<std::int64_t>(rs->getInt64(field_name));
     case FieldType::Float:
         return static_cast<double>(rs->getDouble(field_name));
     case FieldType::Bool:
@@ -201,7 +207,7 @@ std::string build_select_columns(const sea::domain::Entity& entity)
             sql << ", ";
         }
         const auto& field = entity.fields[i];
-        if (field.type == sea::domain::FieldType::UUID) {
+        if (sea::domain::mysql_uses_binary_storage(field.type)) {
             sql << "BIN_TO_UUID(`" << field.name << "`, 1) AS `" << field.name << "`";
         } else {
             sql << "`" << field.name << "`";
@@ -351,7 +357,7 @@ MySQLGenericRepository::create(
                     }
                     const auto* field = find_field_by_name(*entity, columns[i]);
                     if (field != nullptr &&
-                        field->type == sea::domain::FieldType::UUID) {
+                        sea::domain::mysql_uses_binary_storage(field->type)) {
                         sql << "UUID_TO_BIN(?, 1)";
                     } else {
                         sql << "?";
@@ -517,7 +523,7 @@ MySQLGenericRepository::find_one_by_field(
                 std::ostringstream sql;
                 sql << "SELECT " << build_select_columns(*entity)
                     << " FROM `" << table_name << "` WHERE ";
-                if (field->type == sea::domain::FieldType::UUID) {
+                if (sea::domain::mysql_uses_binary_storage(field->type)) {
                     sql << "`" << field_name << "` = UUID_TO_BIN(?, 1)";
                 } else {
                     sql << "`" << field_name << "` = ?";
@@ -620,7 +626,7 @@ MySQLGenericRepository::update(
                     }
                     const auto* field = find_field_by_name(*entity, columns[i]);
                     if (field != nullptr &&
-                        field->type == sea::domain::FieldType::UUID) {
+                        sea::domain::mysql_uses_binary_storage(field->type)) {
                         sql << "`" << columns[i] << "` = UUID_TO_BIN(?, 1)";
                     } else {
                         sql << "`" << columns[i] << "` = ?";

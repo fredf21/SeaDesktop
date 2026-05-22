@@ -2,7 +2,7 @@
 #define NOT_IN_STRATEGY_H
 
 #include "operator_strategy.h"
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 class NotInStrategy : public OperatorStrategy {
 public:

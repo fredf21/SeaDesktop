@@ -7,7 +7,7 @@
 #include <string>
 #include <utility>
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 /**
  * Helpers pour les opérateurs numériques.

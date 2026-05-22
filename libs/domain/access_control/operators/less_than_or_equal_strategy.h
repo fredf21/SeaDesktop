@@ -3,12 +3,13 @@
 
 #include <string_view>
 #include "operator_strategy.h"
-namespace sea::application::access_control {
+
+namespace sea::domain::access_control {
 
 class LessThanOrEqualStrategy : public OperatorStrategy {
 public:
     bool evaluate(const ResolvedValue& l, const ResolvedValue& r) const override;
-    std::string_view name() const noexcept override { return "less_than"; }
+    std::string_view name() const noexcept override { return "less_than_or_equal"; }
 };
 } // namespace
 #endif // LESS_THAN_OR_EQUAL_STRATEGY_H

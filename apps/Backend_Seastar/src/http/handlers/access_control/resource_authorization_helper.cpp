@@ -20,8 +20,8 @@ using sea::domain::access_control::PolicySubject;
 using sea::domain::access_control::PolicyResource;
 using sea::domain::access_control::PolicyContext;
 using sea::domain::access_control::CrudOperation;
-using sea::application::access_control::EvaluationOptions;
-using sea::application::access_control::EvaluationResult;
+using sea::domain::access_control::EvaluationOptions;
+using sea::domain::access_control::EvaluationResult;
 
 // ──────────────────────────────────────────────────────────────────
 // Helpers strings
@@ -101,7 +101,7 @@ std::string json_value_to_string(const nlohmann::json& value)
 // ──────────────────────────────────────────────────────────────────
 
 ResourceAuthorizationHelper::ResourceAuthorizationHelper(
-    std::shared_ptr<sea::application::access_control::PolicyEngine> engine,
+    std::shared_ptr<sea::domain::access_control::PolicyEngine> engine,
     const sea::domain::Schema* schema,
     const sea::domain::access_control::AccessControlConfig* config)
     : engine_(std::move(engine))

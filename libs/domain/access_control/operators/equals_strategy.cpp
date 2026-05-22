@@ -1,6 +1,6 @@
 #include "equals_strategy.h"
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 bool EqualsStrategy::evaluate(
     const ResolvedValue& left,

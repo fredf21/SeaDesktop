@@ -1,7 +1,7 @@
 #pragma once
 
 #include "logging/logging_config.h"
-
+#include <memory>
 namespace sea::application::logging {
 class RingBufferSink;
 }

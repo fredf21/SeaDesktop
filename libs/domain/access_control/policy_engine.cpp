@@ -2,7 +2,7 @@
 
 #include <sstream>
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 using namespace sea::domain::access_control;
 
@@ -238,4 +238,4 @@ std::string PolicyEngine::format_value(const ResolvedValue& v) const
     return "?";
 }
 
-} // namespace sea::application::access_control
+} // namespace sea::domain::access_control

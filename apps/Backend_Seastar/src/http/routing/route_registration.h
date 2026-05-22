@@ -15,7 +15,7 @@
 #include "thread_pool_execution/i_blocking_executor.h"
 
 // forward-declare PolicyEngine
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 class PolicyEngine;
 }
 
@@ -56,7 +56,7 @@ struct MiddlewareContext {
     std::shared_ptr<IBlockingExecutor> blocking_executor;
 
     // PolicyEngine pour AuthorizationMiddleware
-    std::shared_ptr<sea::application::access_control::PolicyEngine> policy_engine;
+    std::shared_ptr<sea::domain::access_control::PolicyEngine> policy_engine;
     std::shared_ptr<sea::http::handlers::access_control::ResourceAuthorizationHelper> resource_auth_helper;
 
     // ───────────────────────────────────────

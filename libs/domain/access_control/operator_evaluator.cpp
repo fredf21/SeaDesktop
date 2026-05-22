@@ -1,6 +1,6 @@
 #include "operator_evaluator.h"
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 using sea::domain::access_control::PolicyOperator;
 

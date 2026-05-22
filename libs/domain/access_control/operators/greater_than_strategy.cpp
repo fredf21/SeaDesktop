@@ -1,6 +1,6 @@
 #include "greater_than_strategy.h"
 #include "numeric_helper.h"
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 bool GreaterThanStrategy::evaluate(const ResolvedValue& l, const ResolvedValue& r) const
 {

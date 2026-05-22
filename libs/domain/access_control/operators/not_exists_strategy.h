@@ -2,7 +2,7 @@
 #define NOT_EXISTS_STRATEGY_H
 #include "operator_strategy.h"
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 class NotExistsStrategy : public OperatorStrategy {
 public:
     bool evaluate(const ResolvedValue& l, const ResolvedValue& r) const override;

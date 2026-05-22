@@ -621,17 +621,17 @@ int main(int argc, char** argv)
         // ─────────────────────────────────────────────────────
         // 14. PolicyEngine
         // ─────────────────────────────────────────────────────
-        std::shared_ptr<sea::application::access_control::PolicyEngine>
+        std::shared_ptr<sea::domain::access_control::PolicyEngine>
             policy_engine = nullptr;
 
         if (service.access_control.enabled()) {
             // Le OperatorRegistry contient toutes les strategies d'evaluation
             // (equals, intersects, in, contains, etc.) initialisees au boot.
             static const auto operator_registry =
-                sea::application::access_control::OperatorRegistry::create_default();
+                sea::domain::access_control::OperatorRegistry::create_default();
 
             policy_engine =
-                std::make_shared<sea::application::access_control::PolicyEngine>(
+                std::make_shared<sea::domain::access_control::PolicyEngine>(
                     operator_registry
                     );
 

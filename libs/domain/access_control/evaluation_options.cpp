@@ -1,6 +1,6 @@
 #include "evaluation_options.h"
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 EvaluationOptions EvaluationOptions::production()
 {
@@ -39,4 +39,4 @@ EvaluationOptions EvaluationOptions::pre_handler()
     return opts;
 }
 
-} // namespace sea::application::access_control
+} // namespace sea::domain::access_control

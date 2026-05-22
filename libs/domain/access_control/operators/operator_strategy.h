@@ -3,7 +3,7 @@
 
 #include "../value_resolver.h"
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 /**
  * Stratégie d'évaluation d'un opérateur.
@@ -40,6 +40,6 @@ public:
     virtual bool ignores_right_operand() const noexcept { return false; }
 };
 
-} // namespace sea::application::access_control
+} // namespace sea::domain::access_control
 
 #endif

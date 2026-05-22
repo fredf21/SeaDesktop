@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 /**
  * Une valeur résolue depuis un PolicyValueRef.
@@ -87,6 +87,6 @@ private:
     EvaluationOptions options_;
 };
 
-} // namespace sea::application::access_control
+} // namespace sea::domain::access_control
 
 #endif // SEA_APPLICATION_ACCESS_CONTROL_VALUE_RESOLVER_H

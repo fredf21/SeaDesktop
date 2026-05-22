@@ -55,7 +55,7 @@ struct ResourceCheckResult {
 class ResourceAuthorizationHelper {
 public:
     ResourceAuthorizationHelper(
-        std::shared_ptr<sea::application::access_control::PolicyEngine> engine,
+        std::shared_ptr<sea::domain::access_control::PolicyEngine> engine,
         const sea::domain::Schema* schema,
         const sea::domain::access_control::AccessControlConfig* config
         );
@@ -119,7 +119,7 @@ public:
         ) const;
 
 private:
-    std::shared_ptr<sea::application::access_control::PolicyEngine> engine_;
+    std::shared_ptr<sea::domain::access_control::PolicyEngine> engine_;
     const sea::domain::Schema* schema_;
     const sea::domain::access_control::AccessControlConfig* config_;
 

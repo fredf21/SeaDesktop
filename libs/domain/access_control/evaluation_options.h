@@ -1,7 +1,7 @@
 #ifndef SEA_APPLICATION_ACCESS_CONTROL_EVALUATION_OPTIONS_H
 #define SEA_APPLICATION_ACCESS_CONTROL_EVALUATION_OPTIONS_H
 
-namespace sea::application::access_control {
+namespace sea::domain::access_control {
 
 /**
  * Mode de stricte du moteur quand un path est introuvable.
@@ -71,6 +71,6 @@ struct EvaluationOptions {
     static EvaluationOptions pre_handler();
 };
 
-} // namespace sea::application::access_control
+} // namespace sea::domain::access_control
 
 #endif // SEA_APPLICATION_ACCESS_CONTROL_EVALUATION_OPTIONS_H
