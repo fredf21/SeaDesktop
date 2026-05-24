@@ -1124,3 +1124,90 @@ void TestAccessControlCore::policyEngine_verbose_shouldAddPredicateTrace()
     QVERIFY(QString::fromStdString(result.traces[0].description).contains("subject.roles"));
     QVERIFY(result.traces[0].result);
 }
+// ─────────────────────────────────────────────
+// COUVERTURE ADDITIONNELLE
+// ─────────────────────────────────────────────
+
+void TestAccessControlCore::operatorEvaluator_missingStrategy_shouldReturnFalse()
+{
+    // Un registry vide : OperatorEvaluator::evaluate sur un opérateur
+    // sans stratégie enregistrée retourne false (filet de sécurité).
+    OperatorRegistry emptyRegistry;
+    OperatorEvaluator evaluator(emptyRegistry);
+
+    const bool result = evaluator.evaluate(
+        PolicyOperator::Equals,
+        scalarResolvedValue("admin"),
+        scalarResolvedValue("admin")
+        );
+
+    QVERIFY(!result);
+}
+
+void TestAccessControlCore::operatorEvaluator_notEqualsWithEmptyLeft_shouldNotShortCircuit()
+{
+    // NotEquals est exempté du court-circuit "left vide => false" :
+    // un left vide comparé à un scalaire doit être évalué comme
+    // "différents" (true), pas court-circuité à false.
+    auto registry = OperatorRegistry::create_default();
+    OperatorEvaluator evaluator(registry);
+
+    const bool result = evaluator.evaluate(
+        PolicyOperator::NotEquals,
+        emptyResolvedValue(),
+        scalarResolvedValue("admin")
+        );
+
+    QVERIFY(result);
+}
+
+void TestAccessControlCore::policyEngine_doubleNotCondition_shouldReturnOriginal()
+{
+    // not(not(X)) doit retrouver la valeur de X.
+    auto registry = OperatorRegistry::create_default();
+    PolicyEngine engine(registry);
+
+    auto condition = PolicyCondition::not_of(
+        PolicyCondition::not_of(
+            PolicyCondition(makeSubjectRoleContainsAdminPredicate())
+            )
+        );
+
+    auto result = engine.evaluate(
+        condition,
+        makeSubject(),
+        makeResource(),
+        makeContext(),
+        EvaluationOptions::production()
+        );
+
+    // X = "subject a le rôle admin" est vrai -> not(not(X)) vrai.
+    QVERIFY(result.allowed);
+}
+
+void TestAccessControlCore::policyEngine_nestedComposite_shouldEvaluateCorrectly()
+{
+    // Composite imbriqué : all_of[ adminRole, any_of[ guest, admin ] ].
+    // adminRole = vrai ; any_of[guest(faux), admin(vrai)] = vrai ;
+    // all_of[vrai, vrai] = vrai.
+    auto registry = OperatorRegistry::create_default();
+    PolicyEngine engine(registry);
+
+    auto condition = PolicyCondition::all_of({
+        PolicyCondition(makeSubjectRoleContainsAdminPredicate()),
+        PolicyCondition::any_of({
+            PolicyCondition(makeSubjectRoleEqualsGuestPredicate()),
+            PolicyCondition(makeSubjectRoleContainsAdminPredicate())
+        })
+    });
+
+    auto result = engine.evaluate(
+        condition,
+        makeSubject(),
+        makeResource(),
+        makeContext(),
+        EvaluationOptions::production()
+        );
+
+    QVERIFY(result.allowed);
+}

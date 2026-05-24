@@ -44,7 +44,7 @@ void TestLoggingConfig::logLevelFromString_invalidShouldThrow()
 
     QVERIFY_THROWS_EXCEPTION(
         std::invalid_argument,
-         [[maybe_unused]] auto value = log_level_from_string("verbose")
+        [[maybe_unused]] auto value = log_level_from_string("verbose")
         );
 }
 
@@ -79,7 +79,7 @@ void TestLoggingConfig::sinkTypeFromString_shouldSupportAliases()
 
     QVERIFY_THROWS_EXCEPTION(
         std::invalid_argument,
-         [[maybe_unused]] auto value = sink_type_from_string("database")
+        [[maybe_unused]] auto value = sink_type_from_string("database")
         );
 }
 
@@ -97,7 +97,7 @@ void TestLoggingConfig::timePatternFromString_shouldParseValues()
 
     QVERIFY_THROWS_EXCEPTION(
         std::invalid_argument,
-         [[maybe_unused]] auto value = time_pattern_from_string("weekly")
+        [[maybe_unused]] auto value = time_pattern_from_string("weekly")
         );
 }
 
@@ -210,4 +210,174 @@ void TestLoggingConfig::loggingConfig_asyncQueueSizeZero_shouldThrow()
     cfg.set_async(async);
 
     QVERIFY_THROWS_EXCEPTION(std::invalid_argument, cfg.validate());
+}
+// ═════════════════════════════════════════════════════════════
+// COUVERTURE ADDITIONNELLE
+// ═════════════════════════════════════════════════════════════
+
+void TestLoggingConfig::loggingConfig_effectiveLevel_partialNameIsNotAPrefix()
+{
+    using namespace sea::domain::logging;
+
+    // Un override "sea" ne doit matcher "seahttp" que s'il est suivi
+    // d'un '.'. "seahttp" n'est donc PAS couvert par l'override "sea".
+    auto cfg = LoggingConfig::safe_defaults();
+    cfg.set_level(LogLevel::Info);
+    cfg.set_module_level("sea", LogLevel::Warn);
+
+    QCOMPARE(cfg.effective_level_for("sea.http"), LogLevel::Warn);
+    // "seahttp" ne contient pas le séparateur '.' -> niveau global.
+    QCOMPARE(cfg.effective_level_for("seahttp"), LogLevel::Info);
+}
+
+void TestLoggingConfig::loggingConfig_effectiveLevel_noOverride_shouldUseGlobalLevel()
+{
+    using namespace sea::domain::logging;
+
+    auto cfg = LoggingConfig::safe_defaults();
+    cfg.set_level(LogLevel::Warn);
+    // Aucun module_level déclaré.
+
+    QCOMPARE(cfg.effective_level_for("any.module"), LogLevel::Warn);
+}
+
+void TestLoggingConfig::loggingConfig_asyncDisabledWithZeroQueue_shouldNotThrow()
+{
+    using namespace sea::domain::logging;
+
+    // queue_size == 0 n'est une erreur QUE si async est activé.
+    LoggingConfig cfg = LoggingConfig::safe_defaults();
+
+    AsyncConfig async;
+    async.enabled    = false;
+    async.queue_size = 0;
+    cfg.set_async(async);
+
+    QVERIFY_THROWS_NO_EXCEPTION(cfg.validate());
+}
+
+void TestLoggingConfig::loggingConfig_fileSinkMaxFilesZero_shouldThrow()
+{
+    using namespace sea::domain::logging;
+
+    // Un sink File avec rotation.max_files == 0 est rejeté.
+    LoggingConfig cfg = LoggingConfig::safe_defaults();
+
+    SinkConfig fileSink;
+    fileSink.type    = SinkType::File;
+    fileSink.enabled = true;
+    fileSink.path    = "./logs/service.log";
+    fileSink.rotation.max_files = 0;
+
+    cfg.set_sinks({ fileSink });
+
+    QVERIFY_THROWS_EXCEPTION(std::invalid_argument, cfg.validate());
+}
+
+void TestLoggingConfig::loggingConfig_validFileSink_shouldPass()
+{
+    using namespace sea::domain::logging;
+
+    // Un sink File correctement configuré (path + max_files >= 1)
+    // passe la validation.
+    LoggingConfig cfg = LoggingConfig::safe_defaults();
+
+    SinkConfig fileSink;
+    fileSink.type    = SinkType::File;
+    fileSink.enabled = true;
+    fileSink.path    = "./logs/service.log";
+    fileSink.rotation.max_files = 5;
+
+    cfg.set_sinks({ fileSink });
+
+    QVERIFY_THROWS_NO_EXCEPTION(cfg.validate());
+}
+
+void TestLoggingConfig::loggingConfig_disabledFileSinkWithoutPath_shouldBeIgnored()
+{
+    using namespace sea::domain::logging;
+
+    // validate() ignore les sinks désactivés : un sink File sans
+    // path mais enabled=false ne déclenche pas d'erreur, tant qu'au
+    // moins un autre sink est actif.
+    LoggingConfig cfg = LoggingConfig::safe_defaults();
+
+    SinkConfig consoleSink;
+    consoleSink.type    = SinkType::Console;
+    consoleSink.enabled = true;
+
+    SinkConfig badFileSink;
+    badFileSink.type    = SinkType::File;
+    badFileSink.enabled = false;       // désactivé -> ignoré
+    badFileSink.path    = "";          // path vide, mais peu importe
+
+    cfg.set_sinks({ consoleSink, badFileSink });
+
+    QVERIFY_THROWS_NO_EXCEPTION(cfg.validate());
+}
+
+// ── builder fluide ───────────────────────────────────────────
+
+void TestLoggingConfig::loggingConfig_builder_addSink_shouldAppend()
+{
+    using namespace sea::domain::logging;
+
+    // add_sink ajoute à la suite des sinks existants (safe_defaults
+    // en a déjà un : console).
+    LoggingConfig cfg = LoggingConfig::safe_defaults();
+    QCOMPARE(cfg.sinks().size(), std::size_t(1));
+
+    SinkConfig fileSink;
+    fileSink.type    = SinkType::File;
+    fileSink.enabled = true;
+    fileSink.path    = "./logs/extra.log";
+
+    cfg.add_sink(fileSink);
+
+    QCOMPARE(cfg.sinks().size(), std::size_t(2));
+    QCOMPARE(cfg.sinks()[1].type, SinkType::File);
+}
+
+void TestLoggingConfig::loggingConfig_builder_setFlushAndEnabled_shouldApply()
+{
+    using namespace sea::domain::logging;
+
+    LoggingConfig cfg = LoggingConfig::safe_defaults();
+
+    cfg.set_flush_level(LogLevel::Critical);
+    cfg.set_enabled(false);
+
+    QCOMPARE(cfg.flush_level(), LogLevel::Critical);
+    QVERIFY(!cfg.is_enabled());
+}
+
+// ── RotationConfig helpers ───────────────────────────────────
+
+void TestLoggingConfig::rotationConfig_sizeRotationEnabled_dependsOnMaxSize()
+{
+    using namespace sea::domain::logging;
+
+    RotationConfig rotation;
+
+    rotation.max_size_bytes = 1024;
+    QVERIFY(rotation.is_size_rotation_enabled());
+
+    rotation.max_size_bytes = 0;
+    QVERIFY(!rotation.is_size_rotation_enabled());
+}
+
+void TestLoggingConfig::rotationConfig_timeRotationEnabled_dependsOnPattern()
+{
+    using namespace sea::domain::logging;
+
+    RotationConfig rotation;
+
+    rotation.time_pattern = TimePattern::Daily;
+    QVERIFY(rotation.is_time_rotation_enabled());
+
+    rotation.time_pattern = TimePattern::Hourly;
+    QVERIFY(rotation.is_time_rotation_enabled());
+
+    rotation.time_pattern = TimePattern::None;
+    QVERIFY(!rotation.is_time_rotation_enabled());
 }

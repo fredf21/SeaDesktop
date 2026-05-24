@@ -842,3 +842,124 @@ void TestOperatorStrategies::strategyNames_shouldReturnExpectedNames()
     QCOMPARE(qs(startsWith.name()), QString("starts_with"));
     QCOMPARE(qs(regexMatch.name()), QString("regex_match"));
 }
+// ─────────────────────────────────────────────
+// COUVERTURE ADDITIONNELLE : cas limites
+// ─────────────────────────────────────────────
+
+void TestOperatorStrategies::numericHelper_parseEmptyString_shouldReturnNullopt()
+{
+    QVERIFY(!NumericHelper::parse("").has_value());
+}
+
+void TestOperatorStrategies::numericHelper_parseNegativeNumber_shouldReturnDouble()
+{
+    auto value = NumericHelper::parse("-12.5");
+
+    QVERIFY(value.has_value());
+    QCOMPARE(*value, -12.5);
+}
+
+void TestOperatorStrategies::numericHelper_parseBothRightNonScalar_shouldReturnNullopt()
+{
+    // parse_both échoue si le RIGHT operand n'est pas scalaire
+    // (le test existant ne couvrait que le left non-scalaire).
+    auto left = scalarValue("10");
+    auto right = listValue({ "5" });
+
+    QVERIFY(!NumericHelper::parse_both(left, right).has_value());
+}
+
+void TestOperatorStrategies::equals_listsOfDifferentSize_shouldReturnFalse()
+{
+    EqualsStrategy strategy;
+
+    QVERIFY(!strategy.evaluate(
+        listValue({ "a", "b" }),
+        listValue({ "a", "b", "c" })
+        ));
+}
+
+void TestOperatorStrategies::contains_stringContainsEmptySubstring_shouldReturnTrue()
+{
+    // "abc".find("") == 0 : toute chaîne contient la sous-chaîne vide.
+    ContainsStrategy strategy;
+
+    QVERIFY(strategy.evaluate(scalarValue("abc"), scalarValue("")));
+}
+
+void TestOperatorStrategies::startsWith_emptyPrefix_shouldReturnTrue()
+{
+    // Toute chaîne commence par le préfixe vide.
+    StartsWithStrategy strategy;
+
+    QVERIFY(strategy.evaluate(scalarValue("admin"), scalarValue("")));
+}
+
+void TestOperatorStrategies::endsWith_emptySuffix_shouldReturnTrue()
+{
+    // Toute chaîne se termine par le suffixe vide.
+    EndsWithStrategy strategy;
+
+    QVERIFY(strategy.evaluate(scalarValue("admin"), scalarValue("")));
+}
+
+void TestOperatorStrategies::in_emptyList_shouldReturnFalse()
+{
+    // Un scalaire n'est jamais dans une liste vide.
+    InStrategy strategy;
+
+    QVERIFY(!strategy.evaluate(scalarValue("admin"), listValue({})));
+}
+
+void TestOperatorStrategies::intersects_emptyLists_shouldReturnFalse()
+{
+    // Deux listes vides n'ont aucun élément commun.
+    IntersectsStrategy strategy;
+
+    QVERIFY(!strategy.evaluate(listValue({}), listValue({})));
+}
+
+void TestOperatorStrategies::intersects_listLeftScalarRight_shouldReturnFalse()
+{
+    // Intersects ne gère que list∩list et scalar∈list.
+    // La combinaison list (gauche) + scalar (droite) tombe sur false.
+    IntersectsStrategy strategy;
+
+    QVERIFY(!strategy.evaluate(
+        listValue({ "admin", "user" }),
+        scalarValue("admin")
+        ));
+}
+
+void TestOperatorStrategies::greaterThan_negativeNumbers_shouldCompareCorrectly()
+{
+    GreaterThanStrategy strategy;
+
+    // -5 > -10 est vrai.
+    QVERIFY(strategy.evaluate(scalarValue("-5"), scalarValue("-10")));
+    // -10 > -5 est faux.
+    QVERIFY(!strategy.evaluate(scalarValue("-10"), scalarValue("-5")));
+}
+
+void TestOperatorStrategies::operatorRegistry_registerCustomStrategy_shouldOverride()
+{
+    using sea::domain::access_control::PolicyOperator;
+
+    // register_strategy remplace la stratégie existante pour un opérateur.
+    OperatorRegistry registry;
+    QVERIFY(!registry.has(PolicyOperator::Equals));
+
+    registry.register_strategy(PolicyOperator::Equals,
+                               std::make_unique<EqualsStrategy>());
+    QVERIFY(registry.has(PolicyOperator::Equals));
+
+    const auto* first = registry.find(PolicyOperator::Equals);
+    QVERIFY(first != nullptr);
+
+    // Ré-enregistrement : remplace l'instance.
+    registry.register_strategy(PolicyOperator::Equals,
+                               std::make_unique<EqualsStrategy>());
+    const auto* second = registry.find(PolicyOperator::Equals);
+    QVERIFY(second != nullptr);
+    QCOMPARE(qs(second->name()), QString("equals"));
+}

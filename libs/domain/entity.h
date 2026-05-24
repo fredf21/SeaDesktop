@@ -68,20 +68,51 @@ struct Entity {
     std::vector<SeedRecord> seeds;
     std::optional<PaginationConfig> pagination;  // nullopt => pas de routes paginées
     // ── helpers ────────────────────────────────────────────────
-    [[nodiscard]] static std::string to_route_plural(std::string name)
+
+#include <algorithm>
+#include <cctype>
+#include <string>
+
+    [[nodiscard]] static std::string to_route_plural(std::string name, bool must_be_plural = true)
     {
         if (name.empty()) {
             return "";
         }
 
-        name[0] = static_cast<char>(
-            std::tolower(static_cast<unsigned char>(name[0]))
+        std::string modif_name = name;
+
+        // Mettre tout le nom en minuscules
+        std::transform(
+            modif_name.begin(),
+            modif_name.end(),
+            modif_name.begin(),
+            [](unsigned char c) {
+                return static_cast<char>(std::tolower(c));
+            }
             );
 
-        if (name.size() >= 2 && name.back() == 'y') {
-            char before_y = static_cast<char>(
-                std::tolower(static_cast<unsigned char>(name[name.size() - 2]))
-                );
+        // Si on ne veut pas le pluriel, on retourne seulement le nom en minuscules
+        if (!must_be_plural) {
+            return modif_name;
+        }
+
+        // Déjà pluriel évident : categories, companies, policies
+        if (modif_name.size() >= 3 && modif_name.ends_with("ies")) {
+            return modif_name;
+        }
+
+        // Déjà pluriel simple : users, articles, tags
+        // On évite address, class, status, etc.
+        if (modif_name.ends_with('s') &&
+            !modif_name.ends_with("ss") &&
+            !modif_name.ends_with("us")) {
+            return modif_name;
+        }
+
+        // category -> categories
+        // company  -> companies
+        if (modif_name.size() >= 2 && modif_name.back() == 'y') {
+            char before_y = modif_name[modif_name.size() - 2];
 
             const bool before_is_vowel =
                 before_y == 'a' ||
@@ -91,13 +122,27 @@ struct Entity {
                 before_y == 'u';
 
             if (!before_is_vowel) {
-                name.pop_back();
-                name += "ies";
-                return name;
+                modif_name.pop_back();
+                modif_name += "ies";
+                return modif_name;
             }
         }
 
-        return name + "s";
+        // address -> addresses
+        // class   -> classes
+        // box     -> boxes
+        // church  -> churches
+        // dish    -> dishes
+        if (modif_name.ends_with("s") ||
+            modif_name.ends_with("ss") ||
+            modif_name.ends_with("x") ||
+            modif_name.ends_with("z") ||
+            modif_name.ends_with("ch") ||
+            modif_name.ends_with("sh")) {
+            return modif_name + "es";
+        }
+
+        return modif_name + "s";
     }
 
     [[nodiscard]] std::string route_prefix() const {

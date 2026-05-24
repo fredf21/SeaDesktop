@@ -794,3 +794,209 @@ void TestDomainModels::storageConfig_rootPathShouldBeDetected()
     QVERIFY(cfg.is_filesystem());
     QVERIFY(cfg.has_root_path());
 }
+// ─────────────────────────────────────────────
+// COUVERTURE ADDITIONNELLE
+// ─────────────────────────────────────────────
+
+void TestDomainModels::databaseType_toStringShouldCoverAllValues()
+{
+    QCOMPARE(qs(to_string(DatabaseType::Memory)),     QString("memory"));
+    QCOMPARE(qs(to_string(DatabaseType::PostgreSQL)), QString("postgres"));
+    QCOMPARE(qs(to_string(DatabaseType::MySQL)),      QString("mysql"));
+    QCOMPARE(qs(to_string(DatabaseType::MongoDB)),    QString("mongo"));
+}
+
+void TestDomainModels::fieldType_isNumericShouldIncludeDecimal()
+{
+    // Decimal fait partie des types numériques (au même titre que
+    // SmallInt/Int/BigInt/Float), ce que les tests existants ne
+    // couvraient pas.
+    QVERIFY(is_numeric(FieldType::Decimal));
+
+    // Contre-exemples non numériques.
+    QVERIFY(!is_numeric(FieldType::Bool));
+    QVERIFY(!is_numeric(FieldType::Timestamp));
+    QVERIFY(!is_numeric(FieldType::UUID));
+}
+
+void TestDomainModels::relation_hasOneHelpersShouldMatch()
+{
+    // HasOne n'était couvert par aucun test (BelongsTo/HasMany/
+    // ManyToMany l'étaient). HasOne utilise une FK côté cible et
+    // n'est pas une relation to-many.
+    Relation hasOne{};
+    hasOne.kind = RelationKind::HasOne;
+
+    QVERIFY(!hasOne.uses_local_foreign_key());
+    QVERIFY(hasOne.uses_target_foreign_key());
+    QVERIFY(!hasOne.uses_pivot_table());
+    QVERIFY(!hasOne.is_to_many());
+}
+
+void TestDomainModels::relation_onDeleteToStringShouldCoverAllValues()
+{
+    QCOMPARE(qs(to_string(OnDelete::Cascade)),  QString("cascade"));
+    QCOMPARE(qs(to_string(OnDelete::SetNull)),  QString("set_null"));
+    QCOMPARE(qs(to_string(OnDelete::Restrict)), QString("restrict"));
+
+    QCOMPARE(qs(to_string(RelationKind::BelongsTo)),  QString("belongs_to"));
+    QCOMPARE(qs(to_string(RelationKind::HasOne)),     QString("has_one"));
+    QCOMPARE(qs(to_string(RelationKind::HasMany)),    QString("has_many"));
+    QCOMPARE(qs(to_string(RelationKind::ManyToMany)), QString("many_to_many"));
+}
+
+void TestDomainModels::paginationConfig_offsetOnlyShouldBeDetected()
+{
+    PaginationConfig cfg{};
+    cfg.offset = OffsetPagination{};
+
+    QVERIFY(!cfg.has_page());
+    QVERIFY(cfg.has_offset());
+    QVERIFY(!cfg.has_cursor());
+    QVERIFY(cfg.any());
+}
+
+void TestDomainModels::paginationConfig_cursorOnlyShouldBeDetected()
+{
+    PaginationConfig cfg{};
+    cfg.cursor = CursorPagination{};
+
+    QVERIFY(!cfg.has_page());
+    QVERIFY(!cfg.has_offset());
+    QVERIFY(cfg.has_cursor());
+    QVERIFY(cfg.any());
+}
+
+void TestDomainModels::entity_offsetPaginationHelperShouldReflectConfig()
+{
+    Entity entity = makeTestEntity("User");
+
+    PaginationConfig pagination{};
+    pagination.offset = OffsetPagination{};
+    entity.pagination = pagination;
+
+    QVERIFY(entity.has_pagination());
+    QVERIFY(entity.has_offset_pagination());
+    QVERIFY(!entity.has_page_pagination());
+    QVERIFY(!entity.has_cursor_pagination());
+}
+
+void TestDomainModels::entity_cursorPaginationHelperShouldReflectConfig()
+{
+    Entity entity = makeTestEntity("User");
+
+    PaginationConfig pagination{};
+    pagination.cursor = CursorPagination{};
+    entity.pagination = pagination;
+
+    QVERIFY(entity.has_pagination());
+    QVERIFY(entity.has_cursor_pagination());
+    QVERIFY(!entity.has_page_pagination());
+    QVERIFY(!entity.has_offset_pagination());
+}
+
+void TestDomainModels::entity_routePrefixVowelBeforeYShouldJustAddS()
+{
+    // Quand le 'y' final est précédé d'une voyelle, la pluralisation
+    // ajoute simplement 's' (pas la transformation -ies).
+    Entity day{};
+    day.name = "Day";
+    QCOMPARE(QString::fromStdString(day.route_prefix()), QString("/days"));
+
+    Entity key{};
+    key.name = "Key";
+    QCOMPARE(QString::fromStdString(key.route_prefix()), QString("/keys"));
+}
+
+void TestDomainModels::entity_findFieldShouldReturnCorrectFieldData()
+{
+    Entity entity = makeTestEntity("Product");
+    entity.fields.push_back(makeTestField("id", FieldType::UUID));
+    entity.fields.push_back(makeTestField("price", FieldType::Decimal));
+
+    const Field* price = entity.find_field("price");
+    QVERIFY(price != nullptr);
+    QCOMPARE(price->type, FieldType::Decimal);
+    QCOMPARE(QString::fromStdString(price->name), QString("price"));
+}
+
+void TestDomainModels::entity_toRoutePluralShouldConvertToLowercase()
+{
+    QCOMPARE(Entity::to_route_plural("User", false), std::string("user"));
+    QCOMPARE(Entity::to_route_plural("APIKey", false), std::string("apikey"));
+}
+
+void TestDomainModels::entity_toRoutePluralShouldPluralizeRegularNames()
+{
+    QCOMPARE(Entity::to_route_plural("User"), std::string("users"));
+    QCOMPARE(Entity::to_route_plural("Article"), std::string("articles"));
+    QCOMPARE(Entity::to_route_plural("Tag"), std::string("tags"));
+}
+
+void TestDomainModels::entity_toRoutePluralShouldPluralizeConsonantYNames()
+{
+    QCOMPARE(Entity::to_route_plural("Category"), std::string("categories"));
+    QCOMPARE(Entity::to_route_plural("Company"), std::string("companies"));
+}
+
+void TestDomainModels::entity_toRoutePluralShouldNotPluralizeWhenDisabled()
+{
+    QCOMPARE(Entity::to_route_plural("User", false), std::string("user"));
+    QCOMPARE(Entity::to_route_plural("Category", false), std::string("category"));
+    QCOMPARE(Entity::to_route_plural("Address", false), std::string("address"));
+}
+void TestDomainModels::entity_toRoutePluralShouldHandleEsPluralNames()
+{
+    QCOMPARE(Entity::to_route_plural("Address"), std::string("addresses"));
+    QCOMPARE(Entity::to_route_plural("Class"), std::string("classes"));
+    QCOMPARE(Entity::to_route_plural("Box"), std::string("boxes"));
+    QCOMPARE(Entity::to_route_plural("Church"), std::string("churches"));
+    QCOMPARE(Entity::to_route_plural("Dish"), std::string("dishes"));
+}
+void TestDomainModels::entity_toRoutePluralShouldKeepAlreadyPluralNames()
+{
+    QCOMPARE(Entity::to_route_plural("Users"), std::string("users"));
+    QCOMPARE(Entity::to_route_plural("Categories"), std::string("categories"));
+}
+
+void TestDomainModels::project_externalDbServicesShouldExcludeMemory()
+{
+    Project project{};
+    project.services.push_back(makeService("Mem", DatabaseType::Memory));
+    project.services.push_back(makeService("Pg", DatabaseType::PostgreSQL));
+
+    const auto external = project.external_db_services();
+
+    QCOMPARE(external.size(), std::size_t(1));
+    QCOMPARE(QString::fromStdString(external[0]->name), QString("Pg"));
+}
+
+void TestDomainModels::project_memoryServicesShouldBeEmptyWhenAllExternal()
+{
+    Project project{};
+    project.services.push_back(makeService("Pg", DatabaseType::PostgreSQL));
+    project.services.push_back(makeService("My", DatabaseType::MySQL));
+
+    QVERIFY(project.memory_services().empty());
+}
+
+void TestDomainModels::schema_crudEntitiesEmptyWhenNoneEnabled()
+{
+    Entity audit = makeEntityWithField("AuditLog", "id", FieldType::UUID);
+    audit.options.enable_crud = false;
+
+    Schema schema{};
+    schema.entities = { audit };
+
+    QVERIFY(schema.crud_entities().empty());
+}
+
+void TestDomainModels::field_makeFieldShouldDefaultToNotFile()
+{
+    // make_field produit un champ ordinaire : pas de file_config,
+    // is_file_field() faux.
+    Field f = make_field("title", FieldType::String);
+
+    QVERIFY(!f.file_config.has_value());
+    QVERIFY(!f.is_file_field());
+}

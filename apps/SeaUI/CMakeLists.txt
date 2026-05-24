@@ -21,6 +21,7 @@ qt_add_executable(SeaUI
     servicestatuscheck.h servicestatuscheck.cpp
     routelistmodel.h routelistmodel.cpp
     routelistitemdelegate.h routelistitemdelegate.cpp
+    translation_manager.h translation_manager.cpp
 
 )
 

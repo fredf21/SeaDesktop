@@ -69,4 +69,20 @@ private slots:
     void securityConfig_disabled_shouldBeValid();
     void securityConfig_invalidRateLimit_shouldThrow();
     void securityConfig_corsWildcardWithCredentials_shouldThrow();
+
+    // ── Couverture additionnelle ──────────────────────────────
+    void httpLimits_zeroUrlLength_shouldThrow();
+    void httpLimits_excessiveBodySize_shouldThrow();
+    void httpLimits_excessiveTimeout_shouldThrow();
+    void httpLimits_zeroConnectionsPerIp_shouldThrow();
+    void rateLimitRule_globalFactory_shouldHaveGlobalScope();
+    void rateLimitRule_perApiKeyFactory_shouldHaveApiKeyScope();
+    void authentication_basicAuth_shouldValidate();
+    void authentication_oauth2WithBothUrls_shouldPass();
+    void tokenTracking_autoCleanupValidInterval_shouldPass();
+    void securityHeaders_disableContentTypeOptions_shouldClearValue();
+    void securityHeaders_disableFrameOptions_shouldClearValue();
+    void cookieConfig_sameSiteStrictWithoutSecure_shouldPass();
+    void cors_disabledShouldNotValidateMethods();
+    void securityConfig_invalidHttpLimits_shouldThrow();
 };

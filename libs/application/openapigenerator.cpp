@@ -368,11 +368,7 @@ void OpenApiGenerator::add_crud_path(
     // Utilise directement le flag de RouteDefinition
     const bool requires_auth = route.requires_auth;
 
-    std::string entity_plural = "/" + route.entity_name;
-    entity_plural[1] = static_cast<char>(
-        std::tolower(static_cast<unsigned char>(entity_plural[1]))
-        );
-    entity_plural += "s";
+    std::string entity_plural = "/" + domain::Entity::to_route_plural(route.entity_name);
 
     const std::string item_path = entity_plural + "/{id}";
 
@@ -566,7 +562,7 @@ void OpenApiGenerator::add_crud_path(
             op["security"] = json::array();
         }
 
-        // ✨ Enrichissement avec access_control
+        // Enrichissement avec access_control
         enrich_with_access_control(op, service, route.entity_name, route.operation_name);
 
         paths[item_path][http_method] = op;
@@ -585,26 +581,14 @@ void OpenApiGenerator::add_relation_paths(
 
     for (const auto& entity : service.schema.entities) {
         // Plural path de l'entité parent
-        std::string parent_plural = "/" + entity.name;
-        parent_plural[1] = static_cast<char>(
-            std::tolower(static_cast<unsigned char>(parent_plural[1]))
-            );
-        parent_plural += "s";
+        std::string parent_plural = "/" + domain::Entity::to_route_plural(entity.name);
 
-        std::string parent_lower = entity.name;
-        parent_lower[0] = static_cast<char>(
-            std::tolower(static_cast<unsigned char>(parent_lower[0]))
-            );
-
+        std::string parent_lower = domain::Entity::to_route_plural(entity.name, false);
         for (const auto& relation : entity.relations) {
             using sea::domain::RelationKind;
 
             if (relation.kind == RelationKind::HasMany) {
-                std::string child_plural = "/" + relation.target_entity;
-                child_plural[1] = static_cast<char>(
-                    std::tolower(static_cast<unsigned char>(child_plural[1]))
-                    );
-                child_plural += "s";
+                std::string child_plural = "/" + domain::Entity::to_route_plural(relation.target_entity);
 
                 // /children/filter/with_parent/{id}
                 const std::string by_id_path = child_plural + "/filter/with_" + parent_lower + "/{id}";
@@ -760,11 +744,7 @@ void OpenApiGenerator::add_relation_paths(
             }
 
             if (relation.kind == RelationKind::ManyToMany) {
-                std::string target_plural = "/" + relation.target_entity;
-                target_plural[1] = static_cast<char>(
-                    std::tolower(static_cast<unsigned char>(target_plural[1]))
-                    );
-                target_plural += "s";
+                std::string target_plural = "/" + domain::Entity::to_route_plural(relation.target_entity);
 
                 const std::string m2m_path = target_plural + "/filter/with_" + parent_lower + "/{id}";
 
@@ -1080,7 +1060,7 @@ std::string OpenApiGenerator::to_openapi_method(HttpMethod method) const {
 }
 
 // =====================================================================
-// ✨ HELPERS ACCESS CONTROL (RBAC + ABAC)
+//  HELPERS ACCESS CONTROL (RBAC + ABAC)
 // =====================================================================
 
 void OpenApiGenerator::enrich_with_access_control(

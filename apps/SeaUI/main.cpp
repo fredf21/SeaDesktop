@@ -1,29 +1,28 @@
 #include "mainwindow.h"
+#include "translation_manager.h"
+
 #include <QApplication>
-#include <QLocale>
-#include <QTranslator>
-#include <QProcess>
-#include <QDebug>
 
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
 
+    // Identite de l'application : indispensable pour que QSettings
+    // dispose d'un emplacement de stockage stable (la preference de
+    // langue y est persistee par TranslationManager).
+    QApplication::setOrganizationName(QStringLiteral("SeaDesktop"));
+    QApplication::setApplicationName(QStringLiteral("SeaUI"));
 
-    QTranslator translator;
-    const QStringList uiLanguages = QLocale::system().uiLanguages();
-    for (const QString &locale : uiLanguages) {
-        const QString baseName = "SeaUI_" + QLocale(locale).name();
-        if (translator.load(":/i18n/" + baseName)) {
-            a.installTranslator(&translator);
-            break;
-        }
-    }
+    // Initialisation de l'internationalisation.
+    //
+    // loadPersistedLanguage() doit etre appele AVANT la construction de
+    // MainWindow : ainsi la fenetre se construit directement dans la
+    // langue choisie, sans retraduction supplementaire au demarrage.
+    TranslationManager translationManager;
+    translationManager.loadPersistedLanguage();
 
-    MainWindow w;
+    MainWindow w(&translationManager);
     w.show();
 
-    int result = a.exec();
-
-    return result;
+    return a.exec();
 }

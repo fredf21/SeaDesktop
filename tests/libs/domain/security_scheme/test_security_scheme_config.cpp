@@ -554,3 +554,170 @@ void TestSecuritySchemeConfig::securityConfig_corsWildcardWithCredentials_should
 
     QVERIFY_THROWS_EXCEPTION(std::invalid_argument, cfg.validate());
 }
+// ─────────────────────────────────────────────
+// COUVERTURE ADDITIONNELLE
+// ─────────────────────────────────────────────
+
+// ── HttpLimits ────────────────────────────────────────────────
+
+void TestSecuritySchemeConfig::httpLimits_zeroUrlLength_shouldThrow()
+{
+    auto limits = HttpLimits::safe_defaults();
+    limits.set_max_url_length(0);
+
+    QVERIFY_THROWS_EXCEPTION(std::invalid_argument, limits.validate());
+}
+
+void TestSecuritySchemeConfig::httpLimits_excessiveBodySize_shouldThrow()
+{
+    // Une taille de corps déraisonnable (> 100 GB) est rejetée.
+    auto limits = HttpLimits::safe_defaults();
+    limits.set_max_body_size(200ULL * 1024 * 1024 * 1024);   // 200 GB
+
+    QVERIFY_THROWS_EXCEPTION(std::invalid_argument, limits.validate());
+}
+
+void TestSecuritySchemeConfig::httpLimits_excessiveTimeout_shouldThrow()
+{
+    // Un request_timeout > 24h est traité comme une erreur de config.
+    auto limits = HttpLimits::safe_defaults();
+    limits.set_request_timeout(std::chrono::hours(48));
+
+    QVERIFY_THROWS_EXCEPTION(std::invalid_argument, limits.validate());
+}
+
+void TestSecuritySchemeConfig::httpLimits_zeroConnectionsPerIp_shouldThrow()
+{
+    auto limits = HttpLimits::safe_defaults();
+    limits.set_max_connections_per_ip(0);
+
+    QVERIFY_THROWS_EXCEPTION(std::invalid_argument, limits.validate());
+}
+
+// ── RateLimitRule : factories non couvertes ───────────────────
+
+void TestSecuritySchemeConfig::rateLimitRule_globalFactory_shouldHaveGlobalScope()
+{
+    auto rule = RateLimitRule::global(
+        1000,
+        std::chrono::seconds(60),
+        1000
+        );
+
+    QCOMPARE(rule.scope(), RateLimitScope::Global);
+    QVERIFY_THROWS_NO_EXCEPTION(rule.validate());
+}
+
+void TestSecuritySchemeConfig::rateLimitRule_perApiKeyFactory_shouldHaveApiKeyScope()
+{
+    // per_api_key n'est pas une factory dédiée : on construit la règle
+    // et on vérifie que le scope PerApiKey est bien supporté de bout
+    // en bout (scope_from_string + to_string).
+    QCOMPARE(scope_from_string("per_api_key"), RateLimitScope::PerApiKey);
+    QCOMPARE(qs(to_string(RateLimitScope::PerApiKey)), QString("per_api_key"));
+    QCOMPARE(qs(to_string(RateLimitScope::Global)), QString("global"));
+    QCOMPARE(qs(to_string(RateLimitScope::PerUser)), QString("per_user"));
+}
+
+// ── AuthentificationConfig : types non couverts ───────────────
+
+void TestSecuritySchemeConfig::authentication_basicAuth_shouldValidate()
+{
+    // HTTP Basic Auth n'a aucun champ obligatoire : validate() passe.
+    AuthentificationConfig cfg;
+    cfg.set_type(AuthType::Basic);
+
+    QVERIFY(cfg.is_enabled());
+    QVERIFY_THROWS_NO_EXCEPTION(cfg.validate());
+}
+
+void TestSecuritySchemeConfig::authentication_oauth2WithBothUrls_shouldPass()
+{
+    // OAuth2 valide dès que issuer_url ET jwks_url sont renseignés.
+    AuthentificationConfig cfg;
+    cfg.set_type(AuthType::OAuth2);
+    cfg.set_oauth2_issuer_url("https://issuer.example.com");
+    cfg.set_oauth2_jwks_url("https://issuer.example.com/.well-known/jwks.json");
+
+    QVERIFY_THROWS_NO_EXCEPTION(cfg.validate());
+}
+
+// ── TokenTrackingConfig : cas positif auto-cleanup ────────────
+
+void TestSecuritySchemeConfig::tokenTracking_autoCleanupValidInterval_shouldPass()
+{
+    // Un auto-cleanup avec un intervalle strictement positif est valide.
+    TokenTrackingConfig cfg;
+    cfg.set_enabled(true);
+
+    TokenTrackingConfig::AutoCleanupConfig cleanup;
+    cleanup.enabled  = true;
+    cleanup.interval = std::chrono::seconds(3600);
+
+    cfg.set_auto_cleanup(cleanup);
+
+    QVERIFY_THROWS_NO_EXCEPTION(cfg.validate());
+}
+
+// ── SecurityHeaders : disable des autres en-têtes ─────────────
+
+void TestSecuritySchemeConfig::securityHeaders_disableContentTypeOptions_shouldClearValue()
+{
+    auto headers = SecurityHeaders::recommended();
+    QVERIFY(headers.content_type_options().has_value());
+
+    headers.disable_content_type_options();
+
+    QVERIFY(!headers.content_type_options().has_value());
+}
+
+void TestSecuritySchemeConfig::securityHeaders_disableFrameOptions_shouldClearValue()
+{
+    auto headers = SecurityHeaders::recommended();
+    QVERIFY(headers.frame_options().has_value());
+
+    headers.disable_frame_options();
+
+    QVERIFY(!headers.frame_options().has_value());
+}
+
+// ── CookieConfig : cas positif ────────────────────────────────
+
+void TestSecuritySchemeConfig::cookieConfig_sameSiteStrictWithoutSecure_shouldPass()
+{
+    // Seul SameSite=None impose secure=true. Strict reste valide même
+    // sans secure.
+    auto cfg = CookieConfig::safe_defaults();
+    cfg.set_same_site(SameSitePolicy::Strict);
+    cfg.set_secure(false);
+
+    QVERIFY_THROWS_NO_EXCEPTION(cfg.validate());
+}
+
+// ── CorsConfig : désactivé ────────────────────────────────────
+
+void TestSecuritySchemeConfig::cors_disabledShouldNotValidateMethods()
+{
+    // Un CorsConfig désactivé (aucune origine) ne valide rien :
+    // l'absence de méthodes ne déclenche pas d'erreur.
+    CorsConfig cfg;
+
+    QVERIFY(!cfg.is_enabled());
+    QVERIFY_THROWS_NO_EXCEPTION(cfg.validate());
+}
+
+// ── SecurityConfig : propagation HttpLimits ───────────────────
+
+void TestSecuritySchemeConfig::securityConfig_invalidHttpLimits_shouldThrow()
+{
+    // Une HttpLimits invalide injectée dans SecurityConfig fait
+    // échouer la validation globale.
+    auto cfg = SecurityConfig::safe_defaults();
+
+    auto badLimits = HttpLimits::safe_defaults();
+    badLimits.set_max_body_size(0);
+
+    cfg.set_http_limits(badLimits);
+
+    QVERIFY_THROWS_EXCEPTION(std::invalid_argument, cfg.validate());
+}

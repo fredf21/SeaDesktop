@@ -55,6 +55,12 @@ private slots:
     void entity_paginationHelpersShouldReflectConfig();
     void entity_hasFileFieldsShouldDetectConfiguredFileField();
     void entity_seedRecordShouldDetectAlias();
+    void entity_toRoutePluralShouldConvertToLowercase();
+    void entity_toRoutePluralShouldPluralizeRegularNames();
+    void entity_toRoutePluralShouldPluralizeConsonantYNames();
+    void entity_toRoutePluralShouldNotPluralizeWhenDisabled();
+    void entity_toRoutePluralShouldHandleEsPluralNames();
+    void entity_toRoutePluralShouldKeepAlreadyPluralNames();
 
     // Schema
     void schema_emptyShouldBeTrueWhenNoEntities();
@@ -79,4 +85,21 @@ private slots:
     // StorageConfig
     void storageConfig_defaultShouldUseFilesystem();
     void storageConfig_rootPathShouldBeDetected();
+
+    // ── Couverture additionnelle ──────────────────────────────
+    void databaseType_toStringShouldCoverAllValues();
+    void fieldType_isNumericShouldIncludeDecimal();
+    void relation_hasOneHelpersShouldMatch();
+    void relation_onDeleteToStringShouldCoverAllValues();
+    void paginationConfig_offsetOnlyShouldBeDetected();
+    void paginationConfig_cursorOnlyShouldBeDetected();
+    void entity_offsetPaginationHelperShouldReflectConfig();
+    void entity_cursorPaginationHelperShouldReflectConfig();
+    void entity_routePrefixVowelBeforeYShouldJustAddS();
+    void entity_findFieldShouldReturnCorrectFieldData();
+    void project_externalDbServicesShouldExcludeMemory();
+    void project_memoryServicesShouldBeEmptyWhenAllExternal();
+    void schema_crudEntitiesEmptyWhenNoneEnabled();
+    void field_makeFieldShouldDefaultToNotFile();
+
 };

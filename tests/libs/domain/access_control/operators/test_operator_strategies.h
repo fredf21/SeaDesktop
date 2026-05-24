@@ -113,4 +113,18 @@ private slots:
     void operatorRegistry_defaultShouldContainAllStandardOperators();
     void operatorRegistry_findUnknownOrMissingShouldReturnNullptr();
     void operatorRegistry_regexMatchShouldUseProvidedCache();
+
+    // ── Couverture additionnelle : cas limites ────────────────
+    void numericHelper_parseEmptyString_shouldReturnNullopt();
+    void numericHelper_parseNegativeNumber_shouldReturnDouble();
+    void numericHelper_parseBothRightNonScalar_shouldReturnNullopt();
+    void equals_listsOfDifferentSize_shouldReturnFalse();
+    void contains_stringContainsEmptySubstring_shouldReturnTrue();
+    void startsWith_emptyPrefix_shouldReturnTrue();
+    void endsWith_emptySuffix_shouldReturnTrue();
+    void in_emptyList_shouldReturnFalse();
+    void intersects_emptyLists_shouldReturnFalse();
+    void intersects_listLeftScalarRight_shouldReturnFalse();
+    void greaterThan_negativeNumbers_shouldCompareCorrectly();
+    void operatorRegistry_registerCustomStrategy_shouldOverride();
 };

@@ -110,4 +110,10 @@ private slots:
     void policyEngine_notCondition_shouldInvertChild();
     void policyEngine_subjectOnly_shouldIgnoreResourcePredicate();
     void policyEngine_verbose_shouldAddPredicateTrace();
+
+    // ── Couverture additionnelle ──────────────────────────────
+    void operatorEvaluator_missingStrategy_shouldReturnFalse();
+    void operatorEvaluator_notEqualsWithEmptyLeft_shouldNotShortCircuit();
+    void policyEngine_doubleNotCondition_shouldReturnOriginal();
+    void policyEngine_nestedComposite_shouldEvaluateCorrectly();
 };

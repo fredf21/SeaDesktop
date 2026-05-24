@@ -22,12 +22,21 @@
 #include <QTableWidget>
 #include <QLineEdit>
 #include <QFormLayout>
+#include <QDialogButtonBox>
+#include <QRegularExpression>
+#include <QTabWidget>
+#include <QPlainTextEdit>
+#include <QListWidget>
+#include <QComboBox>
+#include <QCheckBox>
+#include <QFontDatabase>
 #include <QInputDialog>
 #include <QFileDialog>
 #include <QFile>
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <QCoreApplication>
+#include <QEvent>
 #include <QTextStream>
 #include <QStringConverter>
 
@@ -74,22 +83,6 @@ namespace {
 namespace {
 
 /**
- * @brief Retourne le nom d'une entité avec première lettre en minuscule.
- *
- * Exemple : `Department` -> `department`.
- *
- * @param value Nom d'entité.
- * @return QString Nom transformé.
- */
-QString lowerFirst(QString value)
-{
-    if (!value.isEmpty()) {
-        value[0] = value[0].toLower();
-    }
-    return value;
-}
-
-/**
  * @brief Retourne le chemin pluriel attendu pour une entité.
  *
  * Exemple : `Department` -> `/departments`.
@@ -97,11 +90,66 @@ QString lowerFirst(QString value)
  * @param entityName Nom d'entité.
  * @return QString Chemin pluriel.
  */
-QString pluralEntityPath(const QString& entityName)
+QString pluralEntityPath(const QString& entityName, bool must_be_plural = true)
 {
-    return "/" + lowerFirst(entityName) + "s";
-}
+    if (entityName.isEmpty()) {
+        return "";
+    }
 
+    QString name = entityName.toLower();
+
+    if (!must_be_plural) {
+        return "/" + name;
+    }
+
+    // Déjà pluriel évident : categories, companies, policies
+    if (name.size() >= 3 && name.endsWith("ies", Qt::CaseInsensitive)) {
+        return "/" + name;
+    }
+
+    // Déjà pluriel simple : users, articles, tags
+    // On évite address, class, status, etc.
+    if (name.endsWith('s', Qt::CaseInsensitive) &&
+        !name.endsWith("ss", Qt::CaseInsensitive) &&
+        !name.endsWith("us", Qt::CaseInsensitive)) {
+        return "/" + name;
+    }
+
+    // category -> categories
+    // company  -> companies
+    if (name.size() >= 2 && name.endsWith('y', Qt::CaseInsensitive)) {
+        QChar beforeY = name.at(name.size() - 2).toLower();
+
+        const bool beforeIsVowel =
+            beforeY == 'a' ||
+            beforeY == 'e' ||
+            beforeY == 'i' ||
+            beforeY == 'o' ||
+            beforeY == 'u';
+
+        if (!beforeIsVowel) {
+            name.chop(1);
+            name += "ies";
+            return "/" + name;
+        }
+    }
+
+    // address -> addresses
+    // class   -> classes
+    // box     -> boxes
+    // church  -> churches
+    // dish    -> dishes
+    if (name.endsWith('s', Qt::CaseInsensitive) ||
+        name.endsWith("ss", Qt::CaseInsensitive) ||
+        name.endsWith('x', Qt::CaseInsensitive) ||
+        name.endsWith('z', Qt::CaseInsensitive) ||
+        name.endsWith("ch", Qt::CaseInsensitive) ||
+        name.endsWith("sh", Qt::CaseInsensitive)) {
+        return "/" + name + "es";
+    }
+
+    return "/" + name + "s";
+}
 /**
  * @brief Détermine si une route est liée à une entité donnée.
  *
@@ -117,7 +165,7 @@ bool routeMatchesEntity(const sea::application::RouteDefinition& route, const QS
     const QString routeEntity = QString::fromStdString(route.entity_name);
     const QString routePath = QString::fromStdString(route.path);
 
-    const QString entityLower = lowerFirst(entityName);
+    const QString entityLower = pluralEntityPath(entityName, false);
     const QString entityPluralPath = pluralEntityPath(entityName);
 
     if (routeEntity.compare(entityName, Qt::CaseInsensitive) == 0) {
@@ -146,7 +194,7 @@ bool routeMatchesEntity(const sea::application::RouteDefinition& route, const QS
  *
  * @param parent Parent Qt.
  */
-MainWindow::MainWindow(QWidget *parent)
+MainWindow::MainWindow(TranslationManager* translationManager, QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
     , _projectModel(new ProjectListModel(this))
@@ -155,10 +203,11 @@ MainWindow::MainWindow(QWidget *parent)
     , _fieldModel(new FieldListModel(this))
     , _routeModel(new RouteListModel(this))
     ,_networkManager(new QNetworkAccessManager(this))
+    , _translationManager(translationManager)
 {
     ui->setupUi(this);
     showMaximized();
-    setWindowTitle("SeaDesktop");
+    setWindowTitle(tr("SeaDesktop"));
 
     ui->projectListView->setModel(_projectModel);
     ui->serviceListView->setModel(_serviceModel);
@@ -189,7 +238,7 @@ MainWindow::MainWindow(QWidget *parent)
     ui->swaggerServiceButton->setEnabled(false);
 
     ui->serviceLogoutButton->setEnabled(false);
-    ui->serviceAuthStatusLabel->setText("Disconnected");
+    ui->serviceAuthStatusLabel->setText(tr("Disconnected"));
     ui->serviceAuthStatusLabel->setStyleSheet("color: #e74c3c; font-weight: bold;");
 
     updateAuthUi();
@@ -282,7 +331,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(ui->logsServiceButton, &QPushButton::clicked, this, [this]() {
         if (_currentProjectRow < 0 || _currentServiceRow < 0) {
-            QMessageBox::warning(this, "Logs", "Aucun projet ou service sélectionné.");
+            QMessageBox::warning(this, tr("Logs"), tr("No project or service selected."));
             return;
         }
 
@@ -300,8 +349,8 @@ MainWindow::MainWindow(QWidget *parent)
         if (!QFileInfo::exists(logPath)) {
             QMessageBox::warning(
                 this,
-                "Logs",
-                "Le fichier de log n'existe pas encore :\n" + logPath
+                tr("Logs"),
+                tr("The log file does not exist yet:\n%1").arg(logPath)
                 );
             return;
         }
@@ -309,6 +358,7 @@ MainWindow::MainWindow(QWidget *parent)
         QDesktopServices::openUrl(QUrl::fromLocalFile(logPath));
     });
 
+    setupLanguageMenu();
 }
 
 /**
@@ -317,6 +367,93 @@ MainWindow::MainWindow(QWidget *parent)
 MainWindow::~MainWindow()
 {
     delete ui;
+}
+
+/**
+ * @brief Initialise le sous-menu de selection de langue.
+ *
+ * Les actions actionEnglish et actionFrancais (definies dans le .ui sous
+ * Edit -> Preferences -> Languages) sont rendues cochables et placees dans
+ * un QActionGroup pour etre mutuellement exclusives. La langue actuellement
+ * active est cochee.
+ */
+void MainWindow::setupLanguageMenu()
+{
+    _languageGroup = new QActionGroup(this);
+    _languageGroup->setExclusive(true);
+
+    ui->actionEnglish->setCheckable(true);
+    ui->actionFrancais->setCheckable(true);
+
+    _languageGroup->addAction(ui->actionEnglish);
+    _languageGroup->addAction(ui->actionFrancais);
+
+    if (_translationManager) {
+        syncLanguageMenu(_translationManager->currentLanguage());
+
+        // Garder la coche synchronisee si la langue change par une autre
+        // voie que le menu.
+        connect(_translationManager, &TranslationManager::languageChanged,
+                this, &MainWindow::syncLanguageMenu);
+    }
+}
+
+/**
+ * @brief Met a jour la coche du sous-menu langue selon la langue active.
+ *
+ * @param code Code de la langue desormais active ("en_US", "fr_FR").
+ */
+void MainWindow::syncLanguageMenu(const QString& code)
+{
+    if (code == QStringLiteral("fr_FR")) {
+        ui->actionFrancais->setChecked(true);
+    } else {
+        ui->actionEnglish->setChecked(true);
+    }
+}
+
+/**
+ * @brief Intercepte les changements d'etat de la fenetre.
+ *
+ * Sur QEvent::LanguageChange, l'interface est retraduite a chaud :
+ *  - retranslateUi() recharge tous les textes definis dans le .ui ;
+ *  - les textes positionnes dynamiquement dans le code (titre de la
+ *    fenetre, label de statut d'authentification) sont re-appliques
+ *    manuellement car retranslateUi() ne les connait pas.
+ *
+ * @param event Evenement Qt.
+ */
+void MainWindow::changeEvent(QEvent* event)
+{
+    if (event != nullptr && event->type() == QEvent::LanguageChange) {
+        ui->retranslateUi(this);
+
+        // Textes dynamiques non couverts par retranslateUi().
+        setWindowTitle(tr("SeaDesktop"));
+        updateAuthUi();
+    }
+
+    QMainWindow::changeEvent(event);
+}
+
+/**
+ * @brief Bascule l'application en anglais.
+ */
+void MainWindow::on_actionEnglish_triggered()
+{
+    if (_translationManager) {
+        _translationManager->applyLanguage(QStringLiteral("en_US"));
+    }
+}
+
+/**
+ * @brief Bascule l'application en francais.
+ */
+void MainWindow::on_actionFrancais_triggered()
+{
+    if (_translationManager) {
+        _translationManager->applyLanguage(QStringLiteral("fr_FR"));
+    }
 }
 
 /**
@@ -380,23 +517,18 @@ void MainWindow::loadProjects()
     }
 }
 /**
- * @brief Démarre le processus backend correspondant au service sélectionné.
+ * @brief Demarre le processus backend d'un service donne.
  *
- * @param serviceName Nom du service.
- * @param yamlPath Chemin du YAML du projet.
+ * Helper independant de la selection courante de l'interface.
  */
-void MainWindow::startService(const QString &serviceName, const QString &yamlPath)
+void MainWindow::startServiceProcess(const QString& projectName,
+                                     const QString& serviceName,
+                                     int port,
+                                     const QString& yamlPath)
 {
-    if (_currentProjectRow < 0 || _currentServiceRow < 0) {
-        return;
-    }
+    const QString processKey = serviceProcessKey(projectName, serviceName, port);
 
-    const auto& project = _projectModel->projectAt(_currentProjectRow);
-    const auto& service = _serviceModel->serviceAt(_currentServiceRow);
-
-    const QString projectName = QString::fromStdString(project->name);
-    const QString processKey = serviceProcessKey(projectName, serviceName, static_cast<int>(service->port));
-
+    // Idempotent : ne rien faire si le processus tourne deja.
     if (_processes.contains(processKey) &&
         _processes[processKey] != nullptr &&
         _processes[processKey]->state() != QProcess::NotRunning) {
@@ -433,28 +565,22 @@ void MainWindow::startService(const QString &serviceName, const QString &yamlPat
 }
 
 /**
- * @brief Arrête le processus backend correspondant au service sélectionné.
+ * @brief Arrete le processus backend d'un service donne.
  *
- * @param serviceName Nom du service.
+ * Helper independant de la selection courante de l'interface.
  */
-void MainWindow::stopService(const QString &serviceName)
+void MainWindow::stopServiceProcess(const QString& projectName,
+                                    const QString& serviceName,
+                                    int port)
 {
-    if (_currentProjectRow < 0 || _currentServiceRow < 0) {
-        return;
-    }
-
-    const auto& project = _projectModel->projectAt(_currentProjectRow);
-    const auto& service = _serviceModel->serviceAt(_currentServiceRow);
-
-    const QString projectName = QString::fromStdString(project->name);
-    const QString processKey = serviceProcessKey(projectName, serviceName, static_cast<int>(service->port));
+    const QString processKey = serviceProcessKey(projectName, serviceName, port);
 
     if (!_processes.contains(processKey)) {
         return;
     }
 
     auto* process = _processes[processKey];
-    if (!process) {
+    if (process == nullptr) {
         _processes.remove(processKey);
         return;
     }
@@ -469,6 +595,56 @@ void MainWindow::stopService(const QString &serviceName)
 
     _processes.remove(processKey);
     process->deleteLater();
+}
+
+/**
+ * @brief Démarre le processus backend correspondant au service sélectionné.
+ *
+ * Delegue au helper startServiceProcess en resolvant le projet et le
+ * service depuis la selection courante de l'interface.
+ *
+ * @param serviceName Nom du service.
+ * @param yamlPath Chemin du YAML du projet.
+ */
+void MainWindow::startService(const QString &serviceName, const QString &yamlPath)
+{
+    if (_currentProjectRow < 0 || _currentServiceRow < 0) {
+        return;
+    }
+
+    const auto& project = _projectModel->projectAt(_currentProjectRow);
+    const auto& service = _serviceModel->serviceAt(_currentServiceRow);
+
+    startServiceProcess(
+        QString::fromStdString(project->name),
+        serviceName,
+        static_cast<int>(service->port),
+        yamlPath
+        );
+}
+
+/**
+ * @brief Arrête le processus backend correspondant au service sélectionné.
+ *
+ * Delegue au helper stopServiceProcess en resolvant le projet et le
+ * service depuis la selection courante de l'interface.
+ *
+ * @param serviceName Nom du service.
+ */
+void MainWindow::stopService(const QString &serviceName)
+{
+    if (_currentProjectRow < 0 || _currentServiceRow < 0) {
+        return;
+    }
+
+    const auto& project = _projectModel->projectAt(_currentProjectRow);
+    const auto& service = _serviceModel->serviceAt(_currentServiceRow);
+
+    stopServiceProcess(
+        QString::fromStdString(project->name),
+        serviceName,
+        static_cast<int>(service->port)
+        );
 }
 
 /**
@@ -662,12 +838,12 @@ void MainWindow::on_swaggerServiceButton_clicked()
 
     auto* dialog = new QDialog(this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->setWindowTitle("Swagger");
+    dialog->setWindowTitle(tr("Swagger"));
     dialog->resize(1200, 800);
 
     auto* layout = new QVBoxLayout(dialog);
     auto* view = new QWebEngineView(dialog);
-    auto* closeButton = new QPushButton("Retour", dialog);
+    auto* closeButton = new QPushButton(tr("Back"), dialog);
 
     const auto& service = _serviceModel->serviceAt(_currentServiceRow);
     const QString url = QString("http://localhost:%1/docs").arg(service->port);
@@ -706,7 +882,7 @@ void MainWindow::promptLogin()
 {
     auto* dialog = new QDialog(this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->setWindowTitle("Connexion");
+    dialog->setWindowTitle(tr("Login"));
     dialog->resize(360, 140);
 
     auto* layout = new QFormLayout(dialog);
@@ -714,8 +890,8 @@ void MainWindow::promptLogin()
     auto* passwordEdit = new QLineEdit(dialog);
     passwordEdit->setEchoMode(QLineEdit::Password);
 
-    layout->addRow("Email :", emailEdit);
-    layout->addRow("Mot de passe :", passwordEdit);
+    layout->addRow(tr("Email:"), emailEdit);
+    layout->addRow(tr("Password:"), passwordEdit);
 
     auto* buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
@@ -728,7 +904,7 @@ void MainWindow::promptLogin()
         const QString password = passwordEdit->text();
 
         if (email.isEmpty() || password.isEmpty()) {
-            QMessageBox::warning(this, "Connexion", "Email et mot de passe requis.");
+            QMessageBox::warning(this, tr("Login"), tr("Email and password are required."));
             return;
         }
 
@@ -745,7 +921,7 @@ void MainWindow::promptLogin()
 void MainWindow::loginUser(const QString &email, const QString &password)
 {
     if (_currentServiceRow < 0) {
-        QMessageBox::warning(this, "Connexion", "Aucun service sélectionné.");
+        QMessageBox::warning(this, tr("Login"), tr("No service selected."));
         return;
     }
 
@@ -771,8 +947,9 @@ void MainWindow::loginUser(const QString &email, const QString &password)
         if (reply->error() != QNetworkReply::NoError) {
             QMessageBox::critical(
                 this,
-                "Connexion",
-                "Échec du login.\nURL: " + url + "\nErreur: " + reply->errorString()
+                tr("Login"),
+                tr("Login failed.\nURL: %1\nError: %2")
+                    .arg(url, reply->errorString())
                 );
             return;
         }
@@ -782,14 +959,14 @@ void MainWindow::loginUser(const QString &email, const QString &password)
         const QJsonDocument doc = QJsonDocument::fromJson(payload, &parseError);
 
         if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-            QMessageBox::critical(this, "Connexion", "Réponse JSON invalide.");
+            QMessageBox::critical(this, tr("Login"), tr("Invalid JSON response."));
             return;
         }
 
         const QJsonObject obj = doc.object();
 
         if (!obj.contains("access_token") || !obj.value("access_token").isString()) {
-            QMessageBox::critical(this, "Connexion", "Aucun access_token JWT reçu.");
+            QMessageBox::critical(this, tr("Login"), tr("No JWT access_token received."));
             return;
         }
 
@@ -801,7 +978,7 @@ void MainWindow::loginUser(const QString &email, const QString &password)
         qDebug() << "JWT =" << _authToken;
 
         updateAuthUi();
-        QMessageBox::information(this, "Connexion", "Connexion réussie.");
+        QMessageBox::information(this, tr("Login"), tr("Login successful."));
     });
 }
 
@@ -809,7 +986,7 @@ void MainWindow::logoutUser()
 {
     _authToken.clear();
     updateAuthUi();
-    QMessageBox::information(this, "Logout", "Déconnecté.");
+    QMessageBox::information(this, tr("Logout"), tr("Logged out."));
 }
 
 void MainWindow::updateAuthUi()
@@ -819,7 +996,7 @@ void MainWindow::updateAuthUi()
     ui->serviceLoginButton->setEnabled(!connected);
     ui->serviceLogoutButton->setEnabled(connected);
 
-    ui->serviceAuthStatusLabel->setText(connected ? "Connected" : "Disconnected");
+    ui->serviceAuthStatusLabel->setText(connected ? tr("Connected") : tr("Disconnected"));
     ui->serviceAuthStatusLabel->setStyleSheet(
         connected
             ? "color: #2ecc71; font-weight: bold;"
@@ -853,9 +1030,9 @@ void MainWindow::showJsonArrayInTable(const QJsonArray& array, const QString& ti
     if (array.isEmpty()) {
         table->setRowCount(0);
         table->setColumnCount(1);
-        table->setHorizontalHeaderLabels(QStringList() << "Info");
+        table->setHorizontalHeaderLabels(QStringList() << tr("Info"));
         table->setRowCount(1);
-        table->setItem(0, 0, new QTableWidgetItem("Aucune donnée."));
+        table->setItem(0, 0, new QTableWidgetItem(tr("No data.")));
         table->horizontalHeader()->setStretchLastSection(true);
         dialog->show();
         return;
@@ -925,12 +1102,12 @@ void MainWindow::showJsonArrayInTable(const QJsonArray& array, const QString& ti
 void MainWindow::on_openEntityDataButton_clicked()
 {
     if (_currentServiceRow < 0) {
-        QMessageBox::warning(this, "Open Data", "Aucun service sélectionné.");
+        QMessageBox::warning(this, tr("Open Data"), tr("No service selected."));
         return;
     }
 
     if (_currentEntityRow < 0) {
-        QMessageBox::warning(this, "Open Data", "Aucune entité sélectionnée.");
+        QMessageBox::warning(this, tr("Open Data"), tr("No entity selected."));
         return;
     }
 
@@ -957,8 +1134,9 @@ void MainWindow::on_openEntityDataButton_clicked()
         if (reply->error() != QNetworkReply::NoError) {
             QMessageBox::critical(
                 this,
-                "Open Data",
-                "Impossible de récupérer les données.\nURL: " + url + "\nErreur: " + reply->errorString()
+                tr("Open Data"),
+                tr("Unable to retrieve data.\nURL: %1\nError: %2")
+                    .arg(url, reply->errorString())
                 );
             return;
         }
@@ -970,8 +1148,8 @@ void MainWindow::on_openEntityDataButton_clicked()
         if (parseError.error != QJsonParseError::NoError) {
             QMessageBox::critical(
                 this,
-                "Open Data",
-                "Réponse JSON invalide.\nErreur: " + parseError.errorString()
+                tr("Open Data"),
+                tr("Invalid JSON response.\nError: %1").arg(parseError.errorString())
                 );
             return;
         }
@@ -979,13 +1157,13 @@ void MainWindow::on_openEntityDataButton_clicked()
         if (!doc.isArray()) {
             QMessageBox::warning(
                 this,
-                "Open Data",
-                "La réponse n'est pas un tableau JSON."
+                tr("Open Data"),
+                tr("The response is not a JSON array.")
                 );
             return;
         }
 
-        showJsonArrayInTable(doc.array(), "Données - " + entityName);
+        showJsonArrayInTable(doc.array(), tr("Data - %1").arg(entityName));
     });
 }
 
@@ -1007,64 +1185,2112 @@ void MainWindow::on_serviceLogoutButton_clicked()
 }
 
 
+/**
+ * @brief Affiche un modal demandant le nom du projet et du service.
+ */
+bool MainWindow::promptNewProject(QString& projectName, QString& serviceName)
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("New Project"));
+    dialog.resize(380, 150);
+
+    auto* layout = new QFormLayout(&dialog);
+
+    auto* projectEdit = new QLineEdit(&dialog);
+    auto* serviceEdit = new QLineEdit(&dialog);
+
+    layout->addRow(tr("Project name:"), projectEdit);
+    layout->addRow(tr("Service name:"), serviceEdit);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+        &dialog
+        );
+    layout->addRow(buttons);
+
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return false;
+    }
+
+    // Normalisation : retrait des espaces de bordure, des caracteres
+    // invalides, puis remplacement des espaces internes par '_'.
+    const auto normalize = [](QString value) -> QString {
+        value = value.trimmed();
+        value.remove(QRegularExpression("[^A-Za-z0-9_ ]"));
+        value.replace(QRegularExpression("\\s+"), "_");
+        return value;
+    };
+
+    projectName = normalize(projectEdit->text());
+    serviceName = normalize(serviceEdit->text());
+
+    if (projectName.isEmpty() || serviceName.isEmpty()) {
+        QMessageBox::warning(
+            this,
+            tr("New Project"),
+            tr("Project name and service name are required.")
+            );
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * @brief Construit le bloc YAML d'un service en configuration de
+ *        production.
+ */
+QString MainWindow::buildProductionServiceBlock(const QString& projectName,
+                                                const QString& serviceName) const
+{
+    const QString databaseName = projectName.toLower() + "_db";
+    const QString logFileName  = projectName.toLower() + ".log";
+
+    QString block;
+    QTextStream out(&block);
+
+    out << "  - name: " << serviceName << "\n";
+    out << "    port: 8080\n";
+    out << "\n";
+
+    // ── Base de donnees ──────────────────────────────────────────
+    out << "    database:\n";
+    out << "      type: mysql\n";
+    out << "      host: 127.0.0.1\n";
+    out << "      port: 3306\n";
+    out << "      database_name: " << databaseName << "\n";
+    out << "      username: \"\"\n";
+    out << "      password: \"\"\n";
+    out << "      migrations:\n";
+    out << "        enabled: true\n";
+    out << "        create_database_if_missing: true\n";
+    out << "        mode: conservative\n";
+    out << "\n";
+
+    // ── Securite (configuration minimale de production) ──────────
+    out << "    security:\n";
+    out << "      authentication:\n";
+    out << "        type: jwt\n";
+    out << "        algorithm: HS256\n";
+    out << "        secret: \"${SEA_DESKTOP_JWT_SECRET}\"\n";
+    out << "        issuer: " << projectName << "\n";
+    out << "        access_token_ttl: 15m\n";
+    out << "        refresh_token_ttl: 7d\n";
+    out << "        token_delivery: cookie\n";
+    out << "      cors:\n";
+    out << "        allowed_origins:\n";
+    out << "          - \"https://localhost\"\n";
+    out << "        allowed_methods:\n";
+    out << "          - GET\n";
+    out << "          - POST\n";
+    out << "          - PUT\n";
+    out << "          - DELETE\n";
+    out << "        allow_credentials: true\n";
+    out << "      headers:\n";
+    out << "        preset: strict\n";
+    out << "      http_limits:\n";
+    out << "        max_body_size: \"10MB\"\n";
+    out << "        request_timeout: 30s\n";
+    out << "        max_connections_per_ip: 100\n";
+    out << "\n";
+
+    // ── Logging (production) ─────────────────────────────────────
+    out << "    logging:\n";
+    out << "      enabled: true\n";
+    out << "      level: info\n";
+    out << "      sinks:\n";
+    out << "        - type: console\n";
+    out << "          format: text\n";
+    out << "          enabled: true\n";
+    out << "        - type: file\n";
+    out << "          format: json\n";
+    out << "          enabled: true\n";
+    out << "          path: \"./logs/" << logFileName << "\"\n";
+    out << "          rotation:\n";
+    out << "            max_size: \"100MB\"\n";
+    out << "            time_pattern: daily\n";
+    out << "            max_files: 10\n";
+    out << "            compress: true\n";
+    out << "      flush_level: error\n";
+    out << "      async:\n";
+    out << "        enabled: true\n";
+    out << "        queue_size: 8192\n";
+    out << "        overflow_policy: overrun_oldest\n";
+
+    return block;
+}
+
+/**
+ * @brief Construit le contenu YAML d'un projet en configuration
+ *        minimale de production.
+ */
+QString MainWindow::buildProductionYaml(const QString& projectName,
+                                        const QString& serviceName) const
+{
+    QString yaml;
+    QTextStream out(&yaml);
+
+    out << "project:\n";
+    out << "  name: " << projectName << "\n";
+    out << "\n";
+    out << "services:\n";
+    out << buildProductionServiceBlock(projectName, serviceName);
+
+    return yaml;
+}
+
+/**
+ * @brief Construit le bloc YAML d'une entite, indente pour 'entities:'.
+ *
+ * Indentation : l'entite est un element de la sequence 'entities:' d'un
+ * service. 'entities:' etant a 4 espaces, le tiret de l'entite est a 6
+ * espaces et son contenu a 8.
+ */
+QString MainWindow::buildEntityBlock(const QString& entityName,
+                                     bool enableCrud,
+                                     bool timestamps,
+                                     bool softDelete,
+                                     const QVector<EntityFieldDraft>& fields) const
+{
+    QString block;
+    QTextStream out(&block);
+
+    out << "      - name: " << entityName << "\n";
+
+    // options:
+    out << "        options:\n";
+    out << "          enable_crud: " << (enableCrud ? "true" : "false") << "\n";
+    out << "          timestamps: "  << (timestamps ? "true" : "false") << "\n";
+    out << "          soft_delete: " << (softDelete ? "true" : "false") << "\n";
+
+    // fields:
+    out << "        fields:\n";
+    for (const EntityFieldDraft& field : fields) {
+        out << "          - name: " << field.name << "\n";
+        out << "            type: " << field.type << "\n";
+        // N'ecrire les attributs booleens que lorsqu'ils sont vrais :
+        // les valeurs par defaut du parser sont 'false'.
+        if (field.required) {
+            out << "            required: true\n";
+        }
+        if (field.unique) {
+            out << "            unique: true\n";
+        }
+        if (field.indexed) {
+            out << "            indexed: true\n";
+        }
+    }
+
+    return block;
+}
+
+/**
+ * @brief Insere un bloc entite dans le service cible d'un fichier YAML.
+ */
+bool MainWindow::insertEntityIntoYaml(QString& yamlContent,
+                                      const QString& serviceName,
+                                      const QString& entityBlock) const
+{
+    QStringList lines = yamlContent.split('\n');
+
+    // 1. Localiser la ligne de debut du service : "  - name: <serviceName>".
+    const QString serviceHeader = "  - name: " + serviceName;
+    int serviceStart = -1;
+    for (int i = 0; i < lines.size(); ++i) {
+        if (lines.at(i).trimmed() == serviceHeader.trimmed() &&
+            lines.at(i).startsWith("  - name:")) {
+            serviceStart = i;
+            break;
+        }
+    }
+    if (serviceStart < 0) {
+        return false; // Service introuvable.
+    }
+
+    // 2. Determiner la fin du bloc du service : prochaine ligne "  - name:"
+    //    (service suivant) ou prochaine section racine (colonne 0), sinon
+    //    la fin du fichier.
+    int serviceEnd = lines.size(); // exclusif
+    for (int i = serviceStart + 1; i < lines.size(); ++i) {
+        const QString& line = lines.at(i);
+        if (line.startsWith("  - name:")) {
+            serviceEnd = i;
+            break;
+        }
+        // Ligne non vide et non indentee = nouvelle section racine.
+        if (!line.isEmpty() && !line.at(0).isSpace()) {
+            serviceEnd = i;
+            break;
+        }
+    }
+
+    // 3. Chercher une section "    entities:" dans le bloc du service.
+    int entitiesLine = -1;
+    for (int i = serviceStart + 1; i < serviceEnd; ++i) {
+        if (lines.at(i) == "    entities:") {
+            entitiesLine = i;
+            break;
+        }
+    }
+
+    const QStringList entityLines = entityBlock.split('\n');
+
+    if (entitiesLine >= 0) {
+        // 3a. Section 'entities:' existante : inserer l'entite a la fin de
+        //     cette section (avant la prochaine cle de meme niveau ou la
+        //     fin du bloc service).
+        int insertAt = serviceEnd;
+        for (int i = entitiesLine + 1; i < serviceEnd; ++i) {
+            const QString& line = lines.at(i);
+            if (line.isEmpty()) {
+                continue;
+            }
+            // Cle indentee a 4 espaces = section soeur de 'entities:'.
+            if (line.length() >= 5 &&
+                line.startsWith("    ") &&
+                !line.at(4).isSpace()) {
+                insertAt = i;
+                break;
+            }
+        }
+        for (int k = entityLines.size() - 1; k >= 0; --k) {
+            lines.insert(insertAt, entityLines.at(k));
+        }
+    } else {
+        // 3b. Pas de section 'entities:' : la creer a la fin du bloc
+        //     service, suivie de l'entite.
+        QStringList toInsert;
+        toInsert << "    entities:";
+        toInsert << entityLines;
+
+        for (int k = toInsert.size() - 1; k >= 0; --k) {
+            lines.insert(serviceEnd, toInsert.at(k));
+        }
+    }
+
+    yamlContent = lines.join('\n');
+    return true;
+}
+
+/**
+ * @brief Remplace la valeur du port d'un service dans un YAML.
+ */
+bool MainWindow::replacePortInService(QString& yamlContent,
+                                      const QString& serviceName,
+                                      int newPort) const
+{
+    QStringList lines = yamlContent.split('\n');
+
+    // 1. Localiser la ligne de debut du service.
+    const QString serviceHeader = "  - name: " + serviceName;
+    int serviceStart = -1;
+    for (int i = 0; i < lines.size(); ++i) {
+        if (lines.at(i).trimmed() == serviceHeader.trimmed() &&
+            lines.at(i).startsWith("  - name:")) {
+            serviceStart = i;
+            break;
+        }
+    }
+    if (serviceStart < 0) {
+        return false; // Service introuvable.
+    }
+
+    // 2. Determiner la fin du bloc du service.
+    int serviceEnd = lines.size();
+    for (int i = serviceStart + 1; i < lines.size(); ++i) {
+        const QString& line = lines.at(i);
+        if (line.startsWith("  - name:")) {
+            serviceEnd = i;
+            break;
+        }
+        if (!line.isEmpty() && !line.at(0).isSpace()) {
+            serviceEnd = i;
+            break;
+        }
+    }
+
+    // 3. Chercher la cle 'port:' indentee a EXACTEMENT 4 espaces.
+    //    Le port de la base de donnees est indente a 6 espaces : on
+    //    l'ignore en exigeant que le 5e caractere ne soit pas un espace.
+    for (int i = serviceStart + 1; i < serviceEnd; ++i) {
+        const QString& line = lines.at(i);
+        if (line.startsWith("    port:") &&
+            (line.length() == 4 || !line.at(4).isSpace())) {
+            lines[i] = "    port: " + QString::number(newPort);
+            yamlContent = lines.join('\n');
+            return true;
+        }
+    }
+
+    return false; // Cle 'port:' introuvable dans le service.
+}
+
+/**
+ * @brief Remplace le nom du projet dans un YAML.
+ */
+bool MainWindow::replaceProjectName(QString& yamlContent,
+                                    const QString& newName) const
+{
+    QStringList lines = yamlContent.split('\n');
+
+    // 1. Localiser la section racine 'project:'.
+    int projectStart = -1;
+    for (int i = 0; i < lines.size(); ++i) {
+        if (lines.at(i) == "project:") {
+            projectStart = i;
+            break;
+        }
+    }
+    if (projectStart < 0) {
+        return false; // Section 'project:' introuvable.
+    }
+
+    // 2. Determiner la fin du bloc 'project:' : prochaine ligne non vide
+    //    et non indentee (nouvelle section racine).
+    int projectEnd = lines.size();
+    for (int i = projectStart + 1; i < lines.size(); ++i) {
+        const QString& line = lines.at(i);
+        if (!line.isEmpty() && !line.at(0).isSpace()) {
+            projectEnd = i;
+            break;
+        }
+    }
+
+    // 3. Chercher la cle 'name:' indentee a 2 espaces dans ce bloc.
+    for (int i = projectStart + 1; i < projectEnd; ++i) {
+        if (lines.at(i).startsWith("  name:")) {
+            lines[i] = "  name: " + newName;
+            yamlContent = lines.join('\n');
+            return true;
+        }
+    }
+
+    return false; // Cle 'name:' introuvable sous 'project:'.
+}
+
+/**
+ * @brief Remplace les options d'une entite dans un YAML.
+ */
+bool MainWindow::replaceEntityOptions(QString& yamlContent,
+                                      const QString& serviceName,
+                                      const QString& entityName,
+                                      bool enableCrud,
+                                      bool timestamps,
+                                      bool softDelete) const
+{
+    QStringList lines = yamlContent.split('\n');
+
+    // 1. Localiser le bloc du service.
+    int serviceStart = -1;
+    for (int i = 0; i < lines.size(); ++i) {
+        if (lines.at(i).trimmed() == ("- name: " + serviceName).trimmed() &&
+            lines.at(i).startsWith("  - name:")) {
+            serviceStart = i;
+            break;
+        }
+    }
+    if (serviceStart < 0) {
+        return false; // Service introuvable.
+    }
+
+    int serviceEnd = lines.size();
+    for (int i = serviceStart + 1; i < lines.size(); ++i) {
+        const QString& line = lines.at(i);
+        if (line.startsWith("  - name:")) {
+            serviceEnd = i;
+            break;
+        }
+        if (!line.isEmpty() && !line.at(0).isSpace()) {
+            serviceEnd = i;
+            break;
+        }
+    }
+
+    // 2. Localiser le bloc de l'entite dans le service.
+    //    Une entite commence par "      - name: <entityName>" (6 espaces).
+    int entityStart = -1;
+    for (int i = serviceStart + 1; i < serviceEnd; ++i) {
+        if (lines.at(i).startsWith("      - name:") &&
+            lines.at(i).mid(QString("      - name:").length()).trimmed()
+                == entityName) {
+            entityStart = i;
+            break;
+        }
+    }
+    if (entityStart < 0) {
+        return false; // Entite introuvable.
+    }
+
+    // 3. Determiner la fin du bloc de l'entite : prochaine entite
+    //    ("      - name:") ou fin du bloc service.
+    int entityEnd = serviceEnd;
+    for (int i = entityStart + 1; i < serviceEnd; ++i) {
+        if (lines.at(i).startsWith("      - name:")) {
+            entityEnd = i;
+            break;
+        }
+    }
+
+    // 4. Chercher la section "        options:" (8 espaces) dans l'entite.
+    int optionsLine = -1;
+    for (int i = entityStart + 1; i < entityEnd; ++i) {
+        if (lines.at(i) == "        options:") {
+            optionsLine = i;
+            break;
+        }
+    }
+
+    // Lignes des trois options, indentees a 10 espaces.
+    const QString crudLine =
+        QString("          enable_crud: ") + (enableCrud ? "true" : "false");
+    const QString tsLine =
+        QString("          timestamps: ") + (timestamps ? "true" : "false");
+    const QString sdLine =
+        QString("          soft_delete: ") + (softDelete ? "true" : "false");
+
+    if (optionsLine < 0) {
+        // 4a. Pas de section 'options:' : la creer juste apres la ligne
+        //     "      - name:" de l'entite.
+        QStringList block;
+        block << "        options:";
+        block << crudLine << tsLine << sdLine;
+        for (int k = block.size() - 1; k >= 0; --k) {
+            lines.insert(entityStart + 1, block.at(k));
+        }
+        yamlContent = lines.join('\n');
+        return true;
+    }
+
+    // 4b. Section 'options:' existante : determiner sa fin (prochaine cle
+    //     a 8 espaces, ou fin du bloc entite).
+    int optionsEnd = entityEnd;
+    for (int i = optionsLine + 1; i < entityEnd; ++i) {
+        const QString& line = lines.at(i);
+        if (line.isEmpty()) {
+            continue;
+        }
+        if (line.length() >= 9 &&
+            line.startsWith("        ") &&
+            !line.at(8).isSpace()) {
+            optionsEnd = i;
+            break;
+        }
+    }
+
+    // Remplacer chaque option existante ; noter celles a ajouter.
+    bool foundCrud = false, foundTs = false, foundSd = false;
+    for (int i = optionsLine + 1; i < optionsEnd; ++i) {
+        const QString trimmed = lines.at(i).trimmed();
+        if (trimmed.startsWith("enable_crud:")) {
+            lines[i] = crudLine;
+            foundCrud = true;
+        } else if (trimmed.startsWith("timestamps:")) {
+            lines[i] = tsLine;
+            foundTs = true;
+        } else if (trimmed.startsWith("soft_delete:")) {
+            lines[i] = sdLine;
+            foundSd = true;
+        }
+    }
+
+    // Ajouter les options absentes juste apres la ligne 'options:'.
+    QStringList missing;
+    if (!foundCrud) { missing << crudLine; }
+    if (!foundTs)   { missing << tsLine; }
+    if (!foundSd)   { missing << sdLine; }
+    for (int k = missing.size() - 1; k >= 0; --k) {
+        lines.insert(optionsLine + 1, missing.at(k));
+    }
+
+    yamlContent = lines.join('\n');
+    return true;
+}
+
 void MainWindow::on_actionAdd_New_Project_triggered()
 {
-    bool ok = false;
-
-    // 1. Demander le nom
-    QString projectName = QInputDialog::getText(
-        this,
-        "Nouveau projet",
-        "Nom du projet :",
-        QLineEdit::Normal,
-        "",
-        &ok
-        );
-
-    if (!ok || projectName.trimmed().isEmpty()) {
+    // 1. Demander le nom du projet et du service.
+    QString projectName;
+    QString serviceName;
+    if (!promptNewProject(projectName, serviceName)) {
         return;
     }
 
-    projectName = projectName.trimmed();
-
-    // normalisation (important)
-    projectName = projectName.trimmed();                         // 1. enlever espaces début/fin
-    projectName.remove(QRegularExpression("[^A-Za-z0-9_ ]"));    // 2. enlever caractères invalides
-    projectName.replace(QRegularExpression("\\s+"), "_");
-
-    // 2. Construire le chemin dans configs/
+    // 2. Construire le chemin dans configs/.
     const QString configDir = appConfigsDir();
     QDir().mkpath(configDir);
 
     const QString filePath = configDir + "/" + projectName + ".yaml";
 
-    // 3. Vérifier existence
+    // 3. Refuser d'ecraser un projet existant.
     if (QFileInfo::exists(filePath)) {
-        QMessageBox::warning(this, "Erreur",
-                             "Ce projet existe déjà.");
+        QMessageBox::warning(this, tr("Error"),
+                             tr("This project already exists."));
         return;
     }
 
-    // 4. Créer fichier
+    // 4. Creer le fichier.
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QMessageBox::critical(this, "Erreur",
-                              "Impossible de créer le fichier.");
+        QMessageBox::critical(this, tr("Error"),
+                              tr("Unable to create the file."));
         return;
     }
 
     QTextStream out(&file);
     out.setEncoding(QStringConverter::Utf8);
-
-    out << "project:\n";
-    out << "  name: " << projectName << "\n\n";
+    out << buildProductionYaml(projectName, serviceName);
 
     file.close();
 
-    // Pas besoin de reload manuel !
-    // QFileSystemWatcher va détecter automatiquement
+    // Recharger explicitement la liste des projets : on ne depend pas du
+    // QFileSystemWatcher, dont la detection des ajouts de fichiers peut
+    // etre differee ou manquee selon le systeme.
+    loadProjects();
 
-    QMessageBox::information(this, "Succès",
-                             "Projet créé dans configs/");
+    QMessageBox::information(this, tr("Success"),
+                             tr("Project created in configs/"));
 }
 
+void MainWindow::on_actionAdd_New_Service_triggered()
+{
+    // 1. Demander a quel projet ajouter le service.
+    QString projectName;
+    if (!promptSelectProject(tr("Add New Service"), projectName)) {
+        return;
+    }
+
+    // 2. Retrouver le projet dans le modele pour verifier les doublons.
+    const sea::domain::Project* project = nullptr;
+    const QModelIndex noParent;
+    const int projectCount = _projectModel->rowCount(noParent);
+    for (int row = 0; row < projectCount; ++row) {
+        const sea::domain::Project* candidate = _projectModel->projectAt(row);
+        if (candidate != nullptr &&
+            QString::fromStdString(candidate->name) == projectName) {
+            project = candidate;
+            break;
+        }
+    }
+
+    if (project == nullptr) {
+        QMessageBox::critical(
+            this,
+            tr("Add New Service"),
+            tr("The selected project could not be found.")
+            );
+        return;
+    }
+
+    // 3. Demander le nom du nouveau service.
+    bool ok = false;
+    QString serviceName = QInputDialog::getText(
+        this,
+        tr("Add New Service"),
+        tr("Service name:"),
+        QLineEdit::Normal,
+        "",
+        &ok
+        );
+
+    if (!ok) {
+        return;
+    }
+
+    // Normalisation (memes regles que pour le nom de projet).
+    serviceName = serviceName.trimmed();
+    serviceName.remove(QRegularExpression("[^A-Za-z0-9_ ]"));
+    serviceName.replace(QRegularExpression("\\s+"), "_");
+
+    if (serviceName.isEmpty()) {
+        QMessageBox::warning(
+            this,
+            tr("Add New Service"),
+            tr("The service name is required.")
+            );
+        return;
+    }
+
+    // 4. Refuser un service portant un nom deja present dans le projet.
+    if (project->has_service(serviceName.toStdString())) {
+        QMessageBox::warning(
+            this,
+            tr("Add New Service"),
+            tr("A service with this name already exists in the project.")
+            );
+        return;
+    }
+
+    // 5. Localiser le fichier YAML du projet.
+    const QString yamlPath = yamlPathForProject(projectName);
+    if (!QFileInfo::exists(yamlPath)) {
+        QMessageBox::critical(
+            this,
+            tr("Add New Service"),
+            tr("The YAML file for this project was not found.")
+            );
+        return;
+    }
+
+    // 6. Lire le contenu actuel.
+    QString content;
+    {
+        QFile file(yamlPath);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QMessageBox::critical(
+                this,
+                tr("Add New Service"),
+                tr("Unable to open the YAML file.")
+                );
+            return;
+        }
+        QTextStream in(&file);
+        in.setEncoding(QStringConverter::Utf8);
+        content = in.readAll();
+        file.close();
+    }
+
+    // 7. Inserer le nouveau bloc service.
+    //    Les YAML generes placent 'services:' en derniere section : le
+    //    nouveau service est donc ajoute a la fin du fichier, dans la
+    //    sequence 'services:'. Le reste du fichier reste inchange.
+    if (!content.endsWith('\n')) {
+        content += '\n';
+    }
+    content += '\n';
+    content += buildProductionServiceBlock(projectName, serviceName);
+
+    // 8. Reecrire le fichier.
+    {
+        QFile file(yamlPath);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+            QMessageBox::critical(
+                this,
+                tr("Add New Service"),
+                tr("Unable to save the YAML file.")
+                );
+            return;
+        }
+        QTextStream out(&file);
+        out.setEncoding(QStringConverter::Utf8);
+        out << content;
+        file.close();
+    }
+
+    // Recharger la liste des projets : le QFileSystemWatcher ne detecte
+    // pas la modification d'un fichier existant (seulement les ajouts /
+    // suppressions dans le dossier), on rafraichit donc explicitement.
+    loadProjects();
+
+    QMessageBox::information(
+        this,
+        tr("Add New Service"),
+        tr("Service added to the project.")
+        );
+}
+
+void MainWindow::on_actionAdd_New_Entity_triggered()
+{
+    // 1. Choisir le projet.
+    QString projectName;
+    if (!promptSelectProject(tr("Add New Entity"), projectName)) {
+        return;
+    }
+
+    // 2. Retrouver le projet dans le modele.
+    const sea::domain::Project* project = nullptr;
+    const QModelIndex noParent;
+    const int projectCount = _projectModel->rowCount(noParent);
+    for (int row = 0; row < projectCount; ++row) {
+        const sea::domain::Project* candidate = _projectModel->projectAt(row);
+        if (candidate != nullptr &&
+            QString::fromStdString(candidate->name) == projectName) {
+            project = candidate;
+            break;
+        }
+    }
+    if (project == nullptr) {
+        QMessageBox::critical(
+            this,
+            tr("Add New Entity"),
+            tr("The selected project could not be found.")
+            );
+        return;
+    }
+
+    // 3. Choisir le service du projet.
+    QString serviceName;
+    if (!promptSelectService(*project, tr("Add New Entity"), serviceName)) {
+        return;
+    }
+
+    // 4. Saisir le nom de l'entite.
+    bool ok = false;
+    QString entityName = QInputDialog::getText(
+        this,
+        tr("Add New Entity"),
+        tr("Entity name:"),
+        QLineEdit::Normal,
+        "",
+        &ok
+        );
+    if (!ok) {
+        return;
+    }
+    entityName = entityName.trimmed();
+    entityName.remove(QRegularExpression("[^A-Za-z0-9_ ]"));
+    entityName.replace(QRegularExpression("\\s+"), "_");
+    if (entityName.isEmpty()) {
+        QMessageBox::warning(
+            this,
+            tr("Add New Entity"),
+            tr("The entity name is required.")
+            );
+        return;
+    }
+
+    // 5. Choisir les options de l'entite.
+    bool enableCrud = true;
+    bool timestamps = true;
+    bool softDelete = false;
+    {
+        QDialog optionsDialog(this);
+        optionsDialog.setWindowTitle(tr("Entity options"));
+
+        auto* layout = new QFormLayout(&optionsDialog);
+
+        auto* crudCheck = new QCheckBox(&optionsDialog);
+        crudCheck->setChecked(true);
+        auto* timestampsCheck = new QCheckBox(&optionsDialog);
+        timestampsCheck->setChecked(true);
+        auto* softDeleteCheck = new QCheckBox(&optionsDialog);
+
+        layout->addRow(tr("Enable CRUD:"), crudCheck);
+        layout->addRow(tr("Timestamps:"), timestampsCheck);
+        layout->addRow(tr("Soft delete:"), softDeleteCheck);
+
+        auto* buttons = new QDialogButtonBox(
+            QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+            &optionsDialog
+            );
+        layout->addRow(buttons);
+        connect(buttons, &QDialogButtonBox::accepted, &optionsDialog, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &optionsDialog, &QDialog::reject);
+
+        if (optionsDialog.exec() != QDialog::Accepted) {
+            return;
+        }
+
+        enableCrud = crudCheck->isChecked();
+        timestamps = timestampsCheck->isChecked();
+        softDelete = softDeleteCheck->isChecked();
+    }
+
+    // 6. Saisir les champs un par un (au moins un champ exige).
+    QVector<EntityFieldDraft> fields;
+    while (true) {
+        EntityFieldDraft draft;
+        if (!promptEntityField(draft)) {
+            // Annulation : seul un abandon avec zero champ stoppe tout.
+            if (fields.isEmpty()) {
+                return;
+            }
+            break;
+        }
+
+        // Refuser deux champs de meme nom dans l'entite.
+        bool duplicate = false;
+        for (const EntityFieldDraft& existing : fields) {
+            if (existing.name == draft.name) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate) {
+            QMessageBox::warning(
+                this,
+                tr("Add New Entity"),
+                tr("A field with this name already exists in the entity.")
+                );
+            continue;
+        }
+
+        fields.push_back(draft);
+
+        // Proposer d'ajouter un autre champ.
+        const auto answer = QMessageBox::question(
+            this,
+            tr("Add New Entity"),
+            tr("Field added. Do you want to add another field?"),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::Yes
+            );
+        if (answer != QMessageBox::Yes) {
+            break;
+        }
+    }
+
+    // 7. Localiser et lire le fichier YAML du projet.
+    const QString yamlPath = yamlPathForProject(projectName);
+    if (!QFileInfo::exists(yamlPath)) {
+        QMessageBox::critical(
+            this,
+            tr("Add New Entity"),
+            tr("The YAML file for this project was not found.")
+            );
+        return;
+    }
+
+    QString content;
+    {
+        QFile file(yamlPath);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QMessageBox::critical(
+                this,
+                tr("Add New Entity"),
+                tr("Unable to open the YAML file.")
+                );
+            return;
+        }
+        QTextStream in(&file);
+        in.setEncoding(QStringConverter::Utf8);
+        content = in.readAll();
+        file.close();
+    }
+
+    // 8. Inserer le bloc entite dans le service cible.
+    const QString entityBlock = buildEntityBlock(
+        entityName, enableCrud, timestamps, softDelete, fields
+        );
+
+    if (!insertEntityIntoYaml(content, serviceName, entityBlock)) {
+        QMessageBox::critical(
+            this,
+            tr("Add New Entity"),
+            tr("Unable to locate the service in the YAML file.")
+            );
+        return;
+    }
+
+    // 9. Reecrire le fichier.
+    {
+        QFile file(yamlPath);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+            QMessageBox::critical(
+                this,
+                tr("Add New Entity"),
+                tr("Unable to save the YAML file.")
+                );
+            return;
+        }
+        QTextStream out(&file);
+        out.setEncoding(QStringConverter::Utf8);
+        out << content;
+        file.close();
+    }
+
+    loadProjects();
+
+    // 10. Proposer d'appliquer le changement a la base de donnees.
+    const auto applyAnswer = QMessageBox::question(
+        this,
+        tr("Add New Entity"),
+        tr("Entity added to the YAML file.\n\n"
+           "Do you want to apply the changes to the database now?\n"
+           "This will restart the service."),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No
+        );
+
+    if (applyAnswer == QMessageBox::Yes) {
+        // Le backend relit le YAML au demarrage et applique les
+        // migrations selon le mode configure (migrations.mode).
+        const sea::domain::Service* service = project->find_service(
+            serviceName.toStdString()
+            );
+        if (service != nullptr) {
+            stopServiceProcess(projectName, serviceName,
+                               static_cast<int>(service->port));
+            startServiceProcess(projectName, serviceName,
+                                static_cast<int>(service->port), yamlPath);
+        }
+    }
+
+    QMessageBox::information(
+        this,
+        tr("Add New Entity"),
+        tr("Entity added successfully.")
+        );
+}
+
+/**
+ * @brief Affiche un dialogue de selection d'un projet charge.
+ */
+bool MainWindow::promptSelectProject(const QString& title, QString& chosen)
+{
+    const QModelIndex noParent;
+    const int projectCount = _projectModel->rowCount(noParent);
+
+    if (projectCount == 0) {
+        QMessageBox::information(
+            this,
+            title,
+            tr("No project is currently available.")
+            );
+        return false;
+    }
+
+    QStringList projectNames;
+    for (int row = 0; row < projectCount; ++row) {
+        const sea::domain::Project* project = _projectModel->projectAt(row);
+        if (project != nullptr) {
+            projectNames << QString::fromStdString(project->name);
+        }
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(title);
+    dialog.resize(380, 300);
+
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* list   = new QListWidget(&dialog);
+    list->addItems(projectNames);
+    list->setCurrentRow(0);
+    layout->addWidget(list);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+        &dialog
+        );
+    layout->addWidget(buttons);
+
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(list, &QListWidget::itemDoubleClicked, &dialog, &QDialog::accept);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return false;
+    }
+
+    const int selectedRow = list->currentRow();
+    if (selectedRow < 0 || selectedRow >= projectNames.size()) {
+        return false;
+    }
+
+    chosen = projectNames.at(selectedRow);
+    return true;
+}
+
+/**
+ * @brief Affiche un dialogue de selection d'un service d'un projet.
+ */
+bool MainWindow::promptSelectService(const sea::domain::Project& project,
+                                     const QString& title,
+                                     QString& chosen)
+{
+    if (project.services.empty()) {
+        QMessageBox::information(
+            this,
+            title,
+            tr("This project has no service.")
+            );
+        return false;
+    }
+
+    QStringList serviceNames;
+    for (const sea::domain::Service& service : project.services) {
+        serviceNames << QString::fromStdString(service.name);
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(title);
+    dialog.resize(380, 300);
+
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* list   = new QListWidget(&dialog);
+    list->addItems(serviceNames);
+    list->setCurrentRow(0);
+    layout->addWidget(list);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+        &dialog
+        );
+    layout->addWidget(buttons);
+
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(list, &QListWidget::itemDoubleClicked, &dialog, &QDialog::accept);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return false;
+    }
+
+    const int selectedRow = list->currentRow();
+    if (selectedRow < 0 || selectedRow >= serviceNames.size()) {
+        return false;
+    }
+
+    chosen = serviceNames.at(selectedRow);
+    return true;
+}
+
+/**
+ * @brief Affiche un dialogue de selection d'une entite d'un service.
+ */
+bool MainWindow::promptSelectEntity(const sea::domain::Service& service,
+                                    const QString& title,
+                                    QString& chosen)
+{
+    if (service.schema.entities.empty()) {
+        QMessageBox::information(
+            this,
+            title,
+            tr("This service has no entity.")
+            );
+        return false;
+    }
+
+    QStringList entityNames;
+    for (const sea::domain::Entity& entity : service.schema.entities) {
+        entityNames << QString::fromStdString(entity.name);
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(title);
+    dialog.resize(380, 300);
+
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* list   = new QListWidget(&dialog);
+    list->addItems(entityNames);
+    list->setCurrentRow(0);
+    layout->addWidget(list);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+        &dialog
+        );
+    layout->addWidget(buttons);
+
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(list, &QListWidget::itemDoubleClicked, &dialog, &QDialog::accept);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return false;
+    }
+
+    const int selectedRow = list->currentRow();
+    if (selectedRow < 0 || selectedRow >= entityNames.size()) {
+        return false;
+    }
+
+    chosen = entityNames.at(selectedRow);
+    return true;
+}
+
+/**
+ * @brief Affiche un dialogue de saisie d'un champ d'entite.
+ */
+bool MainWindow::promptEntityField(EntityFieldDraft& draft)
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Add field"));
+    dialog.resize(360, 220);
+
+    auto* layout = new QFormLayout(&dialog);
+
+    auto* nameEdit = new QLineEdit(&dialog);
+
+    auto* typeCombo = new QComboBox(&dialog);
+    // Types confirmes dans field_type_from_string().
+    typeCombo->addItems({
+        "string", "int", "float", "bool", "timestamp", "uuid",
+        "bigint", "smallint", "decimal", "json", "binary",
+        "password", "email", "text", "file"
+    });
+
+    auto* requiredCheck = new QCheckBox(&dialog);
+    auto* uniqueCheck   = new QCheckBox(&dialog);
+    auto* indexedCheck  = new QCheckBox(&dialog);
+
+    layout->addRow(tr("Field name:"), nameEdit);
+    layout->addRow(tr("Type:"), typeCombo);
+    layout->addRow(tr("Required:"), requiredCheck);
+    layout->addRow(tr("Unique:"), uniqueCheck);
+    layout->addRow(tr("Indexed:"), indexedCheck);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+        &dialog
+        );
+    layout->addRow(buttons);
+
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return false;
+    }
+
+    // Normalisation du nom de champ (memes regles que projet / service).
+    QString fieldName = nameEdit->text().trimmed();
+    fieldName.remove(QRegularExpression("[^A-Za-z0-9_ ]"));
+    fieldName.replace(QRegularExpression("\\s+"), "_");
+
+    if (fieldName.isEmpty()) {
+        QMessageBox::warning(
+            this,
+            tr("Add field"),
+            tr("The field name is required.")
+            );
+        return false;
+    }
+
+    draft.name     = fieldName;
+    draft.type     = typeCombo->currentText();
+    draft.required = requiredCheck->isChecked();
+    draft.unique   = uniqueCheck->isChecked();
+    draft.indexed  = indexedCheck->isChecked();
+    return true;
+}
+
+void MainWindow::on_actionImport_Yaml_triggered()
+{
+    // 1. Choisir le fichier YAML a importer.
+    const QString sourcePath = QFileDialog::getOpenFileName(
+        this,
+        tr("Import Yaml"),
+        QString(),
+        tr("YAML files (*.yaml *.yml)")
+        );
+
+    if (sourcePath.isEmpty()) {
+        return; // Annule par l'utilisateur.
+    }
+
+    // 2. Determiner la destination dans configs/.
+    const QString configDir = appConfigsDir();
+    QDir().mkpath(configDir);
+
+    const QFileInfo sourceInfo(sourcePath);
+    const QString destPath = configDir + "/" + sourceInfo.fileName();
+
+    // 3. Si un projet du meme nom existe, demander confirmation.
+    if (QFileInfo::exists(destPath)) {
+        const auto answer = QMessageBox::question(
+            this,
+            tr("Import Yaml"),
+            tr("A project with this name already exists.\n"
+               "Do you want to replace it?"),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No
+            );
+
+        if (answer != QMessageBox::Yes) {
+            return;
+        }
+
+        // QFile::copy echoue si la destination existe : la retirer d'abord.
+        if (!QFile::remove(destPath)) {
+            QMessageBox::critical(
+                this,
+                tr("Import Yaml"),
+                tr("Unable to replace the existing project file.")
+                );
+            return;
+        }
+    }
+
+    // 4. Copier le fichier dans configs/.
+    if (!QFile::copy(sourcePath, destPath)) {
+        QMessageBox::critical(
+            this,
+            tr("Import Yaml"),
+            tr("Unable to import the YAML file.")
+            );
+        return;
+    }
+
+    // Recharger explicitement la liste des projets plutot que de
+    // dependre du QFileSystemWatcher.
+    loadProjects();
+
+    QMessageBox::information(
+        this,
+        tr("Import Yaml"),
+        tr("YAML file imported into configs/")
+        );
+}
+
+void MainWindow::on_actionExport_Yaml_triggered()
+{
+    // 1. Demander quel projet exporter.
+    QString projectName;
+    if (!promptSelectProject(tr("Export Yaml"), projectName)) {
+        return;
+    }
+
+    // 2. Localiser le fichier source dans configs/.
+    const QString sourcePath = yamlPathForProject(projectName);
+    if (!QFileInfo::exists(sourcePath)) {
+        QMessageBox::critical(
+            this,
+            tr("Export Yaml"),
+            tr("The YAML file for this project was not found.")
+            );
+        return;
+    }
+
+    // 3. Choisir l'emplacement de destination.
+    const QString destPath = QFileDialog::getSaveFileName(
+        this,
+        tr("Export Yaml"),
+        projectName + ".yaml",
+        tr("YAML files (*.yaml *.yml)")
+        );
+
+    if (destPath.isEmpty()) {
+        return; // Annule par l'utilisateur.
+    }
+
+    // 4. QFile::copy echoue si la destination existe : la retirer d'abord.
+    //    (QFileDialog a deja demande confirmation d'ecrasement.)
+    if (QFileInfo::exists(destPath) && !QFile::remove(destPath)) {
+        QMessageBox::critical(
+            this,
+            tr("Export Yaml"),
+            tr("Unable to overwrite the destination file.")
+            );
+        return;
+    }
+
+    if (!QFile::copy(sourcePath, destPath)) {
+        QMessageBox::critical(
+            this,
+            tr("Export Yaml"),
+            tr("Unable to export the YAML file.")
+            );
+        return;
+    }
+
+    QMessageBox::information(
+        this,
+        tr("Export Yaml"),
+        tr("Project exported successfully.")
+        );
+}
+
+void MainWindow::on_actionEdit_Yaml_triggered()
+{
+    // 1. Demander quel projet editer.
+    QString projectName;
+    if (!promptSelectProject(tr("Edit Yaml"), projectName)) {
+        return;
+    }
+
+    // 2. Localiser le fichier YAML dans configs/.
+    const QString yamlPath = yamlPathForProject(projectName);
+    if (!QFileInfo::exists(yamlPath)) {
+        QMessageBox::critical(
+            this,
+            tr("Edit Yaml"),
+            tr("The YAML file for this project was not found.")
+            );
+        return;
+    }
+
+    // 3. Charger le contenu du fichier.
+    QFile file(yamlPath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QMessageBox::critical(
+            this,
+            tr("Edit Yaml"),
+            tr("Unable to open the YAML file.")
+            );
+        return;
+    }
+
+    QString content;
+    {
+        QTextStream in(&file);
+        in.setEncoding(QStringConverter::Utf8);
+        content = in.readAll();
+        file.close();
+    }
+
+    // 4. Construire la fenetre d'edition.
+    auto* dialog = new QDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(tr("Edit Yaml - %1").arg(projectName));
+    dialog->resize(800, 600);
+
+    auto* layout = new QVBoxLayout(dialog);
+
+    auto* editor = new QPlainTextEdit(dialog);
+    editor->setLineWrapMode(QPlainTextEdit::NoWrap);
+    editor->setPlainText(content);
+    // Police a chasse fixe : l'indentation YAML reste lisible.
+    editor->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    layout->addWidget(editor);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Save | QDialogButtonBox::Cancel,
+        dialog
+        );
+    layout->addWidget(buttons);
+
+    connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+
+    // 5. Enregistrement : reecrire le fichier puis fermer.
+    connect(buttons, &QDialogButtonBox::accepted, dialog, [this, dialog, editor, yamlPath]() {
+        QFile out(yamlPath);
+        if (!out.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+            QMessageBox::critical(
+                dialog,
+                tr("Edit Yaml"),
+                tr("Unable to save the YAML file.")
+                );
+            return;
+        }
+
+        QTextStream stream(&out);
+        stream.setEncoding(QStringConverter::Utf8);
+        stream << editor->toPlainText();
+        out.close();
+
+        // Recharger explicitement : le QFileSystemWatcher ne detecte pas
+        // la modification d'un fichier existant, seulement les ajouts /
+        // suppressions dans le dossier.
+        loadProjects();
+
+        dialog->accept();
+    });
+
+    dialog->show();
+}
+
+/**
+ * @brief Collecte tous les services de tous les projets charges.
+ */
+QVector<MainWindow::ServiceLogInfo> MainWindow::collectAllServiceLogs() const
+{
+    QVector<ServiceLogInfo> entries;
+
+    const QModelIndex noParent;
+    const int projectCount = _projectModel->rowCount(noParent);
+
+    for (int row = 0; row < projectCount; ++row) {
+        const sea::domain::Project* project = _projectModel->projectAt(row);
+        if (project == nullptr) {
+            continue;
+        }
+
+        const QString projectName = QString::fromStdString(project->name);
+
+        for (const sea::domain::Service& service : project->services) {
+            ServiceLogInfo info;
+            info.projectName = projectName;
+            info.serviceName = QString::fromStdString(service.name);
+            info.port        = static_cast<int>(service.port);
+
+            const QString processKey =
+                serviceProcessKey(info.projectName, info.serviceName, info.port);
+
+            info.logPath   = appLogsDir() + "/" + processKey + ".log";
+            info.logExists = QFileInfo::exists(info.logPath);
+
+            entries.push_back(info);
+        }
+    }
+
+    return entries;
+}
+
+/**
+ * @brief Ouvre une fenetre a onglets affichant des journaux.
+ */
+void MainWindow::openLogsWindow(const QVector<ServiceLogInfo>& entries,
+                                const QString& title)
+{
+    auto* dialog = new QDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(title);
+    dialog->resize(900, 600);
+
+    auto* layout = new QVBoxLayout(dialog);
+    auto* tabs   = new QTabWidget(dialog);
+    layout->addWidget(tabs);
+
+    for (const ServiceLogInfo& entry : entries) {
+        auto* viewer = new QPlainTextEdit(tabs);
+        viewer->setReadOnly(true);
+        viewer->setLineWrapMode(QPlainTextEdit::NoWrap);
+
+        if (entry.logExists) {
+            QFile logFile(entry.logPath);
+            if (logFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                QTextStream in(&logFile);
+                in.setEncoding(QStringConverter::Utf8);
+                viewer->setPlainText(in.readAll());
+                logFile.close();
+
+                // Faire defiler jusqu'aux derniers evenements.
+                viewer->moveCursor(QTextCursor::End);
+            } else {
+                viewer->setPlainText(
+                    tr("Unable to open the log file:\n%1").arg(entry.logPath)
+                    );
+            }
+        } else {
+            // Service jamais demarre : aucun fichier de journal.
+            viewer->setPlainText(
+                tr("No log available for this service yet.\n"
+                   "The service has probably never been started.")
+                );
+        }
+
+        // Onglet : "service (port)", suffixe " - no log" si indisponible.
+        QString tabLabel = QString("%1 (%2)")
+                               .arg(entry.serviceName)
+                               .arg(entry.port);
+        if (!entry.logExists) {
+            tabLabel += tr(" - no log");
+        }
+
+        tabs->addTab(viewer, tabLabel);
+    }
+
+    dialog->show();
+}
+
+void MainWindow::on_actionEdit_Service_triggered()
+{
+    // 1. Choisir le projet.
+    QString projectName;
+    if (!promptSelectProject(tr("Edit Service"), projectName)) {
+        return;
+    }
+
+    // 2. Retrouver le projet dans le modele.
+    const sea::domain::Project* project = nullptr;
+    const QModelIndex noParent;
+    const int projectCount = _projectModel->rowCount(noParent);
+    for (int row = 0; row < projectCount; ++row) {
+        const sea::domain::Project* candidate = _projectModel->projectAt(row);
+        if (candidate != nullptr &&
+            QString::fromStdString(candidate->name) == projectName) {
+            project = candidate;
+            break;
+        }
+    }
+    if (project == nullptr) {
+        QMessageBox::critical(
+            this,
+            tr("Edit Service"),
+            tr("The selected project could not be found.")
+            );
+        return;
+    }
+
+    // 3. Choisir le service.
+    QString serviceName;
+    if (!promptSelectService(*project, tr("Edit Service"), serviceName)) {
+        return;
+    }
+
+    // 4. Recuperer le port actuel du service.
+    const sea::domain::Service* service = project->find_service(
+        serviceName.toStdString()
+        );
+    if (service == nullptr) {
+        QMessageBox::critical(
+            this,
+            tr("Edit Service"),
+            tr("The selected service could not be found.")
+            );
+        return;
+    }
+    const int currentPort = static_cast<int>(service->port);
+
+    // 5. Demander le nouveau port (pre-rempli avec la valeur actuelle).
+    bool ok = false;
+    const int newPort = QInputDialog::getInt(
+        this,
+        tr("Edit Service"),
+        tr("Port:"),
+        currentPort,
+        1,        // port minimum
+        65535,    // port maximum
+        1,
+        &ok
+        );
+    if (!ok || newPort == currentPort) {
+        return; // Annule ou inchange.
+    }
+
+    // 6. Lire le fichier YAML.
+    const QString yamlPath = yamlPathForProject(projectName);
+    if (!QFileInfo::exists(yamlPath)) {
+        QMessageBox::critical(
+            this,
+            tr("Edit Service"),
+            tr("The YAML file for this project was not found.")
+            );
+        return;
+    }
+
+    QString content;
+    {
+        QFile file(yamlPath);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QMessageBox::critical(
+                this,
+                tr("Edit Service"),
+                tr("Unable to open the YAML file.")
+                );
+            return;
+        }
+        QTextStream in(&file);
+        in.setEncoding(QStringConverter::Utf8);
+        content = in.readAll();
+        file.close();
+    }
+
+    // 7. Remplacer le port dans le bloc du service.
+    if (!replacePortInService(content, serviceName, newPort)) {
+        QMessageBox::critical(
+            this,
+            tr("Edit Service"),
+            tr("Unable to update the port in the YAML file.")
+            );
+        return;
+    }
+
+    // 8. Reecrire le fichier.
+    {
+        QFile file(yamlPath);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+            QMessageBox::critical(
+                this,
+                tr("Edit Service"),
+                tr("Unable to save the YAML file.")
+                );
+            return;
+        }
+        QTextStream out(&file);
+        out.setEncoding(QStringConverter::Utf8);
+        out << content;
+        file.close();
+    }
+
+    loadProjects();
+
+    QMessageBox::information(
+        this,
+        tr("Edit Service"),
+        tr("Service updated successfully.")
+        );
+}
+
+void MainWindow::on_actionEdit_Project_triggered()
+{
+    // 1. Choisir le projet a renommer.
+    QString oldName;
+    if (!promptSelectProject(tr("Edit Project"), oldName)) {
+        return;
+    }
+
+    // 2. Demander le nouveau nom (pre-rempli avec l'actuel).
+    bool ok = false;
+    QString newName = QInputDialog::getText(
+        this,
+        tr("Edit Project"),
+        tr("New project name:"),
+        QLineEdit::Normal,
+        oldName,
+        &ok
+        );
+    if (!ok) {
+        return;
+    }
+
+    // Normalisation (memes regles que la creation de projet).
+    newName = newName.trimmed();
+    newName.remove(QRegularExpression("[^A-Za-z0-9_ ]"));
+    newName.replace(QRegularExpression("\\s+"), "_");
+
+    if (newName.isEmpty()) {
+        QMessageBox::warning(
+            this,
+            tr("Edit Project"),
+            tr("The project name is required.")
+            );
+        return;
+    }
+
+    if (newName == oldName) {
+        return; // Nom inchange.
+    }
+
+    // 3. Refuser si un projet du nouveau nom existe deja.
+    const QString oldPath = yamlPathForProject(oldName);
+    const QString newPath = yamlPathForProject(newName);
+
+    if (QFileInfo::exists(newPath)) {
+        QMessageBox::warning(
+            this,
+            tr("Edit Project"),
+            tr("A project with this name already exists.")
+            );
+        return;
+    }
+
+    if (!QFileInfo::exists(oldPath)) {
+        QMessageBox::critical(
+            this,
+            tr("Edit Project"),
+            tr("The YAML file for this project was not found.")
+            );
+        return;
+    }
+
+    // 4. Confirmation : le projet ET son fichier vont etre renommes.
+    const auto answer = QMessageBox::question(
+        this,
+        tr("Edit Project"),
+        tr("The project and its YAML file will be renamed "
+           "from \"%1\" to \"%2\".\n\nDo you want to continue?")
+            .arg(oldName, newName),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No
+        );
+    if (answer != QMessageBox::Yes) {
+        return;
+    }
+
+    // 5. Lire le fichier, remplacer la cle 'name:'.
+    QString content;
+    {
+        QFile file(oldPath);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QMessageBox::critical(
+                this,
+                tr("Edit Project"),
+                tr("Unable to open the YAML file.")
+                );
+            return;
+        }
+        QTextStream in(&file);
+        in.setEncoding(QStringConverter::Utf8);
+        content = in.readAll();
+        file.close();
+    }
+
+    if (!replaceProjectName(content, newName)) {
+        QMessageBox::critical(
+            this,
+            tr("Edit Project"),
+            tr("Unable to update the project name in the YAML file.")
+            );
+        return;
+    }
+
+    // 6. Reecrire le contenu dans l'ancien fichier.
+    {
+        QFile file(oldPath);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+            QMessageBox::critical(
+                this,
+                tr("Edit Project"),
+                tr("Unable to save the YAML file.")
+                );
+            return;
+        }
+        QTextStream out(&file);
+        out.setEncoding(QStringConverter::Utf8);
+        out << content;
+        file.close();
+    }
+
+    // 7. Renommer le fichier .yaml.
+    if (!QFile::rename(oldPath, newPath)) {
+        QMessageBox::critical(
+            this,
+            tr("Edit Project"),
+            tr("The project name was updated but the file could not be "
+               "renamed.")
+            );
+        return;
+    }
+
+    loadProjects();
+
+    QMessageBox::information(
+        this,
+        tr("Edit Project"),
+        tr("Project renamed successfully.")
+        );
+}
+
+void MainWindow::on_actionEdit_Entity_triggered()
+{
+    // 1. Choisir le projet.
+    QString projectName;
+    if (!promptSelectProject(tr("Edit Entity"), projectName)) {
+        return;
+    }
+
+    // 2. Retrouver le projet dans le modele.
+    const sea::domain::Project* project = nullptr;
+    const QModelIndex noParent;
+    const int projectCount = _projectModel->rowCount(noParent);
+    for (int row = 0; row < projectCount; ++row) {
+        const sea::domain::Project* candidate = _projectModel->projectAt(row);
+        if (candidate != nullptr &&
+            QString::fromStdString(candidate->name) == projectName) {
+            project = candidate;
+            break;
+        }
+    }
+    if (project == nullptr) {
+        QMessageBox::critical(
+            this,
+            tr("Edit Entity"),
+            tr("The selected project could not be found.")
+            );
+        return;
+    }
+
+    // 3. Choisir le service.
+    QString serviceName;
+    if (!promptSelectService(*project, tr("Edit Entity"), serviceName)) {
+        return;
+    }
+    const sea::domain::Service* service = project->find_service(
+        serviceName.toStdString()
+        );
+    if (service == nullptr) {
+        QMessageBox::critical(
+            this,
+            tr("Edit Entity"),
+            tr("The selected service could not be found.")
+            );
+        return;
+    }
+
+    // 4. Choisir l'entite.
+    QString entityName;
+    if (!promptSelectEntity(*service, tr("Edit Entity"), entityName)) {
+        return;
+    }
+    const sea::domain::Entity* entity = service->find_entity(
+        entityName.toStdString()
+        );
+    if (entity == nullptr) {
+        QMessageBox::critical(
+            this,
+            tr("Edit Entity"),
+            tr("The selected entity could not be found.")
+            );
+        return;
+    }
+
+    // 5. Dialogue d'edition des options, pre-rempli depuis l'entite.
+    bool enableCrud = entity->options.enable_crud;
+    bool timestamps = entity->options.timestamps;
+    bool softDelete = entity->options.soft_delete;
+    {
+        QDialog optionsDialog(this);
+        optionsDialog.setWindowTitle(tr("Edit Entity - %1").arg(entityName));
+
+        auto* layout = new QFormLayout(&optionsDialog);
+
+        auto* crudCheck = new QCheckBox(&optionsDialog);
+        crudCheck->setChecked(enableCrud);
+        auto* timestampsCheck = new QCheckBox(&optionsDialog);
+        timestampsCheck->setChecked(timestamps);
+        auto* softDeleteCheck = new QCheckBox(&optionsDialog);
+        softDeleteCheck->setChecked(softDelete);
+
+        layout->addRow(tr("Enable CRUD:"), crudCheck);
+        layout->addRow(tr("Timestamps:"), timestampsCheck);
+        layout->addRow(tr("Soft delete:"), softDeleteCheck);
+
+        auto* buttons = new QDialogButtonBox(
+            QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+            &optionsDialog
+            );
+        layout->addRow(buttons);
+        connect(buttons, &QDialogButtonBox::accepted, &optionsDialog, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &optionsDialog, &QDialog::reject);
+
+        if (optionsDialog.exec() != QDialog::Accepted) {
+            return;
+        }
+
+        enableCrud = crudCheck->isChecked();
+        timestamps = timestampsCheck->isChecked();
+        softDelete = softDeleteCheck->isChecked();
+    }
+
+    // 6. Lire le fichier YAML.
+    const QString yamlPath = yamlPathForProject(projectName);
+    if (!QFileInfo::exists(yamlPath)) {
+        QMessageBox::critical(
+            this,
+            tr("Edit Entity"),
+            tr("The YAML file for this project was not found.")
+            );
+        return;
+    }
+
+    QString content;
+    {
+        QFile file(yamlPath);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QMessageBox::critical(
+                this,
+                tr("Edit Entity"),
+                tr("Unable to open the YAML file.")
+                );
+            return;
+        }
+        QTextStream in(&file);
+        in.setEncoding(QStringConverter::Utf8);
+        content = in.readAll();
+        file.close();
+    }
+
+    // 7. Remplacer les options de l'entite.
+    if (!replaceEntityOptions(content, serviceName, entityName,
+                              enableCrud, timestamps, softDelete)) {
+        QMessageBox::critical(
+            this,
+            tr("Edit Entity"),
+            tr("Unable to update the entity in the YAML file.")
+            );
+        return;
+    }
+
+    // 8. Reecrire le fichier.
+    {
+        QFile file(yamlPath);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+            QMessageBox::critical(
+                this,
+                tr("Edit Entity"),
+                tr("Unable to save the YAML file.")
+                );
+            return;
+        }
+        QTextStream out(&file);
+        out.setEncoding(QStringConverter::Utf8);
+        out << content;
+        file.close();
+    }
+
+    loadProjects();
+
+    // 9. Proposer d'appliquer le changement a la base de donnees.
+    const auto applyAnswer = QMessageBox::question(
+        this,
+        tr("Edit Entity"),
+        tr("Entity options updated in the YAML file.\n\n"
+           "Do you want to apply the changes to the database now?\n"
+           "This will restart the service."),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No
+        );
+
+    if (applyAnswer == QMessageBox::Yes) {
+        stopServiceProcess(projectName, serviceName,
+                           static_cast<int>(service->port));
+        startServiceProcess(projectName, serviceName,
+                            static_cast<int>(service->port), yamlPath);
+    }
+
+    QMessageBox::information(
+        this,
+        tr("Edit Entity"),
+        tr("Entity updated successfully.")
+        );
+}
+
+void MainWindow::on_actionShow_All_Services_Logs_triggered()
+{
+    const QVector<ServiceLogInfo> entries = collectAllServiceLogs();
+
+    if (entries.isEmpty()) {
+        QMessageBox::information(
+            this,
+            tr("Logs"),
+            tr("No service is currently available.")
+            );
+        return;
+    }
+
+    openLogsWindow(entries, tr("All Services Logs"));
+}
+
+void MainWindow::on_actionChoose_a_service_to_show_Logs_triggered()
+{
+    const QVector<ServiceLogInfo> entries = collectAllServiceLogs();
+
+    if (entries.isEmpty()) {
+        QMessageBox::information(
+            this,
+            tr("Logs"),
+            tr("No service is currently available.")
+            );
+        return;
+    }
+
+    // Dialogue de selection : liste "projet / service / port".
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Choose a service"));
+    dialog.resize(420, 320);
+
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* list   = new QListWidget(&dialog);
+    layout->addWidget(list);
+
+    for (const ServiceLogInfo& entry : entries) {
+        QString label = QString("%1 / %2 / %3")
+        .arg(entry.projectName)
+            .arg(entry.serviceName)
+            .arg(entry.port);
+        if (!entry.logExists) {
+            label += tr("  (no log yet)");
+        }
+        list->addItem(label);
+    }
+    list->setCurrentRow(0);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+        &dialog
+        );
+    layout->addWidget(buttons);
+
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    // Double-clic sur un service = validation directe.
+    connect(list, &QListWidget::itemDoubleClicked, &dialog, &QDialog::accept);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    const int selectedRow = list->currentRow();
+    if (selectedRow < 0 || selectedRow >= entries.size()) {
+        return;
+    }
+
+    // Ouvrir la fenetre de logs sur le seul service choisi.
+    openLogsWindow({entries.at(selectedRow)}, tr("Service Log"));
+}
+
+/**
+ * @brief Applique une action a tous les services de tous les projets.
+ */
+void MainWindow::forEachService(
+    const std::function<void(const QString& projectName,
+                             const QString& serviceName,
+                             int port,
+                             const QString& yamlPath)>& action)
+{
+    const QModelIndex noParent;
+    const int projectCount = _projectModel->rowCount(noParent);
+
+    for (int row = 0; row < projectCount; ++row) {
+        const sea::domain::Project* project = _projectModel->projectAt(row);
+        if (project == nullptr) {
+            continue;
+        }
+
+        const QString projectName = QString::fromStdString(project->name);
+        const QString yamlPath    = yamlPathForProject(projectName);
+
+        for (const sea::domain::Service& service : project->services) {
+            action(
+                projectName,
+                QString::fromStdString(service.name),
+                static_cast<int>(service.port),
+                yamlPath
+                );
+        }
+    }
+}
+
+void MainWindow::on_actionStart_All_Services_triggered()
+{
+    forEachService([this](const QString& projectName,
+                          const QString& serviceName,
+                          int port,
+                          const QString& yamlPath) {
+        startServiceProcess(projectName, serviceName, port, yamlPath);
+    });
+
+    QMessageBox::information(
+        this,
+        tr("Services Actions"),
+        tr("All services have been started.")
+        );
+}
+
+void MainWindow::on_actionStop_All_Services_triggered()
+{
+    forEachService([this](const QString& projectName,
+                          const QString& serviceName,
+                          int port,
+                          const QString& /*yamlPath*/) {
+        stopServiceProcess(projectName, serviceName, port);
+    });
+
+    QMessageBox::information(
+        this,
+        tr("Services Actions"),
+        tr("All services have been stopped.")
+        );
+}
+
+void MainWindow::on_actionRestart_All_Services_triggered()
+{
+    forEachService([this](const QString& projectName,
+                          const QString& serviceName,
+                          int port,
+                          const QString& yamlPath) {
+        stopServiceProcess(projectName, serviceName, port);
+        startServiceProcess(projectName, serviceName, port, yamlPath);
+    });
+
+    QMessageBox::information(
+        this,
+        tr("Services Actions"),
+        tr("All services have been restarted.")
+        );
+}
+
+void MainWindow::on_actionReload_All_Services_triggered()
+{
+    // Reload : arret puis redemarrage. Le YAML etant relu a chaque
+    // demarrage du backend (argument --config), un redemarrage prend
+    // automatiquement en compte les modifications du fichier.
+    forEachService([this](const QString& projectName,
+                          const QString& serviceName,
+                          int port,
+                          const QString& yamlPath) {
+        stopServiceProcess(projectName, serviceName, port);
+        startServiceProcess(projectName, serviceName, port, yamlPath);
+    });
+
+    QMessageBox::information(
+        this,
+        tr("Services Actions"),
+        tr("All services have been reloaded from their YAML configuration.")
+        );
+}

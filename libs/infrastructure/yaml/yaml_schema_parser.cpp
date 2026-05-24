@@ -1101,7 +1101,6 @@ domain::security::CorsConfig YamlSchemaParser::parse_cors_node(const YAML::Node 
         for (const auto& o : origins) {
             list.push_back(o.as<std::string>());
         }
-        // Adapte selon ton API exacte de CorsConfig
         cors.set_allowed_origins(std::move(list));
     }
 
@@ -1122,17 +1121,45 @@ domain::security::CorsConfig YamlSchemaParser::parse_cors_node(const YAML::Node 
                     );
             }
         }
-        // cors.set_allowed_methods(std::move(list));
+        cors.set_allowed_methods(std::move(list));
+    }
+
+    // allowed_headers
+    if (const YAML::Node headers = node["allowed_headers"]) {
+        if (!headers.IsSequence()) {
+            throw sea::sea_errors_handling::YamlParsingException(
+                "[YAML PARSING EXCEPTION] Le champ 'cors.allowed_headers' doit être une liste dans service "
+                );
+        }
+        std::vector<std::string> list;
+        for (const auto& h : headers) {
+            list.push_back(h.as<std::string>());
+        }
+        cors.set_allowed_headers(std::move(list));
+    }
+
+    // exposed_headers
+    if (const YAML::Node headers = node["exposed_headers"]) {
+        if (!headers.IsSequence()) {
+            throw sea::sea_errors_handling::YamlParsingException(
+                "[YAML PARSING EXCEPTION] Le champ 'cors.exposed_headers' doit être une liste dans service "
+                );
+        }
+        std::vector<std::string> list;
+        for (const auto& h : headers) {
+            list.push_back(h.as<std::string>());
+        }
+        cors.set_exposed_headers(std::move(list));
     }
 
     // allow_credentials
     if (node["allow_credentials"]) {
-        // cors.set_allow_credentials(node["allow_credentials"].as<bool>());
+        cors.set_allow_credentials(node["allow_credentials"].as<bool>());
     }
 
     // max_age
     if (node["max_age"]) {
-        // cors.set_max_age(parse_duration(node["max_age"].as<std::string>()));
+        cors.set_max_age(parse_duration(node["max_age"].as<std::string>()));
     }
 
     return cors;

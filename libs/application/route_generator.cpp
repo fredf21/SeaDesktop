@@ -7,7 +7,7 @@ namespace sea::application {
 
 namespace {
 
-std::string lower_first(std::string value) {
+/*std::string lower_first(std::string value) {
     if (!value.empty()) {
         value[0] = static_cast<char>(
             std::tolower(static_cast<unsigned char>(value[0]))
@@ -19,7 +19,7 @@ std::string lower_first(std::string value) {
 std::string plural_path_from_entity(const std::string& entity_name) {
     return "/" + lower_first(entity_name) + "s";
 }
-
+*/
 bool schema_has_auth_source(const sea::domain::Schema& schema) {
     return std::ranges::any_of(schema.entities,
                                [](const sea::domain::Entity& e) {
@@ -159,12 +159,14 @@ RouteGenerator::generate(const sea::domain::Service& service) const {
 
     // Relations
     for (const auto& entity : schema.entities) {
-        const std::string parent_path = plural_path_from_entity(entity.name);
-        const std::string parent_name = lower_first(entity.name);
+        const std::string parent_path = "/" + domain::Entity::to_route_plural(entity.name);
+
+        //sans plural just lower
+        const std::string parent_name = domain::Entity::to_route_plural(entity.name, false);
 
         for (const auto& relation : entity.relations) {
             if (relation.kind == sea::domain::RelationKind::HasMany) {
-                const std::string child_path = plural_path_from_entity(relation.target_entity);
+                const std::string child_path = "/" + domain::Entity::to_route_plural(relation.target_entity);
 
                 // /children/filter/with_parent/{id}
                 routes.push_back({
@@ -268,7 +270,7 @@ RouteGenerator::generate(const sea::domain::Service& service) const {
 
             }
             if (relation.kind == sea::domain::RelationKind::ManyToMany) {
-                const std::string target_path = plural_path_from_entity(relation.target_entity);
+                const std::string target_path = "/" + domain::Entity::to_route_plural(relation.target_entity);
 
                 // ─── GET /<target>s/filter/with_<parent>/{id} (existant) ───
                 routes.push_back({
