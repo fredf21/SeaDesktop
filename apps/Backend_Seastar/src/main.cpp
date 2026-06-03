@@ -128,7 +128,7 @@ int main(int argc, char** argv)
             throw std::runtime_error("Service introuvable: " + service_name);
         }
 
-        const auto service = *selected_service;
+        auto service = *selected_service;
         // ─────────────────────────────────────────────────────
         // 2bis. Initialisation du logging (Etape 2.3 Sujet 2)
         // ─────────────────────────────────────────────────────
@@ -242,6 +242,79 @@ int main(int argc, char** argv)
                 );
         }
 
+        //--------------------------------------------------------
+        // 4.1 verifier si le token tracking est actif et injecter dans le schema avant le bootstrap
+        //------------------------------------------------------------------------------------------
+        // ─── Entités SYSTÈME : tables de token tracking ──────────────
+        // Si le token tracking est actif, ses tables (RefreshToken,
+        // RevokedToken) doivent exister en base ET être connues du
+        // registry — car TokenTrackingService les manipule via
+        // repository->create(...) et find_one_by_field(...).
+        //
+        // On les injecte dans le schéma AVANT le bootstrap : le
+        // MysqlBootstrapper les créera comme des tables normales, et
+        // register_schema(service.schema) les enregistrera dans le
+        // registry au passage. Pas de mécanisme dédié nécessaire.
+        //
+        // Symétrique de ce qui est fait pour sea_files (qui, lui, a une
+        // DDL spéciale BINARY(16) et passe par ensure_sea_files_table).
+        if (service.security.authentication().token_tracking().is_enabled()) {
+            const auto& tt = service.security.authentication().token_tracking();
+
+            auto make_field = [](const std::string& name,
+                                 sea::domain::FieldType type,
+                                 bool required) {
+                sea::domain::Field f;
+                f.name     = name;
+                f.type     = type;
+                f.required = required;
+                return f;
+            };
+
+            // RefreshToken — allowlist des refresh tokens actifs.
+            // Colonnes utilisées par TokenTrackingService::register_refresh
+            // et is_refresh_valid (recherche par jti).
+            sea::domain::Entity refresh_token;
+            refresh_token.name       = tt.refresh_table();   // "RefreshToken"
+            refresh_token.table_name = tt.refresh_table();
+            refresh_token.options.enable_crud = false;
+            refresh_token.options.timestamps  = false;
+            refresh_token.fields = {
+                make_field("id",                sea::domain::FieldType::UUID,      true),
+                make_field("jti",               sea::domain::FieldType::String,    true),
+                make_field("user_id",           sea::domain::FieldType::String,    true),
+                make_field("issued_at",         sea::domain::FieldType::Timestamp, true),
+                make_field("expires_at",        sea::domain::FieldType::Timestamp, true),
+                make_field("revoked_at",        sea::domain::FieldType::Timestamp, false),
+                make_field("replaced_by_jti",   sea::domain::FieldType::String,    false),
+                make_field("device_info",       sea::domain::FieldType::String,    false),
+                make_field("ip_address",        sea::domain::FieldType::String,    false),
+            };
+
+            // RevokedToken — denylist des access tokens révoqués.
+            // Colonnes utilisées par revoke_access et is_access_revoked.
+            sea::domain::Entity revoked_token;
+            revoked_token.name       = tt.revoked_table();   // "RevokedToken"
+            revoked_token.table_name = tt.revoked_table();
+            revoked_token.options.enable_crud = false;
+            revoked_token.options.timestamps  = false;
+            revoked_token.fields = {
+                make_field("id",         sea::domain::FieldType::UUID,      true),
+                make_field("jti",        sea::domain::FieldType::String,    true),
+                make_field("user_id",    sea::domain::FieldType::String,    true),
+                make_field("revoked_at", sea::domain::FieldType::Timestamp, true),
+                make_field("expires_at", sea::domain::FieldType::Timestamp, true),
+                make_field("reason",     sea::domain::FieldType::String,    false),
+            };
+
+            service.schema.entities.push_back(refresh_token);
+            service.schema.entities.push_back(revoked_token);
+
+            spdlog::get("sea.boot")->info(
+                "main: token tracking enabled — injected system entities '{}' and '{}' "
+                "into schema (will be bootstrapped + registered)",
+                tt.refresh_table(), tt.revoked_table());
+        }
         // ─────────────────────────────────────────────────────
         // 5. Registry runtime
         // ─────────────────────────────────────────────────────
@@ -249,7 +322,29 @@ int main(int argc, char** argv)
             std::make_shared<sea::infrastructure::runtime::SchemaRuntimeRegistry>();
 
         registry->register_schema(service.schema);
-
+        // ── Entité SYSTÈME : sea_files ────────────────────────────
+        // Table interne créée par le bootstrapper quand le schéma a
+        // des champs File. Pas déclarée dans le YAML utilisateur,
+        // donc doit être enregistrée explicitement dans le registry
+        // pour que FileRepository::insert (qui appelle create("sea_files",..))
+        // la résolve. Sans ça : INSERT silencieusement perdu, upload échoue.
+        if (service.schema.has_file_fields()) {
+            sea::domain::Entity sea_files;
+            sea_files.name       = "sea_files";
+            sea_files.table_name = "sea_files";
+            sea_files.fields = {
+                                []{ sea::domain::Field f; f.name="id";              f.type=sea::domain::FieldType::UUID;      f.required=true;  return f; }(),
+                                []{ sea::domain::Field f; f.name="original_name";   f.type=sea::domain::FieldType::String;    f.required=true;  return f; }(),
+                                []{ sea::domain::Field f; f.name="mime_type";       f.type=sea::domain::FieldType::String;    f.required=true;  return f; }(),
+                                []{ sea::domain::Field f; f.name="size_bytes";      f.type=sea::domain::FieldType::BigInt;    f.required=true;  return f; }(),
+                                []{ sea::domain::Field f; f.name="storage_path";    f.type=sea::domain::FieldType::String;    f.required=true;  return f; }(),
+                                []{ sea::domain::Field f; f.name="reference_count"; f.type=sea::domain::FieldType::Int;       f.required=true;  return f; }(),
+                                []{ sea::domain::Field f; f.name="created_at";      f.type=sea::domain::FieldType::Timestamp; f.required=false; return f; }(),
+                                };
+            registry->register_entity(sea_files);
+            spdlog::get("sea.boot")->info(
+                "main: system entity 'sea_files' registered in runtime registry");
+        }
         // ─────────────────────────────────────────────────────
         // 6. Executor bloquant
         // ─────────────────────────────────────────────────────

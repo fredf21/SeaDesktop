@@ -99,15 +99,25 @@ FileUploadExtractor::find_file_field(const Entity& entity,
 bool FileUploadExtractor::is_multipart_request(
     const seastar::http::request& req) noexcept
 {
-    // Combine le helper Seastar (classification rapide) avec notre
-    // extract_boundary (pour s'assurer qu'on saura parser).
-    if (!req.is_multi_part()) {
-        return false;
-    }
+    // Note : on n'utilise volontairement PAS req.is_multi_part() ici.
+    // Cette méthode Seastar renvoie false sur des requêtes multipart
+    // pourtant parfaitement valides (cas observé en e2e : Content-Type
+    // "multipart/form-data; boundary=..." → is_multi_part() == false).
+    // On se fie uniquement à notre extract_boundary, qui inspecte
+    // directement le header Content-Type.
     const auto content_type = req.get_header("Content-Type");
     const auto boundary = sea::http::utils::multipart::extract_boundary(
         std::string_view(content_type.data(), content_type.size()));
     return boundary.has_value();
+    // // Combine le helper Seastar (classification rapide) avec notre
+    // // extract_boundary (pour s'assurer qu'on saura parser).
+    // if (!req.is_multi_part()) {
+    //     return false;
+    // }
+    // const auto content_type = req.get_header("Content-Type");
+    // const auto boundary = sea::http::utils::multipart::extract_boundary(
+    //     std::string_view(content_type.data(), content_type.size()));
+    // return boundary.has_value();
 }
 
 // ─────────────────────────────────────────────────────────────

@@ -234,6 +234,29 @@ public:
                     const std::string& id,
                     const std::string& field_name,
                     std::int64_t delta) = 0;
+
+    // ─────────────────────────────────────────────────────────
+    // decrement_field_if_positive
+    //
+    // Décrémente `field_name` de 1, mais UNIQUEMENT si sa valeur
+    // courante est strictement positive. Le tout en une seule
+    // instruction SQL atomique :
+    //   UPDATE ... SET f = f - 1 WHERE id = ? AND f > 0
+    //
+    // @return true  si une ligne a été décrémentée (le champ était
+    //               > 0 et vaut maintenant l'ancienne valeur - 1) ;
+    //         false si aucune ligne affectée — soit l'id n'existe
+    //               pas, soit le champ était déjà <= 0.
+    //
+    // Conçu pour le reference counting : garantit qu'un compteur ne
+    // peut jamais passer sous zéro, même sous des décréments
+    // concurrents (la condition `f > 0` est évaluée par le SGBD
+    // dans le même verrou de ligne que l'UPDATE).
+    // ─────────────────────────────────────────────────────────
+    virtual seastar::future<bool>
+    decrement_field_if_positive(const std::string& entity_name,
+                                const std::string& id,
+                                const std::string& field_name) = 0;
 };
 
 } // namespace sea::infrastructure::persistence

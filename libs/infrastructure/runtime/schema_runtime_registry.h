@@ -28,6 +28,12 @@ public:
     // Vérifie si une entité existe avec son champ
     [[nodiscard]] const sea::domain::Field* find_field(const std::string& entity_name, const std::string& field_name) const;
 
+    // Enregistre une entité ISOLÉE. Conçu pour les tables système
+    // (sea_files, RefreshToken, RevokedToken) qui ne sont pas
+    // déclarées dans le YAML utilisateur mais doivent être connues
+    // du registry pour que MySQLGenericRepository::create() les
+    // résolve.
+    void register_entity(const sea::domain::Entity& entity);
     // Efface le contenu actuel
     void clear();
 

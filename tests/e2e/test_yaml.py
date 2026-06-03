@@ -1,0 +1,159 @@
+"""
+test_yaml.py — Génération du fichier YAML de configuration pour les
+tests bout-en-bout.
+
+Le backend SeaDesktop (`backend_seastar`) est piloté entièrement par
+un fichier YAML : port d'écoute, connexion MySQL, schéma, sécurité.
+Le harnais e2e génère ce YAML à la volée pour chaque session de test,
+en y injectant :
+
+  - un port libre (trouvé dynamiquement) ;
+  - le nom d'une base MySQL jetable ;
+  - un secret JWT fixe de test (>= 32 caractères, exigence du boot).
+
+La STRUCTURE de ce YAML reflète exactement ce que le parser
+(`yaml_schema_parser.cpp`) accepte — vérifiée dans le code source,
+pas inventée :
+
+  - `services[i]` : name, port, database, security, entities
+  - `database`    : type, host, port, database_name, username, password,
+                    migrations
+  - `security.authentication` : type=jwt, secret, algorithm,
+                    access_token_ttl, refresh_token_ttl, token_delivery
+  - entité `User` avec `options.is_auth_source: true` — REQUIS pour que
+    les routes /auth/* soient montées (cf. main.cpp : has_auth_source)
+  - le champ `password` de type `password`, `email` de type `email`
+    (les handlers register/login cherchent ces noms littéraux)
+  - le champ `role` — le RegisterHandler injecte d'office
+    record["role"] = "user" avant le create ; sans ce champ dans le
+    schéma, le create échoue (champ inconnu) et register renvoie 400
+"""
+
+from __future__ import annotations
+
+import textwrap
+
+
+# Nom du service tel que passé au backend via --service_name.
+SERVICE_NAME = "ItestService"
+
+# Secret JWT de test. Le boot exige >= 32 caractères quand le secret
+# est fourni en clair dans le YAML. Valeur fixe : les tests doivent
+# être déterministes (un secret aléatoire invaliderait les tokens
+# entre deux lancements, mais ici un seul lancement par session).
+JWT_TEST_SECRET = "itest-jwt-secret-0123456789-abcdefgh"  # 36 caractères
+
+
+def render_test_yaml(
+    *,
+    http_port: int,
+    db_host: str,
+    db_port: int,
+    db_name: str,
+    db_user: str,
+    db_password: str,
+    storage_root: str,
+    access_ttl: str = "15m",
+    refresh_ttl: str = "24h",
+) -> str:
+    """
+    Produit le contenu YAML complet du service de test.
+
+    Les TTL sont des chaînes de durée (ex. "15m", "24h") parsées par
+    parse_duration() côté backend.
+
+    L'entité User porte is_auth_source=true (sinon pas de routes
+    /auth/*). L'entité Document a un champ File 'attachment' : sa
+    présence + le bloc storage activent toute la pile fichiers
+    (FileService, FileUploadExtractor, routes multipart + download).
+
+    storage_root : dossier racine du stockage filesystem. Le harnais
+    fournit un dossier temporaire jetable, nettoyé en fin de session.
+    """
+    return textwrap.dedent(f"""\
+        project:
+          name: ItestProject
+
+        services:
+          - name: {SERVICE_NAME}
+            port: {http_port}
+
+            database:
+              type: mysql
+              host: {db_host}
+              port: {db_port}
+              database_name: {db_name}
+              username: {db_user}
+              password: {db_password}
+              migrations:
+                enabled: true
+                create_database_if_missing: false
+
+            # Storage filesystem : active la pile fichiers dès qu'une
+            # entité a un champ File (ici Document.attachment). Le
+            # root_path est un dossier jetable fourni par le harnais.
+            storage:
+              backend: filesystem
+              root_path: {storage_root}
+              file_mode: "0640"
+              directory_mode: "0750"
+
+            security:
+              authentication:
+                type: jwt
+                secret: {JWT_TEST_SECRET}
+                algorithm: HS256
+                access_token_ttl: {access_ttl}
+                refresh_token_ttl: {refresh_ttl}
+                token_delivery: body
+                # Token tracking ACTIVÉ : sans ce bloc, le
+                # TokenTrackingService tourne en mode no-op (défaut
+                # enabled_ = false côté domaine) — la révocation au
+                # logout ne ferait rien et /auth/refresh marcherait
+                # encore après un logout. Sa simple présence l'active
+                # (le parser met enabled=true par défaut quand le
+                # bloc existe). Le bootstrapper crée alors les tables
+                # refresh / revoked nécessaires.
+                token_tracking:
+                  enabled: true
+
+            entities:
+              - name: User
+                options:
+                  is_auth_source: true
+                fields:
+                  - name: id
+                    type: uuid
+                    required: true
+                    unique: true
+                  - name: email
+                    type: email
+                    required: true
+                    unique: true
+                  - name: password
+                    type: password
+                    required: true
+                  - name: role
+                    type: string
+                    required: false
+                  - name: full_name
+                    type: string
+                    required: false
+
+              - name: Document
+                fields:
+                  - name: id
+                    type: uuid
+                    required: true
+                    unique: true
+                  - name: title
+                    type: string
+                    required: true
+                  - name: attachment
+                    type: file
+                    required: false
+                    file:
+                      storage_path: documents/attachments
+                      max_size: "10MB"
+                      on_delete: cascade
+        """)

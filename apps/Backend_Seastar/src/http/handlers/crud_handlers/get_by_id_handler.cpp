@@ -27,7 +27,7 @@ GetByIdHandler::handle(const seastar::sstring&,
                        std::unique_ptr<seastar::http::request> req,
                        std::unique_ptr<seastar::http::reply> rep)
 {
-    const auto id = req->get_path_param("id");
+    const auto id = std::string(sea::http::utils::strip_leading_slash(req->get_path_param("id")));
     if (id.empty()) {
         rep->set_status(seastar::http::reply::status_type::bad_request);
         rep->write_body("application/json", json{{"error", "Parametre 'id' manquant."}}.dump());

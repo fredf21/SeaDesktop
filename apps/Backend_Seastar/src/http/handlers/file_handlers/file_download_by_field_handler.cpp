@@ -80,7 +80,7 @@ FileDownloadByFieldHandler::handle(const seastar::sstring&,
     auto log = spdlog::get("sea.http");
 
     // ─── Validation des params URL ────────────────────────
-    const auto id = req->get_path_param("id");
+    const auto id = std::string(sea::http::utils::strip_leading_slash(req->get_path_param("id")));
     if (id.empty()) {
         rep->set_status(seastar::http::reply::status_type::bad_request);
         rep->write_body("application/json",
@@ -165,7 +165,18 @@ FileDownloadByFieldHandler::handle(const seastar::sstring&,
         }
 
         if (!std::holds_alternative<std::string>(field_it->second)) {
-            // Le champ existe mais n'est pas une string — corruption ?
+            // NULL en base = pas de fichier attaché (cas legitime : un
+            // Document peut etre cree sans son champ file optionnel).
+            // On detecte ca via le std::monostate du variant DynamicValue.
+            if (std::holds_alternative<std::monostate>(field_it->second)) {
+                rep->set_status(seastar::http::reply::status_type::not_found);
+                rep->write_body("application/json",
+                                json{{"error", "Aucun fichier attache."}}.dump());
+                co_return std::move(rep);
+            }
+
+            // Tout autre type non-string = vraie corruption (un fichier
+            // ne peut etre référencé que par son UUID en string).
             log->error("FileDownloadByFieldHandler: field '{}' on {}/{} "
                        "is not a string (corrupted record?)",
                        field_name_, entity_name_, id);

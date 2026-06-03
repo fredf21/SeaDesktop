@@ -318,6 +318,7 @@ MySQLGenericRepository::create(
             }
             const auto* id_field = find_id_field(*entity);
             const std::string table_name = resolve_table_name(*entity);
+
             if (!validate_sql_identifier(table_name, validation_result)) {
                 return std::nullopt;
             }
@@ -984,7 +985,6 @@ MySQLGenericRepository::in_transaction(
     } catch (const std::exception& e) {
         // Si on n'arrive meme pas a desactiver l'autocommit, on release et abandonne.
         pool.release(conn);
-        pool.release(conn);
         spdlog::get("sea.persistence")->error(
             "TXN Failed to disable autocommit: {}", e.what()
             );
@@ -1435,5 +1435,62 @@ MySQLGenericRepository::increment_field(
         }
         );
 }
+seastar::future<bool>
+MySQLGenericRepository::decrement_field_if_positive(
+    const std::string& entity_name,
+    const std::string& id,
+    const std::string& field_name)
+{
+    auto& pool = _pool.local();
+    co_return co_await run_blocking_mysql<bool>(
+        pool,
+        *_executor,
+        _active_txn_connection,
+        [entity_name, id, field_name](sql::Connection* conn) -> bool {
+            using namespace sea::infrastructure::persistence::utilities;
+            ValidationResult validation_result;
 
+            // Validation anti-injection (identique à increment_field).
+            if (!validate_sql_identifier(entity_name, validation_result)) {
+                return false;
+            }
+            if (!validate_sql_identifier(field_name, validation_result)) {
+                return false;
+            }
+
+            // Détection heuristique UUID (identique à increment_field).
+            const bool id_is_uuid =
+                id.size() == 36 &&
+                id[8] == '-' && id[13] == '-' &&
+                id[18] == '-' && id[23] == '-';
+
+            try {
+                // Décrément conditionnel : la clause `f > 0` est
+                // évaluée par MySQL dans le MÊME verrou de ligne que
+                // l'UPDATE. Deux décréments concurrents ne peuvent
+                // donc pas faire passer le compteur sous zéro :
+                // celui qui voit déjà 0 n'affecte aucune ligne.
+                std::ostringstream sql;
+                sql << "UPDATE `" << entity_name << "` "
+                    << "SET `" << field_name << "` = `" << field_name << "` - 1 "
+                    << "WHERE `id` = "
+                    << (id_is_uuid ? "UUID_TO_BIN(?, 1)" : "?")
+                    << " AND `" << field_name << "` > 0";
+
+                auto stmt = std::unique_ptr<sql::PreparedStatement>(
+                    conn->prepareStatement(sql.str())
+                    );
+
+                stmt->setString(1, id);
+
+                const int affected_rows = stmt->executeUpdate();
+                // 1 ligne affectée = décrément effectué.
+                // 0 ligne = id inexistant OU champ déjà <= 0.
+                return affected_rows == 1;
+            } catch (const sql::SQLException&) {
+                return false;
+            }
+        }
+        );
+}
 } // namespace sea::infrastructure::persistence::mysql

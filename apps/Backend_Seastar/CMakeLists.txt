@@ -3,7 +3,13 @@ project(backend_seastar LANGUAGES CXX)
 
 find_package(Seastar REQUIRED)
 
-add_subdirectory(third_party/libbcrypt)
+# NOTE : add_subdirectory(third_party/libbcrypt) a été RETIRÉ d'ici.
+# La cible `bcrypt` est désormais déclarée dans le CMakeLists.txt
+# RACINE (le code source de libbcrypt a été déplacé dans
+# third_party/bcrypt à la racine du projet), pour être visible par
+# tous les sous-projets — tests inclus. La cible `bcrypt` reste
+# utilisable ici normalement puisqu'une cible déclarée au racine
+# est globale.
 
 add_executable(backend_seastar
     src/main.cpp
@@ -111,7 +117,9 @@ target_link_libraries(backend_seastar
 
 target_include_directories(backend_seastar PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libbcrypt/include
+    # libbcrypt vit désormais à la racine : on utilise CMAKE_SOURCE_DIR
+    # (racine du projet) et non CMAKE_CURRENT_SOURCE_DIR (ce dossier).
+    ${CMAKE_SOURCE_DIR}/third_party/libbcrypt/include
 )
 
 target_compile_features(backend_seastar PRIVATE cxx_std_20)

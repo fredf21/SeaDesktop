@@ -277,12 +277,16 @@ void register_item_route(
             requires_auth,
             context
             );
-
-        routes.add(
-            *operation,
-            seastar::httpd::url(base_path).remainder("id"),
+        // Pattern strict /entity/{id} — sans le .remainder('id') qui
+        // capturerait /entity/{id}/anything, empêchant les routes plus
+        // spécifiques (ex: /entity/{id}/<file_field>) d'être atteintes.
+        // build_match_rule_from_template fait du matching strict sur
+        // le template, paramètre extrait via get_path_param('id').
+        auto* rule = build_match_rule_from_template(
+            route.path,
             wrapped.release()
             );
+        routes.add(rule, *operation);
         return;
     }
 
@@ -759,14 +763,26 @@ void register_file_download_routes(
                 context
                 );
 
-            // Pattern d'URL : /users/{id}/avatar
-            // On utilise la même approche que les routes /<entity>s/{id}/<relation>
-            // existantes (cf. register_has_one_routes).
-            routes.add(
-                seastar::httpd::operation_type::GET,
-                seastar::httpd::url(base + "/" + field.name).remainder("id"),
+            // Pattern d'URL : /documents/{id}/attachment
+            //
+            // On utilise build_match_rule_from_template (cf.
+            // paginated_match_rule.h) plutôt que url(...).remainder().
+            //
+            // Pourquoi : url("/documents/attachment").remainder("id")
+            // enregistre en réalité la route /documents/attachment/{id},
+            // pas /documents/{id}/attachment — l'ordre du segment statique
+            // et du remainder est inversé. Et url("/documents").remainder("id")
+            // matche /documents/<n'importe quoi>, donc avale l'URL bien
+            // avant que /documents/{id}/attachment ne soit testée.
+            //
+            // match_rule, lui, gère correctement un paramètre AU MILIEU
+            // de l'URL — c'est pour ça que la pagination l'utilise pour
+            // /entity/{id}/page, etc.
+            auto* rule = build_match_rule_from_template(
+                full_path,
                 wrapped.release()
                 );
+            routes.add(rule, seastar::httpd::operation_type::GET);
         }
     }
 }

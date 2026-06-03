@@ -152,7 +152,7 @@ ListByFkOffsetHandler::handle(const seastar::sstring&,
                               std::unique_ptr<seastar::http::request> req,
                               std::unique_ptr<seastar::http::reply> rep)
 {
-    const auto parent_id_sstring = req->get_path_param("id");
+    const auto parent_id_sstring = sea::http::utils::strip_leading_slash(req->get_path_param("id"));
     if (parent_id_sstring.empty()) {
         co_return bad_request(std::move(rep), "id manquant");
     }
@@ -214,7 +214,7 @@ ListByFkFieldOffsetHandler::handle(const seastar::sstring&,
                                    std::unique_ptr<seastar::http::request> req,
                                    std::unique_ptr<seastar::http::reply> rep)
 {
-    const auto value_sstring = req->get_path_param("value");
+    const auto value_sstring = sea::http::utils::strip_leading_slash(req->get_path_param("value"));
     if (value_sstring.empty()) {
         co_return bad_request(std::move(rep), "value manquant");
     }
@@ -304,7 +304,7 @@ ListManyToManyOffsetHandler::handle(const seastar::sstring&,
                                     std::unique_ptr<seastar::http::request> req,
                                     std::unique_ptr<seastar::http::reply> rep)
 {
-    const auto source_id_sstring = req->get_path_param("id");
+    const auto source_id_sstring = sea::http::utils::strip_leading_slash(req->get_path_param("id"));
     if (source_id_sstring.empty()) {
         co_return bad_request(std::move(rep), "id manquant");
     }
@@ -399,7 +399,7 @@ GetWithChildrenOffsetHandler::handle(const seastar::sstring&,
                                      std::unique_ptr<seastar::http::request> req,
                                      std::unique_ptr<seastar::http::reply> rep)
 {
-    const auto id_sstring = req->get_path_param("id");
+    const auto id_sstring = sea::http::utils::strip_leading_slash(req->get_path_param("id"));
     if (id_sstring.empty()) {
         co_return bad_request(std::move(rep), "id manquant");
     }

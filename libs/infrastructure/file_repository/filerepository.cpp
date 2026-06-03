@@ -187,6 +187,15 @@ FileRepository::release_reference(const std::string& uuid)
 }
 
 seastar::future<bool>
+FileRepository::release_reference_if_positive(const std::string& uuid)
+{
+    co_return co_await repo_->decrement_field_if_positive(
+        std::string(SeaFilesTable::TABLE_NAME),
+        uuid,
+        std::string(SeaFilesTable::COL_REFERENCE_COUNT));
+}
+
+seastar::future<bool>
 FileRepository::delete_row(const std::string& uuid)
 {
     co_return co_await repo_->remove(

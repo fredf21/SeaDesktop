@@ -103,6 +103,11 @@ target_include_directories(sea_infrastructure
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<INSTALL_INTERFACE:include>
         ${MYSQLCPP_INCLUDE_DIR}
+        # libbcrypt : seed_orchestrator.cpp inclut <bcrypt/BCrypt.hpp>.
+        # En PUBLIC pour que les cibles qui linkent sea_infrastructure
+        # (sea_integration_tests notamment) trouvent aussi le header.
+        # Le code de libbcrypt vit dans third_party/bcrypt à la racine.
+        ${CMAKE_SOURCE_DIR}/third_party/libbcrypt/include
 )
 
 target_link_libraries(sea_infrastructure
@@ -116,6 +121,13 @@ target_link_libraries(sea_infrastructure
         Seastar::seastar
         Sea::errors
         pthread
+        # bcrypt : seed_orchestrator.cpp (dans cette lib) appelle
+        # BCrypt::generateHash → bcrypt_gensalt. En PUBLIC pour que
+        # le symbole soit résolu par TOUTE cible liant
+        # sea_infrastructure, sans qu'elle ait à relinker bcrypt
+        # elle-même. La cible `bcrypt` est déclarée au CMakeLists
+        # racine, donc visible ici.
+        bcrypt
     PRIVATE
         spdlog::spdlog_header_only
 )

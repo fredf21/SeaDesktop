@@ -256,9 +256,16 @@ FileService::release(const std::string& uuid,
         rule = sea::domain::OnDeleteFile::SetNull;
     }
 
-    const bool dec_ok = co_await repo_->release_reference(uuid);
+    // Décrément ATOMIQUE et conditionnel : ne descend jamais sous
+    // zéro. Si false, le compteur était déjà <= 0 (release sans
+    // retain correspondant, ou uuid inconnu) -- on refuse sans
+    // toucher au fichier.
+    const bool dec_ok = co_await repo_->release_reference_if_positive(uuid);
     if (!dec_ok) {
-        log->warn("FileService::release: decrement failed for uuid={}", uuid);
+        log->warn(
+            "FileService::release: refused for uuid={} -- reference_count "
+            "already <= 0 or unknown uuid (release without matching retain)",
+            uuid);
         co_return false;
     }
 
@@ -266,7 +273,7 @@ FileService::release(const std::string& uuid,
         co_return true;
     }
 
-    // Cascade : on verifie le compteur. S'il est a 0, on supprime.
+    // Cascade : on relit le compteur. S'il est a 0, on supprime.
     auto meta_opt = co_await repo_->find_by_id(uuid);
     if (!meta_opt.has_value()) {
         co_return true;
@@ -299,5 +306,4 @@ FileService::release(const std::string& uuid,
 
     co_return true;
 }
-
 } // namespace sea::application

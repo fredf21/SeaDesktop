@@ -69,6 +69,15 @@ public:
     seastar::future<bool>
     release_reference(const std::string& uuid);
 
+    // Décrémente reference_count de 1, mais SEULEMENT si > 0.
+    // Atomique côté SGBD : un compteur ne peut jamais passer sous
+    // zéro, même sous des release concurrents.
+    //
+    // @return true si le décrément a eu lieu, false si le compteur
+    //         était déjà <= 0 (ou uuid inconnu).
+    seastar::future<bool>
+    release_reference_if_positive(const std::string& uuid);
+
     // Supprime le record sea_files par son UUID.
     // Appele par FileService apres que le compteur atteigne 0 et
     // que le fichier physique ait ete supprime.

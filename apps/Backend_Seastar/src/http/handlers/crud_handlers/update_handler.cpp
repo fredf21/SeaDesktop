@@ -44,7 +44,7 @@ UpdateHandler::handle(const seastar::sstring&,
                       std::unique_ptr<seastar::http::request> req,
                       std::unique_ptr<seastar::http::reply> rep)
 {
-    const auto id = req->get_path_param("id");
+    const auto id = std::string(sea::http::utils::strip_leading_slash(req->get_path_param("id")));
     if (id.empty()) {
         rep->set_status(seastar::http::reply::status_type::bad_request);
         rep->write_body("application/json", json{{"error", "Parametre 'id' manquant."}}.dump());
@@ -212,7 +212,6 @@ UpdateHandler::handle(const seastar::sstring&,
         // ─── Transaction : upload + update + retain ─────────
         sea::http::handlers::file_upload::ExtractionResult extraction{};
         sea::infrastructure::runtime::GenericCrudEngine::OperationResult op_result{};
-
         auto tx = co_await crud_engine_->get_repository()->in_transaction(
             [this, entity, id_str = std::string(id), &record, &extraction,
              &op_result, is_multipart, &parsed_multipart]() -> seastar::future<bool>

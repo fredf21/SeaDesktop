@@ -110,7 +110,15 @@ inline const sea::domain::Entity* get_required_entity(
 
 /// \brief Résout le nom réel de la table SQL.
 inline std::string resolve_table_name(const sea::domain::Entity& entity) {
-    return entity.table_name.empty() ? entity.name : entity.table_name;
+    // Fallback aligné sur MysqlSchemaGenerator::resolve_table_name :
+    // si table_name n'est pas explicite dans le YAML, on dérive du
+    // nom d'entité via to_route_plural (minuscules + pluriel). Sans
+    // ça, le repository chercherait "Document" alors que le
+    // bootstrapper crée "documents" → 404 sur MySQL sensible à la
+    // casse (lower_case_table_names=0 sur Linux par défaut).
+    return entity.table_name.empty()
+               ? sea::domain::Entity::to_route_plural(entity.name)
+               : entity.table_name;
 }
 
 

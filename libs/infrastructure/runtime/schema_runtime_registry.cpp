@@ -3,7 +3,6 @@
 namespace sea::infrastructure::runtime {
 
 void SchemaRuntimeRegistry::register_schema(const sea::domain::Schema& schema) {
-    entities_.clear();
 
     for (const auto& entity : schema.entities) {
         entities_[entity.name] = entity;
@@ -36,7 +35,9 @@ const sea::domain::Field *SchemaRuntimeRegistry::find_field(const std::string &e
     }
     return nullptr;
 }
-
+void SchemaRuntimeRegistry::register_entity(const sea::domain::Entity& entity) {
+    entities_[entity.name] = entity;
+}
 void SchemaRuntimeRegistry::clear() {
     entities_.clear();
 }

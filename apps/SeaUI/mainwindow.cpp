@@ -474,6 +474,8 @@ void MainWindow::loadProjects()
         sea::infrastructure::yaml::YamlSchemaParser parser;
         std::vector<sea::domain::Project> projects;
 
+        QStringList errors;
+
         for (const QString& file : std::as_const(files)) {
             const std::filesystem::path path =
                 std::filesystem::path(configsDir.toStdString()) / file.toStdString();

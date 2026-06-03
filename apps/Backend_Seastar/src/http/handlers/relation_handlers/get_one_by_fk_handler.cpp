@@ -26,7 +26,7 @@ GetOneByFkHandler::handle(const seastar::sstring&,
                           std::unique_ptr<seastar::http::request> req,
                           std::unique_ptr<seastar::http::reply> rep)
 {
-    const auto parent_id = req->get_path_param("id");
+    const auto parent_id = sea::http::utils::strip_leading_slash(req->get_path_param("id"));
 
     const auto children = co_await crud_engine_->list(child_entity_);
 

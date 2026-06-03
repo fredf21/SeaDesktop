@@ -42,8 +42,8 @@ AttachManyToManyHandler::handle(const seastar::sstring&,
     // ─────────────────────────────────────────────────────────
     // 1. Extraction et validation des path params
     // ─────────────────────────────────────────────────────────
-    const auto source_id = std::string(req->get_path_param("id"));
-    const auto target_id = std::string(req->get_path_param("target_id"));
+    const auto source_id = std::string(sea::http::utils::strip_leading_slash(req->get_path_param("id")));
+    const auto target_id = std::string(sea::http::utils::strip_leading_slash(req->get_path_param("target_id")));
 
     if (source_id.empty() || target_id.empty()) {
         rep->set_status(seastar::http::reply::status_type::bad_request);

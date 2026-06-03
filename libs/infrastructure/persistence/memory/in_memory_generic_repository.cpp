@@ -670,6 +670,68 @@ InMemoryGenericRepository::increment_field(const std::string& entity_name,
 
     return seastar::make_ready_future<bool>(incremented);
 }
+
+// ─────────────────────────────────────────────────────────────
+// decrement_field_if_positive
+//
+// Décrémente le champ de 1, mais SEULEMENT si sa valeur courante
+// est strictement positive. En in-memory mono-shard, la lecture +
+// l'écriture sont atomiques de fait (single-threaded).
+//
+// @return true  si le champ était > 0 et a été décrémenté ;
+//         false si entité/record/champ introuvable, si le champ
+//               n'est pas un entier, ou s'il était déjà <= 0.
+// ─────────────────────────────────────────────────────────────
+seastar::future<bool>
+InMemoryGenericRepository::decrement_field_if_positive(
+    const std::string& entity_name,
+    const std::string& id,
+    const std::string& field_name)
+{
+    const auto entity_it = storage_.find(entity_name);
+    if (entity_it == storage_.end()) {
+        return seastar::make_ready_future<bool>(false);
+    }
+
+    const auto rec_it = entity_it->second.find(id);
+    if (rec_it == entity_it->second.end()) {
+        return seastar::make_ready_future<bool>(false);
+    }
+
+    auto field_it = rec_it->second.find(field_name);
+    if (field_it == rec_it->second.end()) {
+        return seastar::make_ready_future<bool>(false);
+    }
+
+    // Visite typée : seuls les variants entiers sont valides, et le
+    // décrément n'a lieu QUE si la valeur courante est > 0.
+    auto& value = field_it->second;
+    bool decremented = std::visit(
+        [](auto& v) -> bool {
+            using T = std::decay_t<decltype(v)>;
+            if constexpr (std::is_same_v<T, std::int64_t> ||
+                          std::is_same_v<T, std::int32_t> ||
+                          std::is_same_v<T, std::int16_t> ||
+                          std::is_same_v<T, std::uint64_t> ||
+                          std::is_same_v<T, std::uint32_t> ||
+                          std::is_same_v<T, std::uint16_t>) {
+                // Condition stricte : on ne décrémente que si > 0.
+                // Garantit que le champ ne passe jamais sous zéro.
+                if (v > 0) {
+                    v = static_cast<T>(v - 1);
+                    return true;
+                }
+                return false;
+            } else {
+                // Champ non entier : contrat non respecté.
+                return false;
+            }
+        },
+        value);
+
+    return seastar::make_ready_future<bool>(decremented);
+}
+
 // Le backend in-memory ne supporte pas les pivots (utile uniquement
 // pour les tests). Les stubs retournent false et logguent un warning.
 

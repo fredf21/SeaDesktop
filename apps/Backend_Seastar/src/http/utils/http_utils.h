@@ -52,4 +52,15 @@ std::string lower_first(std::string value);
 
 std::string base_path_without_id_suffix(const std::string& path);
 
+// Retire le '/' de tete d'une valeur de path param. Seastar inclut le
+// '/' qui precede un parametre dans la valeur capturee (cf. param_matcher
+// et find_end_param dans matcher.cc). Les handlers doivent retirer ce
+// slash avant d'utiliser l'id, sinon la valeur passee aux requetes SQL
+// est par exemple "/abc-123" au lieu de "abc-123".
+inline std::string_view strip_leading_slash(std::string_view s) {
+    if (!s.empty() && s.front() == '/') {
+        return s.substr(1);
+    }
+    return s;
+}
 } // namespace sea::http::utils

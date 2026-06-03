@@ -35,6 +35,24 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(spdlog)
 
+# ───────────────────────────────────────────────────
+# bcrypt (libbcrypt)
+#
+# Déclaré ICI, au niveau racine, AVANT les add_subdirectory des
+# sous-projets. Raison : la cible `bcrypt` doit être visible par
+# TOUS les sous-répertoires qui en dépendent — apps/Backend_Seastar,
+# tests/ (sea_integration_tests), et libs/infrastructure
+# (seed_orchestrator.cpp utilise BCrypt).
+#
+# Une cible créée par add_subdirectory n'est visible que dans ce
+# sous-arbre et ses descendants. En la déclarant au racine, elle
+# devient globale.
+#
+# Le code source de libbcrypt vit dans third_party/bcrypt, à la
+# racine du projet.
+# ───────────────────────────────────────────────────
+add_subdirectory(third_party/libbcrypt)
+
 add_subdirectory(libs/domain)
 add_subdirectory(libs/errors)
 add_subdirectory(libs/application)

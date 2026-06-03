@@ -1,466 +1,221 @@
-# SeaUI — User and Technical Guide
+# SeaUI — User Guide
 
-SeaUI is the desktop front-end of the SeaDesktop platform. It is a Qt 6
-application that lets a developer manage SeaDesktop projects, services and
-entities, control the lifecycle of the generated backends, and inspect their
-behaviour — all without editing YAML files by hand or using a terminal.
+SeaUI is the desktop application for managing your SeaDesktop projects. It
+lets you create and organize projects, services and entities, run them, and
+inspect them — all through a graphical interface, without editing
+configuration files by hand or using a terminal.
 
-This guide documents the SeaUI desktop application only. The Seastar backend
-is out of scope.
+This guide explains how to use SeaUI.
 
 ---
 
-## 1. Overview
+## 1. Getting started
 
-### 1.1 What SeaUI is for
+### 1.1 What you can do with SeaUI
 
-A SeaDesktop project is described by a declarative YAML file. Each project
-contains one or more services, and each service exposes entities that become
-auto-generated REST APIs. SeaUI is the graphical layer over this model. With
-it you can:
+With SeaUI you can:
 
-- browse every project found in the `configs/` folder, and drill down into
-  its services, entities, fields and generated routes;
-- create new projects, services and entities through guided dialogs that
-  write the YAML for you;
-- edit existing projects, services and entities;
-- import and export YAML files;
-- start, stop, restart and reload the backend processes of your services;
-- authenticate against a running service and explore its data;
+- browse all your projects and explore their services, entities, fields and
+  routes;
+- create new projects, services and entities with guided dialogs;
+- rename projects, change service ports, and adjust entity options;
+- import and export project files;
+- start, stop, restart and reload your services;
+- sign in to a running service and view its data;
 - open the Swagger documentation of a running service;
-- read the log files produced by the services;
-- switch the interface language at runtime.
+- read the logs your services produce;
+- switch the interface language between English and French.
 
-### 1.2 How SeaUI relates to the backend
+### 1.2 The main window
 
-SeaUI never talks to the database directly. It does two things:
+When SeaUI opens, you see a series of panels arranged from the most general
+to the most detailed:
 
-1. It reads and writes YAML configuration files in the `configs/` folder.
-2. It launches the Seastar backend as a separate process (via `QProcess`),
-   one process per running service.
+- **Projects** — all your projects. Select one to see its services.
+- **Services** — the services of the selected project. Select one to see its
+  entities and details.
+- **Entities** — the entities of the selected service. Select one to see its
+  fields.
+- **Fields** — the fields of the selected entity.
+- **Routes** — the REST routes available. Paginated routes are marked with a
+  coloured badge (PAGE, OFFSET, CURSOR).
 
-When a service is started, the backend reads its YAML file, applies any
-pending migrations according to the configured `migrations.mode`, and serves
-the REST API. SeaUI then communicates with that running service over HTTP
-(for status polling, authentication and data browsing). Any change SeaUI
-makes to a YAML file only takes effect in the database when the corresponding
-service is (re)started.
+Next to these, detail panels show the selected service's port, database type,
+running status, and sign-in status. A row of buttons lets you act on the
+selected service: Start, Stop, Restart, Swagger, Logs, Login, Logout and
+Open Data.
 
-### 1.3 Folder layout
-
-SeaUI works with two folders whose location depends on the build type:
-
-- **Configuration folder** — holds the project YAML files. In a debug build
-  it points at the repository `configs/` folder so you work directly on the
-  versioned files. In a release build it is a standard writable application
-  data folder.
-- **Logs folder** — holds one `.log` file per service process. It follows the
-  same debug/release rule.
-
-Each project is stored as a single file named `<ProjectName>.yaml`. The
-project name and its file name are always kept in sync.
+The running status of a service refreshes on its own, so it always reflects
+reality even if you started or stopped the service elsewhere.
 
 ---
 
-## 2. The main window
+## 2. Naming rules
 
-When SeaUI starts it opens maximized. The window is organised as a series of
-list panels that go from the most general (projects) to the most specific
-(fields and routes), plus detail panels and action buttons.
+When you name a project, a service or an entity, SeaUI tidies up what you type
+so the name is always valid:
 
-### 2.1 The panels
+- only letters, digits and underscores are kept;
+- spaces are turned into underscores;
+- any other character (accents, punctuation, symbols) is removed.
 
-**Projects** — lists every `.yaml` file found in the configuration folder.
-Selecting a project loads its services into the Services panel and clears the
-panels further down.
-
-**Services** — lists the services of the selected project. Selecting a service
-loads its entities, displays its details (port, database type), starts status
-polling, and computes the full set of generated routes.
-
-**Entities** — lists the entities of the selected service. Selecting an entity
-loads its fields and filters the route list down to the routes related to that
-entity.
-
-**Fields** — lists the fields of the selected entity.
-
-**Routes** — lists the REST routes. When a service is selected it shows all of
-its routes; when an entity is selected it shows only that entity's routes. Each
-route is drawn by a custom delegate that colours the HTTP method and adds a
-coloured badge for paginated routes (PAGE, OFFSET, CURSOR).
-
-### 2.2 Detail panels
-
-When a service is selected, the detail panels show:
-
-- **Service Details** — the service port and database type.
-- **Service Status** — `RUNNING` or `STOPPED`, refreshed automatically by a
-  background poller. The label is green when running, red when stopped.
-- **Service Auth Status** — `Connected` or `Disconnected`, reflecting whether
-  you are currently authenticated against the service.
-
-### 2.3 Service action buttons
-
-A row of buttons acts on the currently selected service:
-
-- **Start / Stop / Restart** — control the backend process of the service.
-  These buttons are enabled or disabled automatically depending on whether the
-  service is currently running.
-- **Swagger** — opens the service's Swagger documentation in an embedded
-  browser window. Only available while the service is running.
-- **Logs** — opens the service's log file in the system's default application.
-- **Login / Logout** — authenticate or sign out against the running service.
-- **Open Data** — fetches and displays the rows of the selected entity in a
-  table.
-
-### 2.4 Status polling
-
-Whenever a service is selected, SeaUI starts polling its `/health` style
-endpoint in the background at a fixed interval. The result drives the Service
-Status label and the enabled state of the action buttons: a running service
-enables Stop/Restart/Swagger and disables Start; an unreachable service does
-the opposite. This means the buttons always reflect the real state of the
-backend, even if the service was started or stopped outside SeaUI.
+For example, typing `My Blog!` gives `My_Blog`. Keep this in mind so you are
+not surprised by the final name. To avoid surprises, prefer simple names made
+of letters, digits and underscores from the start.
 
 ---
 
-## 3. The menu
+## 3. Working with projects
 
-The menu bar has four menus: **File**, **Edit**, **Audits** and
-**Services Actions**.
+### 3.1 Create a new project
 
-### 3.1 File menu
+Open **File ▸ Add New Project**. Enter a project name and a service name —
+both are required. SeaUI creates the project with one ready-to-use service
+configured for production: a database, security, and logging are all set up
+for you.
 
-#### Add New Project
+A project of a name that already exists will not be overwritten.
 
-Creates a brand-new project with a minimal production configuration.
+> **Before you start the service:** the service is configured to read its
+> security key from an environment variable named `SEA_DESKTOP_JWT_SECRET`.
+> Make sure this variable is defined in your environment, otherwise the
+> service will not start.
 
-A dialog asks for two values: the **project name** and the **service name**.
-Both are required and are normalised automatically — leading and trailing
-spaces are removed, invalid characters are stripped, and inner spaces become
-underscores.
+### 3.2 Rename a project
 
-A file `<ProjectName>.yaml` is then created in the configuration folder. If a
-project of that name already exists, the operation is refused. The generated
-YAML contains one service with a complete production configuration:
+Open **Edit ▸ Edit Project**, choose the project, and enter the new name.
+SeaUI asks for confirmation, then renames the project. A project cannot be
+renamed to a name that is already taken.
 
-- a MySQL database block with migrations enabled in `conservative` mode;
-- a security block: JWT authentication (the secret is read from the
-  `${SEA_DESKTOP_JWT_SECRET}` environment variable), restricted CORS, strict
-  security headers, and HTTP limits;
-- a production logging block: a console sink and a rotating JSON file sink,
-  with asynchronous logging enabled.
+### 3.3 Import a project
 
-Because the JWT secret is taken from an environment variable, the service will
-not start until `SEA_DESKTOP_JWT_SECRET` is defined in the environment.
+Open **File ▸ Import Yaml** and pick a project file from anywhere on your
+computer. It is copied into your projects and appears in the Projects panel.
+If a project of the same name already exists, SeaUI asks whether to replace
+it.
 
-#### Add New Service
+### 3.4 Export a project
 
-Adds a new service to an existing project. A dialog asks which project to add
-to, then asks for the service name. The new service is refused if a service of
-that name already exists in the project. It is generated with the same
-complete production configuration as the service created by Add New Project,
-and appended to the `services:` list of the project YAML. Existing content and
-comments of the file are preserved.
+Open **File ▸ Export Yaml**, choose the project to export, and pick where to
+save it. A copy of the project file is saved at that location.
 
-#### Add New Entity
+---
 
-Adds an entity to a service. The flow is:
+## 4. Working with services
 
-1. choose the project;
-2. choose the service within that project;
-3. enter the entity name;
-4. choose the entity options — `enable_crud`, `timestamps`, `soft_delete`
-   (CRUD and timestamps are on by default);
-5. enter the fields one at a time. For each field a dialog asks for its name,
-   its type (from the list of supported types) and its `required`, `unique`
-   and `indexed` attributes. After each field SeaUI asks whether to add
-   another. At least one field is required.
+### 4.1 Add a service to a project
 
-The entity block is then inserted into the chosen service's `entities:`
-section (the section is created if it does not exist), preserving the rest of
-the file and its comments.
+Open **File ▸ Add New Service**, choose the project, and enter the service
+name. The new service is created with the same ready-to-use production
+configuration as a new project's service. A service name that is already used
+in that project is refused.
 
-Finally SeaUI asks whether to apply the change to the database now. Answering
-yes restarts the service, which makes the backend re-read the YAML and run the
-migration according to the configured `migrations.mode`.
+### 4.2 Change a service's port
 
-The supported field types are: `string`, `int`, `float`, `bool`, `timestamp`,
-`uuid`, `bigint`, `smallint`, `decimal`, `json`, `binary`, `password`,
-`email`, `text`, `file`.
+Open **Edit ▸ Edit Service**, choose the project and the service, and enter
+the new port. The change is saved to the project.
 
-#### Import Yaml
+### 4.3 Start, stop and restart services
 
-Lets you pick a `.yaml` (or `.yml`) file anywhere on disk and copies it into
-the configuration folder. If a project of the same name already exists, SeaUI
-asks for confirmation before replacing it. The file is copied as-is; it is
-validated when the project list is reloaded.
+You can act on a single service or on all of them at once.
 
-#### Export Yaml
+**One service:** select it in the Services panel and use the Start, Stop or
+Restart buttons. These buttons enable and disable themselves depending on
+whether the service is running.
 
-Asks which project to export, then asks for a destination path, and copies the
-project's YAML file there.
-
-### 3.2 Edit menu
-
-#### Edit Project
-
-Renames a project. After choosing the project and entering the new name (which
-is normalised the same way as on creation), SeaUI asks for confirmation, then
-updates the `name:` key inside the YAML and renames the `<ProjectName>.yaml`
-file to match. Renaming is refused if a project of the new name already
-exists. Values derived from the project name at creation time
-(`database_name`, `issuer`, log paths) are intentionally left unchanged so the
-link with the existing database is not broken.
-
-#### Edit Service
-
-Changes the port of a service. After choosing the project and the service, a
-dialog pre-filled with the current port asks for the new value (1–65535). The
-`port:` key of that service is updated in the YAML, leaving the rest of the
-file and its comments intact.
-
-#### Edit Entity
-
-Changes the options of an entity. After choosing the project, the service and
-the entity, a dialog pre-filled with the entity's current options lets you
-toggle `enable_crud`, `timestamps` and `soft_delete`. The `options:` section
-of that entity is updated (created if absent). SeaUI then offers to apply the
-change to the database by restarting the service.
-
-#### Edit Yaml
-
-Opens the YAML file of a chosen project in an integrated editor — a plain-text
-editor in a monospace font, with Save and Cancel. Saving rewrites the file and
-reloads the project. This is the catch-all editor for any change the
-specialised Edit dialogs do not cover.
-
-#### Preferences
-
-A submenu. It currently contains the **Languages** submenu used to switch the
-interface language (see section 8).
-
-### 3.3 Audits menu
-
-#### Show All Services Logs
-
-Opens a tabbed window with one tab per service of every project. Each tab
-shows the contents of that service's log file, scrolled to the most recent
-events. A service whose log file does not exist yet (it was never started)
-shows an explanatory message instead, and its tab is marked accordingly.
-
-#### Choose a service to show Logs
-
-Shows a list of every service (project / service / port) and opens the log
-window for the single service you select.
-
-### 3.4 Services Actions menu
-
-These four entries act on every service of every project at once:
+**All services:** the **Services Actions** menu acts on every service of
+every project at once:
 
 - **Start All Services** — starts every service that is not already running.
 - **Stop All Services** — stops every running service.
-- **Restart All Services** — stops then starts every service.
-- **Reload All Services** — stops then starts every service. Because the
-  backend re-reads the YAML on each start, a reload picks up any change made
-  to the configuration files.
-
-Each action ends with a confirmation message.
+- **Restart All Services** — stops and starts every service.
+- **Reload All Services** — stops and starts every service so that any change
+  made to the configuration is picked up.
 
 ---
 
-## 4. Service lifecycle
+## 5. Working with entities
 
-### 4.1 Starting and stopping a service
+### 5.1 Add an entity
 
-Each service runs as a separate backend process launched by SeaUI through
-`QProcess`. A service is identified internally by a process key built from the
-project name, the service name and the port, so two services never collide.
+Open **File ▸ Add New Entity**, then:
 
-Starting a service launches the backend executable with the service's YAML
-file and service name as arguments, and redirects its standard output and
-error to the service's log file (in append mode). Starting a service that is
-already running has no effect.
+1. choose the project;
+2. choose the service the entity belongs to;
+3. enter the entity name;
+4. choose the entity options — Enable CRUD, Timestamps and Soft delete
+   (CRUD and Timestamps are on by default);
+5. add the fields one by one. For each field, enter its name, pick its type,
+   and choose whether it is Required, Unique or Indexed. After each field
+   SeaUI asks if you want to add another. At least one field is required.
 
-Stopping a service terminates the process gracefully, and forcibly kills it if
-it does not exit within a short delay.
+The available field types are: string, int, float, bool, timestamp, uuid,
+bigint, smallint, decimal, json, binary, password, email, text and file.
 
-### 4.2 Per-service controls vs. bulk actions
+Once the entity is added, SeaUI asks whether to apply the change to the
+database now. Answering yes restarts the service so the new entity becomes
+available.
 
-The Start/Stop/Restart buttons in the service panel act on the currently
-selected service. The Services Actions menu performs the same operations but
-on every service of every project at once. Both share the same underlying
-process-management logic.
+### 5.2 Change an entity's options
 
-### 4.3 Reload
-
-Reload is currently equivalent to a restart: the process is stopped and
-started again, and because the backend re-reads the YAML file on start, the
-new configuration is taken into account. A true hot reload — signalling the
-running backend to re-read its configuration without restarting — would
-require backend support that does not exist yet.
+Open **Edit ▸ Edit Entity**, choose the project, the service and the entity.
+A dialog shows the entity's current options — Enable CRUD, Timestamps and
+Soft delete — and lets you change them. SeaUI then offers to apply the change
+to the database by restarting the service.
 
 ---
 
-## 5. Authentication
+## 6. Editing the project file directly
 
-When a service is running you can authenticate against it. The Login button
-opens a dialog asking for an email and a password. SeaUI sends them to the
-service's `auth/login` endpoint. On success the returned JWT access token (and
-refresh token, if any) is kept in memory for the session, and the Service Auth
-Status label switches to `Connected`.
-
-The Logout button clears the stored token and the status returns to
-`Disconnected`. The Login and Logout buttons enable and disable themselves
-according to the current authentication state.
-
-The token is held only in memory for the running SeaUI session; it is not
-persisted to disk.
+For any change the dialogs above do not cover, open **Edit ▸ Edit Yaml**.
+Choose a project and its configuration opens in a built-in text editor. Make
+your changes and click Save, or Cancel to discard them.
 
 ---
 
-## 6. Browsing data and Swagger
+## 7. Signing in and viewing data
 
-### 6.1 Open Data
+### 7.1 Sign in to a service
 
-With a service and an entity selected, the Open Data button fetches the rows
-of that entity from the running service and shows them in a table window. The
-response is expected to be a JSON array; each array element becomes a row. If
-the service is unreachable or the response is not a JSON array, an explanatory
-message is shown.
+When a service is running, select it and click **Login**. Enter your email
+and password. If they are correct, the sign-in status changes to
+**Connected**. Click **Logout** to sign out.
 
-### 6.2 Swagger
+### 7.2 View an entity's data
 
-The Swagger button opens the service's Swagger documentation (`/docs`) inside
-an embedded browser window. It is only available while the service is running.
+With a service running and an entity selected, click **Open Data**. SeaUI
+fetches the entity's records and shows them in a table.
 
----
+### 7.3 Open the Swagger documentation
 
-## 7. Logs
-
-There are two ways to read logs:
-
-- The **Logs button** in the service panel opens the selected service's log
-  file in the system's default text application.
-- The **Audits menu** opens logs inside SeaUI, in a tabbed read-only viewer —
-  either for all services at once or for a single chosen service.
-
-Logs are shown as a snapshot taken when the window is opened; they are not
-refreshed live.
+With a service running, click **Swagger**. The service's interactive API
+documentation opens in a window inside SeaUI.
 
 ---
 
-## 8. Internationalisation
+## 8. Reading logs
 
-SeaUI can display its interface in English or French, and the language can be
-changed at runtime without restarting.
+There are two ways to read your services' logs.
 
-### 8.1 Changing the language
+**A single service:** select it and click the **Logs** button. Its log file
+opens in your computer's default text application.
 
-Open **Edit ▸ Preferences ▸ Languages** and pick **English** or **Francais**.
-The interface is retranslated immediately. The two entries behave as a set of
-mutually exclusive checkable items, so the active language is always shown
-with a check mark. The chosen language is persisted and restored the next time
-SeaUI starts.
+**Inside SeaUI:** use the **Audits** menu.
 
-### 8.2 How it works
+- **Show All Services Logs** opens a window with one tab per service, each tab
+  showing that service's log. A service that has never been started shows a
+  short message instead.
+- **Choose a service to show Logs** lets you pick one service and shows just
+  its log.
 
-Internationalisation is handled by the `TranslationManager` class. It owns the
-Qt translators, exposes the list of available languages, applies a language,
-and persists the choice through `QSettings`.
-
-English is the source language: the strings written in the code are already
-English, so no translation file is loaded for English — the French translator
-is simply removed. French is provided by a compiled `.qm` file embedded in the
-application resources under `:/i18n/`.
-
-When the language changes, Qt sends a `LanguageChange` event to the main
-window. The window then calls `retranslateUi()` to refresh every widget
-defined in the `.ui` file, and re-applies the few texts that are set
-dynamically in code (the window title, the authentication status label).
-
-### 8.3 Adding a new language
-
-1. Add the language to the list declared in the `TranslationManager`
-   constructor (its locale code and display name).
-2. Create the corresponding `SeaUI_<locale>.ts` file and add it to the
-   `qt_add_translations` call in `CMakeLists.txt`.
-3. Translate the strings (with Qt Linguist or by editing the `.ts` directly).
-4. Rebuild — `qt_add_translations` compiles the `.ts` into a `.qm` and embeds
-   it under `:/i18n/`.
-
-### 8.4 Adding a new translatable string
-
-Every user-visible string in the code must be wrapped in `tr("...")`, written
-in English. Strings placed in the `.ui` file are translatable automatically.
-After adding strings, the `.ts` files must be updated (`lupdate`, run
-automatically by `qt_add_translations`) and the new entries translated.
+Logs are shown as they were when you opened the window; they do not refresh on
+their own.
 
 ---
 
-## 9. Technical reference
+## 9. Changing the language
 
-### 9.1 File structure
-
-The SeaUI application consists of:
-
-- `main.cpp` — the entry point. It sets the application identity (needed by
-  `QSettings`), creates the `TranslationManager`, loads the persisted language
-  before building the window, and shows the main window.
-- `mainwindow.{h,cpp,ui}` — the main window: panels, detail labels, action
-  buttons, and every menu slot.
-- `translation_manager.{h,cpp}` — the internationalisation manager.
-- `projectlistmodel`, `servicelistmodel`, `entitylistmodel`,
-  `fieldlistmodel` — list models backing the four main panels.
-- `routelistmodel` + `routelistitemdelegate` — the route list model and its
-  custom painting delegate (coloured HTTP method, pagination badges).
-- `servicestatuscheck` — background HTTP poller that reports whether a service
-  is running.
-
-### 9.2 The list models
-
-Each panel is backed by a `QAbstractListModel` subclass. `ProjectListModel`
-holds the loaded projects; selecting a project feeds `ServiceListModel`;
-selecting a service feeds `EntityListModel` and computes the routes;
-selecting an entity feeds `FieldListModel` and filters the routes. The route
-model exposes custom roles (pagination mode, HTTP method, path,
-entity/operation) consumed by `RouteListItemDelegate` for rendering.
-
-### 9.3 Editing YAML by text
-
-The create/edit menu actions modify YAML files by **textual manipulation**
-rather than by re-emitting the file through a YAML library. This is a
-deliberate choice: re-emitting would discard the comments and the formatting
-of the generated files. The trade-off is that the textual approach must locate
-keys carefully.
-
-The helpers follow a consistent pattern: locate the start of the relevant
-block (a service by its `  - name:` line, the `project:` root section, an
-entity by its `      - name:` line), determine where that block ends, then
-search for the target key **at the exact indentation depth** so that, for
-example, a service's `port:` (four spaces) is never confused with the database
-`port:` (six spaces). Insertions add new content at the end of the relevant
-block; edits replace a value in place or, when the key is absent, insert it.
-
-Because the textual approach relies on the structure produced by SeaUI's own
-generators, it is reliable for SeaUI-generated files. A heavily hand-reordered
-YAML could in theory confuse the block detection; in that case the integrated
-Edit Yaml editor remains the safe fallback.
-
-### 9.4 Generated production configuration
-
-`buildProductionServiceBlock()` generates the YAML block of a service in
-production configuration; it is shared by Add New Project and Add New Service.
-`buildProductionYaml()` wraps it with the `project:` header. `buildEntityBlock()`
-generates the YAML block of an entity. All keys produced by these generators
-are validated against the backend YAML parser.
-
-### 9.5 Refreshing the project list
-
-A `QFileSystemWatcher` watches the configuration folder and reloads the
-project list when files are added or removed there. Because the watcher's
-`directoryChanged` signal does not fire when an existing file is *modified*,
-the menu actions that modify an existing file (Add New Service, Add New
-Entity, Edit Service, Edit Project, Edit Entity, Edit Yaml) call the reload
-explicitly after writing. Actions that create a new file (Add New Project,
-Import Yaml) also reload explicitly, so the UI never depends on watcher timing.
+SeaUI is available in English and French. Open **Edit ▸ Preferences ▸
+Languages** and choose **English** or **Francais**. The interface changes
+immediately — no restart needed. Your choice is remembered the next time you
+open SeaUI.

@@ -109,7 +109,8 @@ public:
 
     seastar::future<std::size_t>
     count(const std::string& entity_name) override;
-
+    seastar::future<bool> delete_pivot(const std::string &pivot_table, runtime::DynamicRecord values) override;
+    seastar::future<bool> pivot_exists(const std::string &pivot_table, runtime::DynamicRecord values) override;
     // increment_field : atomique en mode mono-shard (Seastar shared-nothing
     // garantit qu'un shard est mono-thread). Cf. IGenericRepository pour la
     // doc complète.
@@ -118,7 +119,10 @@ public:
                     const std::string& id,
                     const std::string& field_name,
                     std::int64_t delta) override;
-
+    seastar::future<bool>
+    decrement_field_if_positive(const std::string &entity_name,
+                                const std::string &id,
+                                const std::string &field_name) override;
 private:
 
     /**
@@ -151,10 +155,7 @@ private:
                        const std::optional<std::string>& sort_field,
                        bool sort_desc) const;
 
-    // IGenericRepository interface
-public:
-    seastar::future<bool> delete_pivot(const std::string &pivot_table, runtime::DynamicRecord values);
-    seastar::future<bool> pivot_exists(const std::string &pivot_table, runtime::DynamicRecord values);
+
 };
 
 } // namespace sea::infrastructure::persistence

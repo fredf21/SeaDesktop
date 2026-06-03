@@ -86,7 +86,7 @@ RegisterHandler::handle(const seastar::sstring&,
             co_await crud_engine_->find_one_by_field("User", "email", *email);
 
         if (existing_user.has_value()) {
-            rep->set_status(seastar::http::reply::status_type::bad_request);
+            rep->set_status(seastar::http::reply::status_type::conflict);
             rep->write_body("application/json",
                             json{{"error", "Cet email existe deja."}}.dump());
             co_return std::move(rep);

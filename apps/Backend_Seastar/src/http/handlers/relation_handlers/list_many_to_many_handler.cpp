@@ -33,7 +33,7 @@ ListManyToManyHandler::handle(const seastar::sstring&,
                               std::unique_ptr<seastar::http::request> req,
                               std::unique_ptr<seastar::http::reply> rep)
 {
-    const auto source_id = std::string(req->get_path_param("id"));
+    const auto source_id = std::string(sea::http::utils::strip_leading_slash(req->get_path_param("id")));
     if (source_id.empty()) {
         rep->set_status(seastar::http::reply::status_type::bad_request);
         rep->write_body("application/json", R"({"error":"Parametre 'id' manquant."})");

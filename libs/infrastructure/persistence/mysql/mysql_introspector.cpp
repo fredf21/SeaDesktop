@@ -8,7 +8,6 @@
 
 #include <seastar/core/coroutine.hh>
 
-#include <iostream>
 #include <memory>
 #include <utility>
 
