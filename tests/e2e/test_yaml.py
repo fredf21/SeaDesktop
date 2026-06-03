@@ -27,6 +27,16 @@ pas inventée :
   - le champ `role` — le RegisterHandler injecte d'office
     record["role"] = "user" avant le create ; sans ce champ dans le
     schéma, le create échoue (champ inconnu) et register renvoie 400
+
+Entités de test supplémentaires (juin 2026) pour exercer le CRUD
+classique et les relations :
+  - Team               : entité indépendante, pas de relation
+  - Project (→ Team)   : BelongsTo Team avec on_delete=restrict, sert
+                         à tester GET/PUT/DELETE sur entité avec FK et
+                         le fix bug 9 (GenericCrudEngine::update qui
+                         appelait l'UPDATE seulement si BelongsTo).
+  - Tag (M2M Project)  : many_to_many via table pivot `project_tags`,
+                         pour tester attach/detach et list_m2m.
 """
 
 from __future__ import annotations
@@ -156,4 +166,80 @@ def render_test_yaml(
                       storage_path: documents/attachments
                       max_size: "10MB"
                       on_delete: cascade
+
+              # ─── Team : entité simple, pas de relation ────────
+              # Sert à tester :
+              # - CRUD nominal sur entité sans FK ni champ File
+              # - Le restrict-on-delete : DELETE d'un Team référencé
+              #   par un Project doit échouer (409) avec un message
+              #   explicite.
+              - name: Team
+                fields:
+                  - name: id
+                    type: uuid
+                    required: true
+                    unique: true
+                  - name: name
+                    type: string
+                    required: true
+                    unique: true
+
+              # ─── Project : BelongsTo Team (on_delete=restrict) ─
+              # Sert à tester :
+              # - le fix bug 9 (GenericCrudEngine::update) sur une
+              #   entité AVEC relation BelongsTo (l'autre branche du
+              #   nouveau code, qui itère sur les relations via
+              #   do_for_each).
+              # - POST avec FK invalide → 400 "Target entity not found"
+              # - PUT changeant la FK vers une cible inexistante
+              # - DELETE d'un Project (cascade-trivial : pas d'enfant)
+              - name: Project
+                fields:
+                  - name: id
+                    type: uuid
+                    required: true
+                    unique: true
+                  - name: title
+                    type: string
+                    required: true
+                  - name: team_id
+                    type: uuid
+                    required: true
+                relations:
+                  - name: team
+                    kind: belongs_to
+                    target_entity: Team
+                    fk_column: team_id
+                    on_delete: restrict
+
+              # ─── Tag : many_to_many avec Project ──────────────
+              # Sert à tester :
+              # - attach (POST /tags/id/projects/project_id) ou
+              #   équivalent (la route exacte dépend de comment ton
+              #   RouteGenerator nomme les routes M2M ; à vérifier
+              #   au boot via les logs [ROUTE]).
+              # - detach (DELETE ...)
+              # - list M2M (GET /tags/id/projects ou similaire)
+              # - pivot exists / not exists
+              #
+              # IMPORTANT : un Tag peut être attaché à plusieurs
+              # Projects et vice-versa. La table pivot 'project_tags'
+              # doit être créée automatiquement par le bootstrapper.
+              - name: Tag
+                fields:
+                  - name: id
+                    type: uuid
+                    required: true
+                    unique: true
+                  - name: name
+                    type: string
+                    required: true
+                    unique: true
+                relations:
+                  - name: projects
+                    kind: many_to_many
+                    target_entity: Project
+                    pivot_table: project_tags
+                    source_fk_column: tag_id
+                    target_fk_column: project_id
         """)

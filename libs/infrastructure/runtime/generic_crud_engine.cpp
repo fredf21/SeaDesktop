@@ -1,4 +1,6 @@
 #include "generic_crud_engine.h"
+#include "spdlog/spdlog.h"
+#include <seastar/core/do_with.hh>
 #include <seastar/core/loop.hh>
 
 namespace sea::infrastructure::runtime {
@@ -36,133 +38,211 @@ dynamic_value_to_id_string(const runtime::DynamicValue& value)
 }
 
 } // namespace
+// ─────────────────────────────────────────────────────────────────
+// GenericCrudEngine::create
+//
+// Reecrit avec seastar::do_with (juin 2026) pour corriger un bug
+// de durée de vie : l'ancienne implementation chainait des lambdas
+// imbriquees ou chacune capturait `result = std::move(result)`.
+// L'evaluation des arguments du `.then()` C++ se faisant AVANT
+// l'execution du `do_for_each` qui les precede, le `std::move(result)`
+// etait execute trop tot. La boucle BelongsTo ecrivait dans un
+// `result` zombi (moved-from), et la lambda suivante lisait son
+// propre `result` (la copie deplacee) qui n'avait jamais vu les
+// push_back.
+//
+// Symptome observe : POST /projects avec team_id invalide renvoyait
+// "Failed to create entity" (du repo, contrainte FK MySQL) au lieu
+// de "Target entity not found: Team with id=..." (validation
+// applicative).
+//
+// Fix : seastar::do_with donne a `record` et `result` une duree de
+// vie explicite qui survit a toute la chaine de futures. Toutes les
+// lambdas internes capturent &record, &result par reference, sans
+// move.
+// ─────────────────────────────────────────────────────────────────
 seastar::future<GenericCrudEngine::OperationResult>
 GenericCrudEngine::create(const std::string& entity_name,
                           runtime::DynamicRecord record)
 {
+    // Validations synchrones qui peuvent court-circuiter sans
+    // entrer dans la chaine de futures (gain de perf et de
+    // lisibilite : si on echoue ici, on sort tout de suite).
     GenericCrudEngine::OperationResult result{};
 
     const auto* entity = registry_->find_entity(entity_name);
     if (!entity) {
         result.errors.push_back("Unknown entity: " + entity_name);
-        return seastar::make_ready_future<GenericCrudEngine::OperationResult>(std::move(result));
+        return seastar::make_ready_future<GenericCrudEngine::OperationResult>(
+            std::move(result));
     }
 
     result.errors = validator_->validate(*entity, record);
     if (!result.errors.empty()) {
-        return seastar::make_ready_future<GenericCrudEngine::OperationResult>(std::move(result));
+        return seastar::make_ready_future<GenericCrudEngine::OperationResult>(
+            std::move(result));
     }
 
-    return repository_->find_all(entity_name).then(
-        [this, entity, entity_name, record = std::move(record), result = std::move(result)]
-        (std::vector<runtime::DynamicRecord> existing_records) mutable
+    // ─── seastar::do_with : ownership explicite de record et result ─
+    // Toutes les lambdas qui suivent capturent &record / &result
+    // par reference. do_with garantit que ces variables vivent
+    // pendant toute la chaine, peu importe quand chaque future est
+    // resolue. C'est le pattern Seastar idiomatique pour ce cas.
+    return seastar::do_with(
+        std::move(record),
+        std::move(result),
+        [this, entity, entity_name]
+        (runtime::DynamicRecord& record,
+         GenericCrudEngine::OperationResult& result)
         -> seastar::future<GenericCrudEngine::OperationResult>
         {
-            // 1. Verification des contraintes unique
-            for (const auto& field : entity->fields) {
-                if (!field.unique) {
-                    continue;
-                }
-
-                const auto incoming_it = record.find(field.name);
-                if (incoming_it == record.end()) {
-                    continue;
-                }
-
-                const auto& incoming_value = incoming_it->second;
-
-                for (const auto& existing : existing_records) {
-                    const auto existing_it = existing.find(field.name);
-                    if (existing_it == existing.end()) {
-                        continue;
-                    }
-
-                    if (existing_it->second == incoming_value) {
-                        result.errors.push_back(
-                            "Duplicate value for unique field: " + field.name
-                            );
-                        return seastar::make_ready_future<GenericCrudEngine::OperationResult>(std::move(result));
-                    }
-                }
-            }
-
-            // 2. Verification de toutes les relations BelongsTo
-            return seastar::do_for_each(
-                       entity->relations,
-                       [this, &record, &result](const sea::domain::Relation& relation) -> seastar::future<> {
-                           if (relation.kind != sea::domain::RelationKind::BelongsTo) {
-                               return seastar::make_ready_future<>();
-                           }
-
-                           const auto fk_it = record.find(relation.fk_column);
-                           if (fk_it == record.end()) {
-                               if (relation.on_delete == sea::domain::OnDelete::Restrict) {
-                                   result.errors.push_back("Missing FK field: " + relation.fk_column);
-                               }
-                               return seastar::make_ready_future<>();
-                           }
-
-                           auto fk_value_opt = dynamic_value_to_id_string(fk_it->second);
-                           if (!fk_value_opt.has_value()) {
-                               result.errors.push_back("Invalid FK: " + relation.fk_column);
-                               return seastar::make_ready_future<>();
-                           }
-
-                           const std::string fk_value = *fk_value_opt;
-
-                           return repository_->find_by_id(relation.target_entity, fk_value).then(
-                               [&result, relation, fk_value](std::optional<runtime::DynamicRecord> target) {
-                                   if (!target.has_value()) {
-                                       result.errors.push_back(
-                                           "Target entity not found: " + relation.target_entity +
-                                           " with id=" + fk_value
-                                           );
-                                   }
-                               }
-                               );
-                       }
-                       ).then(
-                    [this, entity, entity_name, record = std::move(record), result = std::move(result)]() mutable
-                    -> seastar::future<GenericCrudEngine::OperationResult>
-                    {
-                        if (!result.errors.empty()) {
-                            return seastar::make_ready_future<GenericCrudEngine::OperationResult>(std::move(result));
+            // ── 1. Verification des contraintes unique ───────────
+            // Necessaire de lire tous les records existants
+            // (`find_all`) pour comparer champ par champ.
+            return repository_->find_all(entity_name).then(
+                [this, entity, entity_name, &record, &result]
+                (std::vector<runtime::DynamicRecord> existing_records)
+                -> seastar::future<GenericCrudEngine::OperationResult>
+                {
+                    for (const auto& field : entity->fields) {
+                        if (!field.unique) {
+                            continue;
                         }
 
-                        // 3. Creation principale
-                        return repository_->create(entity_name, record).then(
-                            [this, entity, record = std::move(record), result = std::move(result)]
-                            (std::optional<runtime::DynamicRecord> created) mutable
+                        const auto incoming_it = record.find(field.name);
+                        if (incoming_it == record.end()) {
+                            continue;
+                        }
+                        const auto& incoming_value = incoming_it->second;
+
+                        for (const auto& existing : existing_records) {
+                            const auto existing_it = existing.find(field.name);
+                            if (existing_it == existing.end()) {
+                                continue;
+                            }
+                            if (existing_it->second == incoming_value) {
+                                result.errors.push_back(
+                                    "Duplicate value for unique field: " + field.name
+                                    );
+                                return seastar::make_ready_future<
+                                    GenericCrudEngine::OperationResult>(result);
+                            }
+                        }
+                    }
+
+                    // ── 2. Verification des relations BelongsTo ─
+                    // Pour chaque relation, on verifie que la FK
+                    // pointe vers un record existant. Les erreurs
+                    // s'accumulent dans result.errors (acces par
+                    // reference, garanti vivant par do_with).
+                    return seastar::do_for_each(
+                               entity->relations,
+                               [this, &record, &result]
+                               (const sea::domain::Relation& relation)
+                               -> seastar::future<>
+                               {
+                                   if (relation.kind != sea::domain::RelationKind::BelongsTo) {
+                                       return seastar::make_ready_future<>();
+                                   }
+
+                                   const auto fk_it = record.find(relation.fk_column);
+                                   if (fk_it == record.end()) {
+                                       // FK requise (Restrict) absente du record :
+                                       // erreur explicite. Sinon (Cascade/SetNull),
+                                       // FK optionnelle = skip silencieux.
+                                       if (relation.on_delete == sea::domain::OnDelete::Restrict) {
+                                           result.errors.push_back(
+                                               "Missing FK field: " + relation.fk_column);
+                                       }
+                                       return seastar::make_ready_future<>();
+                                   }
+
+                                   auto fk_value_opt = dynamic_value_to_id_string(
+                                       fk_it->second);
+                                   if (!fk_value_opt.has_value()) {
+                                       result.errors.push_back(
+                                           "Invalid FK: " + relation.fk_column);
+                                       return seastar::make_ready_future<>();
+                                   }
+
+                                   const std::string fk_value = *fk_value_opt;
+
+                                   return repository_->find_by_id(
+                                                         relation.target_entity, fk_value).then(
+                                           [&result, relation, fk_value]
+                                           (std::optional<runtime::DynamicRecord> target)
+                                           {
+                                               if (!target.has_value()) {
+                                                   result.errors.push_back(
+                                                       "Target entity not found: "
+                                                       + relation.target_entity
+                                                       + " with id=" + fk_value);
+                                               }
+                                           });
+                               }
+                               ).then(
+                            [this, entity, entity_name, &record, &result]()
                             -> seastar::future<GenericCrudEngine::OperationResult>
                             {
-                                if (!created.has_value()) {
-                                    result.errors.push_back("Failed to create entity");
-                                    return seastar::make_ready_future<GenericCrudEngine::OperationResult>(std::move(result));
+                                // Si erreurs accumulees (unique deja gere
+                                // plus haut, ou BelongsTo introuvable),
+                                // on abort sans toucher a la base.
+                                if (!result.errors.empty()) {
+                                    return seastar::make_ready_future<
+                                        GenericCrudEngine::OperationResult>(result);
                                 }
 
-                                result.record = *created;
-
-                                // 4. Creation des liens many-to-many
-                                return this->create_many_to_many_links(*entity, record, *created).then(
-                                    [result = std::move(result)]
-                                    (std::vector<std::string> m2m_errors) mutable
+                                // ── 3. Creation principale ─────────
+                                // On passe une copie de record au repo
+                                // (pas un move) car on en a encore besoin
+                                // pour create_many_to_many_links ensuite.
+                                return repository_->create(entity_name, record).then(
+                                    [this, entity, &record, &result]
+                                    (std::optional<runtime::DynamicRecord> created)
                                     -> seastar::future<GenericCrudEngine::OperationResult>
                                     {
-                                        if (!m2m_errors.empty()) {
-                                            result.errors.insert(
-                                                result.errors.end(),
-                                                std::make_move_iterator(m2m_errors.begin()),
-                                                std::make_move_iterator(m2m_errors.end())
-                                                );
-
-                                            return seastar::make_ready_future<GenericCrudEngine::OperationResult>(std::move(result));
+                                        if (!created.has_value()) {
+                                            result.errors.push_back(
+                                                "Failed to create entity");
+                                            return seastar::make_ready_future<
+                                                GenericCrudEngine::OperationResult>(
+                                                result);
                                         }
 
-                                        result.success = true;
-                                        return seastar::make_ready_future<GenericCrudEngine::OperationResult>(std::move(result));
+                                        result.record = *created;
+
+                                        // ── 4. Liens many-to-many ──
+                                        // Si l'entite a des relations
+                                        // ManyToMany, on cree les lignes
+                                        // pivot correspondantes.
+                                        return this->create_many_to_many_links(
+                                                       *entity, record, *created).then(
+                                                [&result]
+                                                (std::vector<std::string> m2m_errors)
+                                                -> seastar::future<
+                                                    GenericCrudEngine::OperationResult>
+                                                {
+                                                    if (!m2m_errors.empty()) {
+                                                        result.errors.insert(
+                                                            result.errors.end(),
+                                                            std::make_move_iterator(
+                                                                m2m_errors.begin()),
+                                                            std::make_move_iterator(
+                                                                m2m_errors.end())
+                                                            );
+                                                        return seastar::make_ready_future<
+                                                            GenericCrudEngine::OperationResult>(
+                                                            result);
+                                                    }
+
+                                                    result.success = true;
+                                                    return seastar::make_ready_future<
+                                                        GenericCrudEngine::OperationResult>(
+                                                        result);
+                                                });
                                     });
                             });
-                    });
+                });
         });
 }
 seastar::future<std::vector<DynamicRecord>>
@@ -239,9 +319,6 @@ GenericCrudEngine::update(const std::string& entity_name,
 
                    const auto fk_it = record.find(relation.fk_column);
                    if (fk_it == record.end()) {
-                       if (relation.on_delete == sea::domain::OnDelete::Restrict) {
-                           result.errors.push_back("Missing FK field: " + relation.fk_column);
-                       }
                        return seastar::make_ready_future<>();
                    }
 
