@@ -1,5 +1,4 @@
 #include "generic_crud_engine.h"
-#include "spdlog/spdlog.h"
 #include <seastar/core/do_with.hh>
 #include <seastar/core/loop.hh>
 
@@ -277,11 +276,43 @@ GenericCrudEngine::find_one_by_field(const std::string& entity_name,
 }
 
 
+// ─────────────────────────────────────────────────────────────────
+// GenericCrudEngine::update
+//
+// Reecrit avec seastar::do_with (juin 2026, lendemain du fix bug 11
+// dans create) pour corriger un bug 11 LATENT decouvert par le
+// harnais e2e :
+//
+// L'ancienne implementation (fix bug 9 du 1er juin) avait le meme
+// pattern probleme que create() avait avant son propre fix :
+//   - result vivait dans le scope de la fonction
+//   - le .then() qui suivait do_for_each capturait `result = std::move(result)`
+//   - les lambdas de la boucle BelongsTo capturaient &result
+//   - selon l'ordre d'evaluation, &result pouvait pointer sur un
+//     result moved-from quand find_by_id().then() s'executait
+//
+// Le bug est reste invisible pendant un jour parce qu'aucun test ne
+// declenchait simultanement :
+//   - une relation BelongsTo presente dans le record
+//   - une cible inexistante (faisant entrer dans la branche
+//     push_back("Target entity not found..."))
+//
+// Le test test_update_project_avec_fk_invalide_echoue couvre
+// exactement ce cas. Et son ajout en parallele du fix bug 12
+// (qui modifiait la taille d'OperationResult, changeant la
+// disposition memoire) a transforme la corruption silencieuse
+// en stack smashing detectable.
+//
+// Fix identique a create() : seastar::do_with pour ownership
+// explicite. Aucun std::move dans les captures.
+// ─────────────────────────────────────────────────────────────────
 seastar::future<GenericCrudEngine::OperationResult>
 GenericCrudEngine::update(const std::string& entity_name,
                           const std::string& id,
                           DynamicRecord record)
 {
+    // Validations synchrones qui court-circuitent sans entrer dans
+    // la chaine de futures.
     OperationResult result{};
 
     const auto* entity = registry_->find_entity(entity_name);
@@ -297,77 +328,96 @@ GenericCrudEngine::update(const std::string& entity_name,
         return seastar::make_ready_future<OperationResult>(std::move(result));
     }
 
-    // ─── 1. Verification de TOUTES les relations BelongsTo ──
-    // Pour chaque relation BelongsTo dont la FK est presente dans
-    // le record (i.e. touchee par l'update), on verifie que la cible
-    // existe. Les erreurs sont accumulees dans result.errors. Si la FK
-    // n'est PAS touchee par l'update, on laisse tomber (sauf Restrict
-    // qui exige sa presence).
-    //
-    // Note : on calque le pattern de create() ci-dessus — do_for_each
-    // pour iterer async, puis .then() pour appeler l'UPDATE SQL une
-    // SEULE fois apres la boucle. C'est essentiel car l'ancienne
-    // implementation appelait repository_->update() A L'INTERIEUR de
-    // la boucle BelongsTo et ne le faisait jamais pour les entites
-    // sans BelongsTo (bug n9, juin 2026).
-    return seastar::do_for_each(
-               entity->relations,
-               [this, &record, &result](const sea::domain::Relation& relation) -> seastar::future<> {
-                   if (relation.kind != sea::domain::RelationKind::BelongsTo) {
-                       return seastar::make_ready_future<>();
-                   }
-
-                   const auto fk_it = record.find(relation.fk_column);
-                   if (fk_it == record.end()) {
-                       return seastar::make_ready_future<>();
-                   }
-
-                   auto fk_value_opt = dynamic_value_to_id_string(fk_it->second);
-                   if (!fk_value_opt.has_value()) {
-                       result.errors.push_back("Invalid FK: " + relation.fk_column);
-                       return seastar::make_ready_future<>();
-                   }
-
-                   const std::string fk_value = *fk_value_opt;
-
-                   return repository_->find_by_id(relation.target_entity, fk_value).then(
-                       [&result, relation, fk_value](std::optional<runtime::DynamicRecord> target) {
-                           if (!target.has_value()) {
-                               result.errors.push_back(
-                                   "Target entity not found: " + relation.target_entity +
-                                   " with id=" + fk_value
-                                   );
+    // ─── seastar::do_with : ownership explicite de record et result ─
+    // Toutes les lambdas qui suivent capturent &record / &result
+    // par reference. do_with garantit que ces variables vivent
+    // pendant toute la chaine, peu importe quand chaque future est
+    // resolue. Pattern Seastar idiomatique pour ce cas (cf. create()).
+    return seastar::do_with(
+        std::move(record),
+        std::move(result),
+        [this, entity, entity_name, id]
+        (runtime::DynamicRecord& record,
+         GenericCrudEngine::OperationResult& result)
+        -> seastar::future<GenericCrudEngine::OperationResult>
+        {
+            // ─── 1. Verification de TOUTES les relations BelongsTo ──
+            // Pour chaque relation BelongsTo dont la FK est presente
+            // dans le record (i.e. touchee par l'update), on verifie
+            // que la cible existe. Les erreurs s'accumulent dans
+            // result.errors. Si la FK n'est PAS touchee par l'update,
+            // on skip silencieusement (validation 'required' faite
+            // au create).
+            return seastar::do_for_each(
+                       entity->relations,
+                       [this, &record, &result]
+                       (const sea::domain::Relation& relation) -> seastar::future<>
+                       {
+                           if (relation.kind != sea::domain::RelationKind::BelongsTo) {
+                               return seastar::make_ready_future<>();
                            }
-                       }
-                       );
-               }
-               ).then(
-            [this, entity_name, id, record = std::move(record), result = std::move(result)]() mutable
-            -> seastar::future<OperationResult>
-            {
-                // Si erreurs accumulees (FK manquante, cible introuvable),
-                // on abort sans toucher a la base.
-                if (!result.errors.empty()) {
-                    return seastar::make_ready_future<OperationResult>(std::move(result));
-                }
 
-                // ─── 2. UPDATE SQL — appele DANS TOUS LES CAS ─────
-                // Y compris pour les entites SANS relation BelongsTo,
-                // ce qui couvre la majorite des entites simples
-                // (Document, User si pas de FK, etc.).
-                return repository_->update(entity_name, id, std::move(record)).then(
-                    [result = std::move(result)]
-                    (sea::infrastructure::persistence::UpdateResponse resp) mutable
-                    -> seastar::future<OperationResult>
+                           const auto fk_it = record.find(relation.fk_column);
+                           if (fk_it == record.end()) {
+                               // FK absente du record d'update = champ non
+                               // touche par l'update partiel. Legitime.
+                               return seastar::make_ready_future<>();
+                           }
+
+                           auto fk_value_opt = dynamic_value_to_id_string(
+                               fk_it->second);
+                           if (!fk_value_opt.has_value()) {
+                               result.errors.push_back(
+                                   "Invalid FK: " + relation.fk_column);
+                               return seastar::make_ready_future<>();
+                           }
+
+                           const std::string fk_value = *fk_value_opt;
+
+                           return repository_->find_by_id(
+                                                 relation.target_entity, fk_value).then(
+                                   [&result, relation, fk_value]
+                                   (std::optional<runtime::DynamicRecord> target)
+                                   {
+                                       if (!target.has_value()) {
+                                           result.errors.push_back(
+                                               "Target entity not found: "
+                                               + relation.target_entity
+                                               + " with id=" + fk_value);
+                                       }
+                                   });
+                       }
+                       ).then(
+                    [this, entity_name, id, &record, &result]()
+                    -> seastar::future<GenericCrudEngine::OperationResult>
                     {
-                        result.success = resp.status;
-                        result.record = resp.record;
-                        if (!result.success) {
-                            result.errors.push_back("Unable to update record.");
+                        // Si erreurs accumulees (FK invalide, cible
+                        // introuvable), on abort sans toucher a la base.
+                        if (!result.errors.empty()) {
+                            return seastar::make_ready_future<
+                                GenericCrudEngine::OperationResult>(result);
                         }
-                        return seastar::make_ready_future<OperationResult>(std::move(result));
+
+                        // ─── 2. UPDATE SQL — appele dans tous les cas ─
+                        // Y compris pour les entites SANS relation
+                        // BelongsTo (Document, User si pas de FK, etc.).
+                        return repository_->update(
+                                              entity_name, id, std::move(record)).then(
+                                [&result]
+                                (sea::infrastructure::persistence::UpdateResponse resp)
+                                -> seastar::future<GenericCrudEngine::OperationResult>
+                                {
+                                    result.success = resp.status;
+                                    result.record = resp.record;
+                                    if (!result.success) {
+                                        result.errors.push_back(
+                                            "Unable to update record.");
+                                    }
+                                    return seastar::make_ready_future<
+                                        GenericCrudEngine::OperationResult>(result);
+                                });
                     });
-            });
+        });
 }
 seastar::future<bool>
 GenericCrudEngine::pivot_exists(
