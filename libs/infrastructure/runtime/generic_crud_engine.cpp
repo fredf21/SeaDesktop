@@ -1,4 +1,5 @@
 #include "generic_crud_engine.h"
+#include "spdlog/spdlog.h"
 #include <seastar/core/do_with.hh>
 #include <seastar/core/loop.hh>
 
@@ -435,13 +436,95 @@ GenericCrudEngine::delete_pivot(
     return repository_->delete_pivot(pivot_table, std::move(values));
 }
 
-seastar::future<bool> GenericCrudEngine::remove(const std::string& entity_name,
-                                                const std::string& id) {
+seastar::future<GenericCrudEngine::OperationResult>
+GenericCrudEngine::remove(const std::string& entity_name,
+                          const std::string& id)
+{
+    OperationResult result{};
+
     if (!registry_->has_entity(entity_name)) {
-        return seastar::make_ready_future<bool>(false);
+        result.errors.push_back("Unknown entity: " + entity_name);
+        return seastar::make_ready_future<OperationResult>(std::move(result));
     }
 
-    return repository_->remove(entity_name, id);
+    // ─── 1. Verification on_delete=restrict (relations entrantes) ──
+    // On scanne toutes les entités du registry pour trouver celles
+    // dont une relation BelongsTo cible 'entity_name' avec
+    // on_delete=Restrict. Pour chacune, on vérifie via find_one_by_field
+    // qu'aucun record n'y pointe.
+    //
+    // C'est l'enforcement APPLICATIF du restrict, indépendant des
+    // contraintes FK MySQL. Avantages :
+    //   - portable (Postgres, Mongo, etc.)
+    //   - message d'erreur précis (409 Conflict + nom de l'entité
+    //     bloquante), au lieu de l'erreur générique du repo qui
+    //     ressemblait à 'Enregistrement introuvable' (404 trompeur)
+    //   - cohérent avec la déclaration on_delete: restrict du YAML
+    //
+    // Note : on collecte d'abord la liste des checks à faire, puis on
+    // les exécute via do_for_each. Si UNE référence est trouvée, on
+    // enregistre l'erreur et on continue le scan (pour donner au client
+    // une vue exhaustive des blocages s'il y en a plusieurs).
+
+    struct IncomingRefCheck {
+        std::string source_entity;
+        std::string fk_column;
+    };
+
+    std::vector<IncomingRefCheck> checks;
+    for (const auto& [name, entity] : registry_->all_entities()) {
+        for (const auto& relation : entity.relations) {
+            if (relation.kind == sea::domain::RelationKind::BelongsTo
+                && relation.target_entity == entity_name
+                && relation.on_delete == sea::domain::OnDelete::Restrict) {
+                checks.push_back({name, relation.fk_column});
+            }
+        }
+    }
+    return seastar::do_with(
+        std::move(result),
+        std::move(checks),
+        [this, entity_name, id](auto& result, auto& checks)
+        -> seastar::future<OperationResult>
+        {
+            return seastar::do_for_each(
+                       checks,
+                       [this, id, &result](const IncomingRefCheck& check)
+                       -> seastar::future<>
+                       {
+                           return repository_->find_one_by_field(
+                                                 check.source_entity, check.fk_column, id
+                                                 ).then([&result, check,  id](std::optional<runtime::DynamicRecord> ref) {
+                                   if (ref.has_value()) {
+                                       result.restrict_violation = true;
+                                       result.errors.push_back(
+                                           "Cannot delete: referenced by " + check.source_entity
+                                           + " via " + check.fk_column
+                                           + " (on_delete=restrict)"
+                                           );
+                                   }
+                               });
+                       }
+                       ).then([this, entity_name, id, &result]()
+                      -> seastar::future<OperationResult>
+                      {
+                          // Si des références restrict bloquent → 409 logique
+                          if (!result.errors.empty()) {
+                              // result.success reste false (init)
+                              return seastar::make_ready_future<OperationResult>(result);
+                          }
+
+                          // ── 2. DELETE effectif via le repo ───────────────
+                          return repository_->remove(entity_name, id).then(
+                              [&result](bool deleted) {
+                                  result.success = deleted;
+                                  if (!deleted) {
+                                      result.errors.push_back("Record not found.");
+                                  }
+                                  return seastar::make_ready_future<OperationResult>(result);
+                              });
+                      });
+        });
 }
 seastar::future<std::vector<std::string>>
 GenericCrudEngine::create_many_to_many_links(

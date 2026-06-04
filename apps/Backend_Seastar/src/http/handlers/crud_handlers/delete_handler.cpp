@@ -190,13 +190,22 @@ DeleteHandler::handle(const seastar::sstring&,
         // que l'entité soit bien supprimée et que les éventuels fichiers
         // orphelins soient récupérés par release_orphans offline si
         // jamais le release échoue.
+        std::vector<std::string> remove_errors;  // ← déclaré ICI
+        bool restrict_violation = false;          // ← idem
         bool deleted = false;
         if (file_extractor_ != nullptr && entity_has_files) {
             // Avec gestion files : utilise une transaction explicite
             // pour wrap le DELETE (cohérence avec Create/Update).
+
+
             auto tx = co_await crud_engine_->get_repository()->in_transaction(
-                [this, id_str = std::string(id), &deleted]() -> seastar::future<bool> {
-                    deleted = co_await crud_engine_->remove(entity_name_, id_str);
+                [this, id_str = std::string(id), &deleted, &remove_errors,
+                 &restrict_violation]() -> seastar::future<bool> {
+                    const auto remove_result = co_await crud_engine_->remove(
+                        entity_name_, id_str);
+                    deleted = remove_result.success;
+                    remove_errors = remove_result.errors;
+                    restrict_violation = remove_result.restrict_violation;
                     co_return deleted;
                 });
 
@@ -208,13 +217,25 @@ DeleteHandler::handle(const seastar::sstring&,
             }
         } else {
             // Mode legacy : pas de tx explicite, comportement d'origine.
-            deleted = co_await crud_engine_->remove(entity_name_, std::string(id));
+            const auto remove_result = co_await crud_engine_->remove(entity_name_, std::string(id));
+            deleted = remove_result.success;
+            remove_errors = remove_result.errors;
+            restrict_violation = remove_result.restrict_violation; // ← nouveau, à déclarer en dehors
         }
-
         if (!deleted) {
-            rep->set_status(seastar::http::reply::status_type::not_found);
-            rep->write_body("application/json",
-                            json{{"error", "Enregistrement introuvable."}}.dump());
+            if (restrict_violation) {
+                rep->set_status(seastar::http::reply::status_type::conflict);
+                nlohmann::json body = {
+                    {"error", "Conflict"},
+                    {"message", "Suppression refusée : entité référencée"},
+                    {"details", remove_errors}
+                };
+                rep->write_body("application/json", body.dump());
+            } else {
+                rep->set_status(seastar::http::reply::status_type::not_found);
+                rep->write_body("application/json",
+                                json{{"error", "Enregistrement introuvable."}}.dump());
+            }
             co_return std::move(rep);
         }
 

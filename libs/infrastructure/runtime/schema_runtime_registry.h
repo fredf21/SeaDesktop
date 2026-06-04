@@ -37,6 +37,11 @@ public:
     // Efface le contenu actuel
     void clear();
 
+    // Renvoie une const-ref sur toutes les entités enregistrées.
+    // Utilisé par GenericCrudEngine::remove pour scanner les relations
+    // BelongsTo entrantes (on_delete=restrict).
+    [[nodiscard]] const std::unordered_map<std::string, sea::domain::Entity>&
+    all_entities() const noexcept { return entities_; }
 private:
     std::unordered_map<std::string, sea::domain::Entity> entities_;
 };

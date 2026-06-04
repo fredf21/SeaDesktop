@@ -30,6 +30,11 @@ public:
         bool success{false};
         std::optional<DynamicRecord> record;
         std::vector<std::string> errors;
+        bool restrict_violation{false};   // true si remove() a été
+        // refusé pour cause de référence
+        // entrante (on_delete=restrict).
+        // Permet au handler de mapper en
+        // 409 au lieu de 404.
     };
 
     GenericCrudEngine(
@@ -75,8 +80,8 @@ public:
     delete_pivot(const std::string& pivot_table,
                  runtime::DynamicRecord values);
 
-    seastar::future<bool> remove(const std::string& entity_name,
-                                 const std::string& id);
+    seastar::future<OperationResult> remove(const std::string& entity_name,
+                                            const std::string& id);
     // ── Pagination ──────────────────────────────────────────
     //
     // Trois modes independants. Le handler HTTP appelle la methode
