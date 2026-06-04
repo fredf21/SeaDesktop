@@ -345,6 +345,46 @@ int main(int argc, char** argv)
             spdlog::get("sea.boot")->info(
                 "main: system entity 'sea_files' registered in runtime registry");
         }
+        // ─── Tables pivots M2M ───────────────────────────────
+        // Les tables pivots (project_tags, etc.) sont creees par le
+        // bootstrapper a partir des relations many_to_many declarees
+        // dans le YAML, mais ne sont pas des entites du schema
+        // utilisateur. On les enregistre ici comme entites minimales
+        // pour que ListManyToManyHandler puisse les lire via
+        // crud_engine_->list(pivot_table) (sinon retourne {} silencieusement).
+        //
+        // enable_crud = false : on ne veut PAS exposer les pivots en
+        // CRUD public — sinon faille de securite identique a celle
+        // de RefreshToken/RevokedToken (bug 6).
+        std::unordered_set<std::string> registered_pivots;
+        for (const auto& entity : service.schema.entities) {
+            for (const auto& relation : entity.relations) {
+                if (relation.kind != sea::domain::RelationKind::ManyToMany) continue;
+                if (relation.pivot_table.empty()) continue;
+                if (registered_pivots.count(relation.pivot_table)) continue;
+                registered_pivots.insert(relation.pivot_table);
+
+                sea::domain::Entity pivot;
+                pivot.name       = relation.pivot_table;
+                pivot.table_name = relation.pivot_table;
+                pivot.options.enable_crud = false;
+                pivot.options.timestamps  = false;
+                pivot.fields = {
+                                []() { sea::domain::Field f; f.type = sea::domain::FieldType::UUID; f.required = true; return f; }(),
+                                []() { sea::domain::Field f; f.type = sea::domain::FieldType::UUID; f.required = true; return f; }(),
+                                };
+                pivot.fields[0].name = relation.source_fk_column;
+                pivot.fields[1].name = relation.target_fk_column;
+
+                registry->register_entity(pivot);
+                spdlog::get("sea.boot")->info(
+                    "main: pivot table '{}' registered in runtime registry "
+                    "(source_fk={}, target_fk={})",
+                    relation.pivot_table,
+                    relation.source_fk_column,
+                    relation.target_fk_column);
+            }
+        }
         // ─────────────────────────────────────────────────────
         // 6. Executor bloquant
         // ─────────────────────────────────────────────────────

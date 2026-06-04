@@ -598,12 +598,11 @@ void register_many_to_many_routes(
                 context
                 );
 
-            routes.add(
-                seastar::httpd::operation_type::GET,
-                seastar::httpd::url(base).remainder("id"),
+            auto* list_rule = build_match_rule_from_template(
+                list_path,
                 list_wrapped.release()
                 );
-
+            routes.add(list_rule, seastar::httpd::operation_type::GET);
             // ─────────────────────────────────────────────────────
             // POST /<entity>s/{id}/<relation>/{target_id}
             //

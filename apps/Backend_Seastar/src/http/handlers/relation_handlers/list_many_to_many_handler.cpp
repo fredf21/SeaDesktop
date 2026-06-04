@@ -4,6 +4,7 @@
 
 #include "access_control/crud_operation.h"
 #include "runtime/generic_crud_engine.h"
+#include "spdlog/spdlog.h"
 
 #include <utility>
 #include <vector>
@@ -41,7 +42,6 @@ ListManyToManyHandler::handle(const seastar::sstring&,
     }
 
     const auto pivot_records = co_await crud_engine_->list(pivot_table_);
-
     std::vector<std::string> target_ids;
     target_ids.reserve(pivot_records.size());
 
@@ -51,10 +51,12 @@ ListManyToManyHandler::handle(const seastar::sstring&,
             continue;
         }
 
-        if (!utils::dynamic_value_matches_string(src_it->second, source_id)) {
+        const bool matches = utils::dynamic_value_matches_string(
+            src_it->second, source_id);
+
+        if (!matches) {
             continue;
         }
-
         const auto tgt_it = record.find(target_fk_column_);
         if (tgt_it == record.end()) {
             continue;
