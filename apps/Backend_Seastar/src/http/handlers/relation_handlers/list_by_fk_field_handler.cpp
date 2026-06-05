@@ -29,10 +29,10 @@ ListByFkFieldHandler::handle(const seastar::sstring&,
                              std::unique_ptr<seastar::http::request> req,
                              std::unique_ptr<seastar::http::reply> rep)
 {
-    // ✨ Path param "value" au lieu de query param
+    // Path param "value" au lieu de query param
     // Route : /<children>/filter/with_<parent>_<field>/{value}
     // Ex: /employees/filter/with_department_name/IT
-    const auto value = sea::http::utils::strip_leading_slash(req->get_path_param("value"));
+    const auto value = std::string(sea::http::utils::strip_leading_slash(req->get_path_param("value")));
     if (value.empty()) {
         rep->set_status(seastar::http::reply::status_type::bad_request);
         rep->write_body("application/json", R"({"error":"value manquant"})");

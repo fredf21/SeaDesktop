@@ -30,7 +30,7 @@ GetWithChildrenHandler::handle(const seastar::sstring&,
                                std::unique_ptr<seastar::http::request> req,
                                std::unique_ptr<seastar::http::reply> rep)
 {
-    const auto id = sea::http::utils::strip_leading_slash(req->get_path_param("id"));
+    const auto id = std::string(sea::http::utils::strip_leading_slash(req->get_path_param("id")));
 
     auto parent = co_await crud_engine_->get_by_id(parent_entity_, std::string(id));
     if (!parent.has_value()) {

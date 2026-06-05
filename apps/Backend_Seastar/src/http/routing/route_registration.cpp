@@ -312,11 +312,11 @@ void register_item_route(
             context
             );
 
-        routes.add(
-            *operation,
-            seastar::httpd::url(base_path).remainder("id"),
+        auto* update_rule = build_match_rule_from_template(
+            route.path,
             wrapped.release()
             );
+        routes.add(update_rule, *operation);
         return;
     }
 
@@ -340,11 +340,11 @@ void register_item_route(
             context
             );
 
-        routes.add(
-            *operation,
-            seastar::httpd::url(base_path).remainder("id"),
+        auto* delete_rule = build_match_rule_from_template(
+            route.path,
             wrapped.release()
             );
+        routes.add(delete_rule, *operation);
         return;
     }
 }
@@ -395,12 +395,11 @@ void register_has_many_routes(
                     requires_auth,
                     context
                     );
-
-                routes.add(
-                    seastar::httpd::operation_type::GET,
-                    seastar::httpd::url(base).remainder("id"),
+                auto* list_by_fk_rule = build_match_rule_from_template(
+                    child_path,  // ou le nom de variable utilisé pour le path
                     wrapped.release()
                     );
+                routes.add(list_by_fk_rule, seastar::httpd::operation_type::GET);
             }
 
             // ───────────────────────────────────────────────────────────
@@ -432,16 +431,11 @@ void register_has_many_routes(
                     context
                     );
 
-                // URL builder : /<parent>s_with_<children>/{id}
-                const std::string with_children_base =
-                    "/" + sea::http::utils::lower_first(entity.name) + "s_with_" +
-                    relation.name;
-
-                routes.add(
-                    seastar::httpd::operation_type::GET,
-                    seastar::httpd::url(with_children_base).remainder("id"),
+                auto* with_children_rule = build_match_rule_from_template(
+                    with_children_path,
                     wrapped.release()
                     );
+                routes.add(with_children_rule, seastar::httpd::operation_type::GET);
             }
 
             // ───────────────────────────────────────────────────────────
@@ -474,9 +468,10 @@ void register_has_many_routes(
                     const std::string filter_path =
                         "/" + sea::http::utils::lower_first(relation.target_entity) + "s" +
                         "/filter/with_" + sea::http::utils::lower_first(entity.name) + "_name";
+                    const std::string filter_path_with_value = filter_path + "/{value}";  // ← AJOUT
                     spdlog::get("sea.boot")->info(
-                        "[ROUTE] GET {} ?name=<value> -> ListByFkFieldHandler {}",
-                        filter_path,
+                        "[ROUTE] GET {} -> ListByFkFieldHandler {}",
+                        filter_path_with_value,
                         requires_auth ? " 🔒" : " 🌐"
                         );
                     auto handler = std::make_unique<sea::http::handlers::relation::ListByFkFieldHandler>(
@@ -494,11 +489,11 @@ void register_has_many_routes(
                         context
                         );
 
-                    routes.add(
-                        seastar::httpd::operation_type::GET,
-                        seastar::httpd::url(filter_path).remainder("value"),
+                    auto* filter_rule = build_match_rule_from_template(
+                        filter_path_with_value,
                         wrapped.release()
                         );
+                    routes.add(filter_rule, seastar::httpd::operation_type::GET);
                 }
             }
         }
@@ -542,11 +537,11 @@ void register_has_one_routes(
                 context
                 );
 
-            routes.add(
-                seastar::httpd::operation_type::GET,
-                seastar::httpd::url(base).remainder("id"),
+            auto* get_one_rule = build_match_rule_from_template(
+                path,
                 wrapped.release()
                 );
+            routes.add(get_one_rule, seastar::httpd::operation_type::GET);
         }
     }
 }

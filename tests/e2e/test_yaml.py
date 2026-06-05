@@ -183,7 +183,11 @@ def render_test_yaml(
                     type: string
                     required: true
                     unique: true
-
+                relations:
+                  - name: projects
+                    kind: has_many
+                    target_entity: Project
+                    fk_column: team_id
               # ─── Project : BelongsTo Team (on_delete=restrict) ─
               # Sert à tester :
               # - le fix bug 9 (GenericCrudEngine::update) sur une
