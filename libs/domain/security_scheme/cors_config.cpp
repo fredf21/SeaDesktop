@@ -16,6 +16,7 @@ CorsConfig::CorsConfig()
     , exposed_headers_{}
     , allow_credentials_(false)
     , max_age_(0s)
+    , origin_policy_(OriginPolicy::Permissive)
 {
 }
 
@@ -75,6 +76,11 @@ CorsConfig& CorsConfig::set_max_age(std::chrono::seconds max_age)
     return *this;
 }
 
+CorsConfig& CorsConfig::set_origin_policy(OriginPolicy policy)
+{
+    origin_policy_ = policy;
+    return *this;
+}
 // ===== Getters =====
 
 const std::vector<std::string>& CorsConfig::allowed_origins() const
@@ -105,6 +111,11 @@ bool CorsConfig::allow_credentials() const
 std::chrono::seconds CorsConfig::max_age() const
 {
     return max_age_;
+}
+
+OriginPolicy CorsConfig::origin_policy() const
+{
+    return origin_policy_;
 }
 
 // ===== Helpers =====

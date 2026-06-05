@@ -126,7 +126,29 @@ def render_test_yaml(
                 # refresh / revoked nécessaires.
                 token_tracking:
                   enabled: true
-
+                # ─── CORS : config explicite pour les tests F2 ──────
+                # Origines autorisées : un cas dev (localhost) et un
+                # cas prod (https). Toute autre Origin est rejetée
+                # (pas de header Access-Control-Allow-Origin dans la
+                # réponse) — c'est ce que demande la spec CORS.
+              cors:
+                allowed_origins:
+                  - http://localhost:3000
+                  - https://app.example.com
+                allowed_methods:
+                  - GET
+                  - POST
+                  - PUT
+                  - DELETE
+                  - OPTIONS
+                allowed_headers:
+                  - Content-Type
+                  - Authorization
+                exposed_headers:
+                  - X-Total-Count
+                allow_credentials: true
+                max_age: 1h
+                origin_policy: strict 
             entities:
               - name: User
                 options:

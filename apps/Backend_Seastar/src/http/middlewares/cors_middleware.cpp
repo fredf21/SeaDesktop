@@ -27,12 +27,23 @@ CorsMiddleware::handle(
         co_return co_await handle_preflight(origin, std::move(rep));
     }
 
-    // 2. Si une origin est fournie mais pas autorisée → 403
+    // 2. Si une origin est fournie mais pas autorisée :
+    //    - mode Strict   → 403 immédiat + message
+    //    - mode Permissive (défaut) → on laisse passer, mais sans
+    //      ajouter de header Access-Control-Allow-Origin (le browser
+    //      bloquera côté JS, les clients non-browser recevront les
+    //      données — comportement conforme à la spec CORS)
     if (!origin.empty() && !config_.allows_origin(origin)) {
-        rep->set_status(seastar::http::reply::status_type::forbidden);
-        rep->write_body("application/json",
-                        R"({"error":"cors_forbidden","message":"Origin not allowed"})");
-        co_return std::move(rep);
+        if (config_.origin_policy() == sea::domain::security::OriginPolicy::Strict) {
+            rep->set_status(seastar::http::reply::status_type::forbidden);
+            rep->write_body("application/json",
+                            R"({"error":"cors_forbidden","message":"Origin not allowed"})");
+            co_return std::move(rep);
+        }
+        // Mode Permissive : on tombe dans la suite, qui appellera
+        // inner_->handle et add_cors_headers. La logique de
+        // add_cors_headers omettra déjà le header pour les origines
+        // non autorisées, ce qui est le comportement attendu.
     }
 
     // 3. On laisse passer au downstream + on enrichit la réponse

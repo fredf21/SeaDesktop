@@ -1161,7 +1161,20 @@ domain::security::CorsConfig YamlSchemaParser::parse_cors_node(const YAML::Node 
     if (node["max_age"]) {
         cors.set_max_age(parse_duration(node["max_age"].as<std::string>()));
     }
-
+    if (node["origin_policy"]) {
+        const std::string policy_str = to_lower(
+            node["origin_policy"].as<std::string>());
+        if (policy_str == "permissive") {
+            cors.set_origin_policy(sea::domain::security::OriginPolicy::Permissive);
+        } else if (policy_str == "strict") {
+            cors.set_origin_policy(sea::domain::security::OriginPolicy::Strict);
+        } else {
+            throw sea::sea_errors_handling::YamlParsingException(
+                "[YAML PARSING EXCEPTION] Valeur 'cors.origin_policy' inconnue : '"
+                + policy_str + "' (attendu: permissive ou strict)."
+                );
+        }
+    }
     return cors;
 }
 
