@@ -99,6 +99,8 @@ add_executable(backend_seastar
     src/http/handlers/file_handlers/file_download_by_field_handler.h src/http/handlers/file_handlers/file_download_by_field_handler.cpp
     src/http/handlers/relation_handlers/attach_many_to_many_handler.h src/http/handlers/relation_handlers/attach_many_to_many_handler.cpp
     src/http/handlers/relation_handlers/detach_many_to_many_handler.h src/http/handlers/relation_handlers/detach_many_to_many_handler.cpp
+    src/http/handlers/misc_handlers/preflight_handler.h
+
 
 
 

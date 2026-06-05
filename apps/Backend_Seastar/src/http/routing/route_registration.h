@@ -2,6 +2,8 @@
 #define ROUTE_REGISTRATION_H
 
 #include "http/handlers/access_control/resource_authorization_helper.h"
+#include "http/handlers/misc_handlers/preflight_handler.h"
+#include "http/routing/paginated_match_rule.h"
 #include "route_generator.h"
 #include "service.h"
 #include "../middlewares/rate_limit_store.h"
@@ -12,6 +14,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "spdlog/spdlog.h"
 #include "thread_pool_execution/i_blocking_executor.h"
 
 // forward-declare PolicyEngine
@@ -99,7 +102,55 @@ std::unique_ptr<seastar::httpd::handler_base> wrap_with_middlewares(
     bool requires_auth,
     const MiddlewareContext& context
     );
+// ─────────────────────────────────────────────────────────────────
+// register_options_route
+//
+// Enregistre une route OPTIONS pour gérer les preflight CORS.
+// À appeler en parallèle de chaque route CRUD/relations/M2M.
+//
+// Le PreflightHandler est trivial (renvoie 204) — le vrai travail
+// est fait par CorsMiddleware::handle_preflight() qui s'exécute
+// en amont via wrap_with_middlewares.
+// ─────────────────────────────────────────────────────────────────
+inline void register_options_route(
+    seastar::httpd::routes& routes,
+    const std::string& path,
+    const MiddlewareContext& context)
+{
+    // Set local à la fonction d'enregistrement complète. On
+    // l'initialise une fois et le réutilise pour skip les
+    // doublons. Avec une variable statique locale, ça marche
+    // pour un seul appel à register_routes, ce qui est suffisant
+    // pour le démarrage du serveur (le seul moment où ces
+    // fonctions sont appelées).
+    //
+    // Note : si on doit gérer plusieurs services dans un même
+    // serveur, il faudra repenser ça. Pour le MVP, OK.
+    static std::unordered_set<std::string> registered_paths;
 
+    if (registered_paths.count(path)) {
+        return;  // déjà enregistré
+    }
+    registered_paths.insert(path);
+
+    spdlog::get("sea.boot")->info(
+        "[ROUTE] OPTIONS {} -> PreflightHandler (CORS)",
+        path
+        );
+
+    auto preflight = std::make_unique<sea::http::handlers::misc::PreflightHandler>();
+    auto wrapped = wrap_with_middlewares(
+        std::move(preflight),
+        false,  // requires_auth = false (OPTIONS jamais authentifié)
+        context
+        );
+
+    auto* rule = build_match_rule_from_template(
+        path,
+        wrapped.release()
+        );
+    routes.add(rule, seastar::httpd::operation_type::OPTIONS);
+}
 // Routes CRUD
 void register_collection_route(
     seastar::httpd::routes& routes,

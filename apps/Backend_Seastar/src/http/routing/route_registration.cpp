@@ -202,6 +202,8 @@ void register_collection_route(
             seastar::httpd::url(route.path),
             wrapped.release()
             );
+        register_options_route(routes, route.path, context);
+
         return;
     }
 
@@ -233,6 +235,8 @@ void register_collection_route(
             seastar::httpd::url(route.path),
             wrapped.release()
             );
+
+        register_options_route(routes, route.path, context);
         return;
     }
 }
@@ -287,6 +291,8 @@ void register_item_route(
             wrapped.release()
             );
         routes.add(rule, *operation);
+        register_options_route(routes, route.path, context);
+
         return;
     }
 
@@ -317,6 +323,8 @@ void register_item_route(
             wrapped.release()
             );
         routes.add(update_rule, *operation);
+        register_options_route(routes, route.path, context);
+
         return;
     }
 
@@ -345,6 +353,8 @@ void register_item_route(
             wrapped.release()
             );
         routes.add(delete_rule, *operation);
+        register_options_route(routes, route.path, context);
+
         return;
     }
 }
@@ -400,6 +410,7 @@ void register_has_many_routes(
                     wrapped.release()
                     );
                 routes.add(list_by_fk_rule, seastar::httpd::operation_type::GET);
+                register_options_route(routes, child_path, context);
             }
 
             // ───────────────────────────────────────────────────────────
@@ -436,6 +447,7 @@ void register_has_many_routes(
                     wrapped.release()
                     );
                 routes.add(with_children_rule, seastar::httpd::operation_type::GET);
+                register_options_route(routes, with_children_path, context);
             }
 
             // ───────────────────────────────────────────────────────────
@@ -494,6 +506,7 @@ void register_has_many_routes(
                         wrapped.release()
                         );
                     routes.add(filter_rule, seastar::httpd::operation_type::GET);
+                    register_options_route(routes, filter_path_with_value, context);
                 }
             }
         }
@@ -542,6 +555,7 @@ void register_has_one_routes(
                 wrapped.release()
                 );
             routes.add(get_one_rule, seastar::httpd::operation_type::GET);
+            register_options_route(routes, path, context);
         }
     }
 }
@@ -598,6 +612,7 @@ void register_many_to_many_routes(
                 list_wrapped.release()
                 );
             routes.add(list_rule, seastar::httpd::operation_type::GET);
+            register_options_route(routes, list_path, context);
             // ─────────────────────────────────────────────────────
             // POST /<entity>s/{id}/<relation>/{target_id}
             //
@@ -641,6 +656,7 @@ void register_many_to_many_routes(
                 );
 
             routes.add(attach_rule, seastar::httpd::operation_type::POST);
+            register_options_route(routes, attach_path, context);
 
             // ─────────────────────────────────────────────────────
             // DELETE /<entity>s/{id}/<relation>/{target_id}
@@ -675,6 +691,7 @@ void register_many_to_many_routes(
                 );
 
             routes.add(detach_rule, seastar::httpd::operation_type::DELETE);
+            register_options_route(routes, attach_path, context);
         }
     }
 }
@@ -777,6 +794,7 @@ void register_file_download_routes(
                 wrapped.release()
                 );
             routes.add(rule, seastar::httpd::operation_type::GET);
+            register_options_route(routes, full_path, context);
         }
     }
 }
