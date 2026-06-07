@@ -857,6 +857,7 @@ int main(int argc, char** argv)
                                             mw_context,
                                             blocking_executor
                                             , token_tracking](seastar::httpd::routes& r) {
+
                 using namespace sea::http::routing;
 
                 // ─────────────────────────────────────────────

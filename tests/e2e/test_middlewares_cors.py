@@ -100,19 +100,6 @@ def test_cors_vary_origin_sur_reponse(api):
         f"cross-origin. Reçu : Vary={vary!r}"
     )
 
-
-# ─── Tests preflight (OPTIONS) — xfail bug 15 ─────────────────
-
-@pytest.mark.xfail(
-    reason="Bug 15 preflight CORS : Seastar renvoie 404 alors que 16 "
-           "routes OPTIONS sont enregistrees au boot. Le 404 vient "
-           "AVANT la chaine de middlewares (pas de header 'Server: "
-           "Seastar httpd', pas de security headers). Hypothese : "
-           "get_handler() ou match_rule->get() echoue silencieusement. "
-           "Bug reproductible (3 runs = 3 echecs). A investiguer "
-           "dans une session dediee.",
-    strict=False,
-)
 def test_cors_preflight_methode_autorisee(api, base_url):
     """OPTIONS preflight avec Access-Control-Request-Method: PUT
     et Origin autorisée → réponse 200/204 avec les headers preflight."""
@@ -147,13 +134,7 @@ def test_cors_preflight_methode_autorisee(api, base_url):
         f"Preflight : headers demandés non reconnus. Reçu Access-"
         f"Control-Allow-Headers : {acah!r}"
     )
-
-
-@pytest.mark.xfail(
-    reason="Bug 15 preflight CORS — meme cause que "
-           "test_cors_preflight_methode_autorisee.",
-    strict=False,
-)
+    
 def test_cors_preflight_max_age(api, base_url):
     """Avec max_age: 1h configuré, le preflight doit renvoyer
     Access-Control-Max-Age: 3600."""

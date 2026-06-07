@@ -1,7 +1,6 @@
 #include "cors_middleware.h"
 
 #include "protocol/http_protocol/http_method.h"
-
 #include <utility>
 
 namespace sea::http::middlewares {

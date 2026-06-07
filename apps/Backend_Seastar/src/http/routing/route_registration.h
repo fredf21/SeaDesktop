@@ -3,7 +3,6 @@
 
 #include "http/handlers/access_control/resource_authorization_helper.h"
 #include "http/handlers/misc_handlers/preflight_handler.h"
-#include "http/routing/paginated_match_rule.h"
 #include "route_generator.h"
 #include "service.h"
 #include "../middlewares/rate_limit_store.h"
@@ -117,39 +116,38 @@ inline void register_options_route(
     const std::string& path,
     const MiddlewareContext& context)
 {
-    // Set local à la fonction d'enregistrement complète. On
-    // l'initialise une fois et le réutilise pour skip les
-    // doublons. Avec une variable statique locale, ça marche
-    // pour un seul appel à register_routes, ce qui est suffisant
-    // pour le démarrage du serveur (le seul moment où ces
-    // fonctions sont appelées).
+    // NOTE : on n'utilise PAS de set static pour deduplication.
     //
-    // Note : si on doit gérer plusieurs services dans un même
-    // serveur, il faudra repenser ça. Pour le MVP, OK.
-    static std::unordered_set<std::string> registered_paths;
-
-    if (registered_paths.count(path)) {
-        return;  // déjà enregistré
-    }
-    registered_paths.insert(path);
+    // Cette fonction est appelee dans la lambda passee a
+    // http_server_control::set_routes, qui invoke la lambda UNE
+    // FOIS PAR SHARD (via _server_dist->invoke_on_all). Un set
+    // static global serait peuple au premier shard et empecherait
+    // les enregistrements sur les autres shards — bug 15 !
+    //
+    // Plusieurs operations CRUD partagent le meme path (ex: list
+    // et create sur /teams, get_by_id+update+delete sur
+    // /teams/{id}). On va donc enregistrer plusieurs match_rule
+    // pour le meme path/methode. Seastar accepte cela sans
+    // probleme : _rules[OPTIONS] est un map<cookie, match_rule*>
+    // indexe par cookie unique (_rover++), et la boucle dans
+    // get_handler() itere sur toutes les rules jusqu'a la
+    // premiere qui matche.
+    //
+    // Cout : quelques rules supplementaires par shard (16 paths
+    // uniques x ~1.2 operations = ~20 rules au lieu de 16).
+    // Negligeable.
 
     spdlog::get("sea.boot")->info(
-        "[ROUTE] OPTIONS {} -> PreflightHandler (CORS)",
-        path
-        );
+        "[ROUTE] OPTIONS {} -> PreflightHandler (CORS)", path);
 
     auto preflight = std::make_unique<sea::http::handlers::misc::PreflightHandler>();
-    auto wrapped = wrap_with_middlewares(
-        std::move(preflight),
-        false,  // requires_auth = false (OPTIONS jamais authentifié)
-        context
-        );
+    auto wrapped = wrap_with_middlewares(std::move(preflight), false, context);
 
-    auto* rule = build_match_rule_from_template(
-        path,
+    routes.add(
+        seastar::httpd::operation_type::OPTIONS,
+        seastar::httpd::url(path),
         wrapped.release()
         );
-    routes.add(rule, seastar::httpd::operation_type::OPTIONS);
 }
 // Routes CRUD
 void register_collection_route(

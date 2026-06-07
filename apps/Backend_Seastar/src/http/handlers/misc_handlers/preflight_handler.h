@@ -27,8 +27,8 @@ namespace sea::http::handlers::misc {
 class PreflightHandler : public seastar::httpd::handler_base {
 public:
     seastar::future<std::unique_ptr<seastar::http::reply>>
-    handle(const seastar::sstring&,
-           std::unique_ptr<seastar::http::request>,
+    handle(const seastar::sstring& path,
+           std::unique_ptr<seastar::http::request> req,
            std::unique_ptr<seastar::http::reply> rep) override
     {
         rep->set_status(seastar::http::reply::status_type::no_content);
