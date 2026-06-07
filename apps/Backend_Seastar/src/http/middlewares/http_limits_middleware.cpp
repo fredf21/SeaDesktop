@@ -22,7 +22,11 @@ HttpLimitsMiddleware::handle(
     std::unique_ptr<seastar::http::reply> rep)
 {
     // 1. URL trop longue ?
-    if (path.size() > config_.max_url_length()) {
+    // On verifie la longueur de l'URL COMPLETE (req->_url), pas
+    // juste le path : sans ca, un attaquant pourrait envoyer une
+    // URL avec une query string de 100KB+ qui passerait le filtre
+    // (path="/teams" fait 6 caracteres, mais l'URL totale fait 100KB).
+    if (req->_url.size() > config_.max_url_length()) {
         rep->set_status(seastar::http::reply::status_type::bad_request);
         rep->write_body("application/json", json{
                                                 {"error", "uri_too_long"},
