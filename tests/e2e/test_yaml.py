@@ -153,6 +153,19 @@ def render_test_yaml(
                 max_body_size: 100KB         # tests avec ~4096 bytes max, vite calculable
                 max_url_length: 512        # URL standard ~200, on teste à 600
                 max_query_params: 5        # tests avec 6 params
+              # ─── Rate limits : config pour F4 ────────────────────
+              # 5 req par fenêtre de 10s, burst = 5 (pas de marge).
+              # Scope = per_user pour ne pas que la suite e2e
+              # s'auto-DoS : chaque test cree un user unique
+              # (unique_email), donc chaque test a son propre bucket.
+              # Les routes non-auth (ex: /health, /auth/login) ne sont
+              # pas rate-limitees (identify_client retourne '' pour
+              # per_user sans X-User-Id, et le middleware skip).
+              rate_limits:
+                - scope: per_user
+                  requests: 5
+                  window: 10s
+                  burst: 20
             entities:
               - name: User
                 options:
