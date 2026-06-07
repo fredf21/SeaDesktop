@@ -148,7 +148,11 @@ def render_test_yaml(
                   - X-Total-Count
                 allow_credentials: true
                 max_age: 1h
-                origin_policy: strict 
+                origin_policy: strict
+              http_limits:
+                max_body_size: 100KB         # tests avec ~4096 bytes max, vite calculable
+                max_url_length: 512        # URL standard ~200, on teste à 600
+                max_query_params: 5        # tests avec 6 params
             entities:
               - name: User
                 options:
