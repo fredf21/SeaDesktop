@@ -166,6 +166,13 @@ def render_test_yaml(
                   requests: 5
                   window: 10s
                   burst: 20
+              authorization:
+                enabled: true
+                default_policy: allow
+                roles_claim_name: role
+                admin_role: admin
+                default_allow_admin: true
+                roles: [admin, manager, user]
             entities:
               - name: User
                 options:
@@ -285,4 +292,34 @@ def render_test_yaml(
                     pivot_table: project_tags
                     source_fk_column: tag_id
                     target_fk_column: project_id
+                    
+              # ─── SecretResource : entité de test ABAC isolée ────
+              # Cette entité a des policies par opération différentes
+              # selon le rôle. Permet de tester ABAC sans toucher
+              # aux entités CRUD existantes (Team, Project, Tag, etc.).
+              #
+              # Policies :
+              #   list / get_by_id : tous les rôles
+              #   create / update  : admin + manager
+              #   delete           : admin uniquement
+              - name: SecretResource
+                fields:
+                  - name: id
+                    type: uuid
+                    required: true
+                    unique: true
+                  - name: name
+                    type: string
+                    required: true
+                access_control:
+                  list:
+                    allow_roles: [admin, manager, user]
+                  get_by_id:
+                    allow_roles: [admin, manager, user]
+                  create:
+                    allow_roles: [admin, manager]
+                  update:
+                    allow_roles: [admin, manager]
+                  delete:
+                    allow_roles: [admin]
         """)
