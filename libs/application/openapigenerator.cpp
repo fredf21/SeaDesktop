@@ -341,6 +341,58 @@ void OpenApiGenerator::add_auth_schemas(json& schemas) const {
     // Note : ErrorResponse n'est PAS defini ici. Il est defini en amont
     // dans le builder principal (inconditionnellement, car utilise par
     // tous les paths CRUD aussi).
+}OpenApiGenerator::json
+OpenApiGenerator::make_request_body_content(const domain::Entity& entity) const
+{
+    if (!entity.has_file_fields()) {
+        // Cas standard : JSON
+        return json{
+            {"application/json", {
+                                     {"schema", {{"$ref", "#/components/schemas/" + entity.name + "Input"}}}
+                                 }}
+        };
+    }
+
+    // Cas multipart : on genere un schema inline avec un property par
+    // field. Les champs File sont en 'string/binary' (le contenu du
+    // fichier upload). Les autres restent string : multipart est
+    // text-based, tout passe par des form fields, les types numeriques
+    // seront parses cote serveur depuis leur representation texte.
+    json properties = json::object();
+    json required   = json::array();
+
+    for (const auto& field : entity.fields) {
+        if (field.name == "id") {
+            continue;  // l'id est genere cote serveur, pas dans le body
+        }
+
+        json prop;
+        if (field.is_file_field()) {
+            prop = {{"type", "string"}, {"format", "binary"}};
+        } else {
+            // Tous les autres types passent par du texte dans multipart
+            prop = {{"type", "string"}};
+        }
+        properties[field.name] = prop;
+
+        if (field.required) {
+            required.push_back(field.name);
+        }
+    }
+
+    json schema = {
+        {"type", "object"},
+        {"properties", properties}
+    };
+    if (!required.empty()) {
+        schema["required"] = required;
+    }
+
+    return json{
+        {"multipart/form-data", {
+                                    {"schema", schema}
+                                }}
+    };
 }
 
 // =====================================================================
@@ -414,13 +466,9 @@ void OpenApiGenerator::add_crud_path(
         json op = {
             {"tags", json::array({route.entity_name})},
             {"summary", "Create " + route.entity_name},
-            {"requestBody", {
+            {"requestBody", json{
                                 {"required", true},
-                                {"content", {
-                                                {"application/json", {
-                                                                         {"schema", {{"$ref", "#/components/schemas/" + route.entity_name + "Input"}}}
-                                                                     }}
-                                            }}
+                                {"content", make_request_body_content(*find_entity_by_name(service, route.entity_name))}
                             }},
             {"responses", {
                               {"201", {
@@ -486,7 +534,7 @@ void OpenApiGenerator::add_crud_path(
             op["security"] = json::array();
         }
 
-        // ✨ Enrichissement avec access_control
+        // Enrichissement avec access_control
         enrich_with_access_control(op, service, route.entity_name, route.operation_name);
 
         paths[item_path][http_method] = op;
@@ -503,13 +551,9 @@ void OpenApiGenerator::add_crud_path(
                                    {"schema", {{"type", "string"}}}
                                }
                            })},
-            {"requestBody", {
+            {"requestBody", json{
                                 {"required", true},
-                                {"content", {
-                                                {"application/json", {
-                                                                         {"schema", {{"$ref", "#/components/schemas/" + route.entity_name + "Input"}}}
-                                                                     }}
-                                            }}
+                                {"content", make_request_body_content(*find_entity_by_name(service, route.entity_name))}
                             }},
             {"responses", {
                               {"200", {
@@ -532,7 +576,7 @@ void OpenApiGenerator::add_crud_path(
             op["security"] = json::array();
         }
 
-        // ✨ Enrichissement avec access_control
+        // Enrichissement avec access_control
         enrich_with_access_control(op, service, route.entity_name, route.operation_name);
 
         paths[item_path][http_method] = op;

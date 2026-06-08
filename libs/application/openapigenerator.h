@@ -92,6 +92,14 @@ private:
     // Helper pour construire la security clause
     json bearer_security() const;
 
+    // Génère le bloc requestBody approprié pour POST/PUT sur une entité :
+    // - multipart/form-data si l'entité a au moins un champ File
+    // - application/json sinon
+    //
+    // Schéma multipart : on génère un objet avec une propriété par field,
+    // les fields File en 'string/binary' (le contenu du fichier upload)
+    // et les autres champs en string (multipart est text-based).
+    json make_request_body_content(const domain::Entity& entity) const;
     // ─────────────────────────────────────────────────────────────
     //  Helpers Access Control (RBAC + ABAC)
     // ─────────────────────────────────────────────────────────────
