@@ -343,13 +343,23 @@ AuthorizationMiddleware::handle(
     const auto plan = resolver_.resolve(method_str, real_path_str);
 
     if (plan.unknown_route) {
-        spdlog::get("sea.http")->warn(
-            "AUTHZ {} {} : UNKNOWN ROUTE -> 403",
+        // Route non reconnue comme CRUD/relations d'une entite du schema
+        // (ex: /auth/me, /auth/logout, /documents/{id}/attachment,
+        // routes M2M). L'AuthorizationMiddleware n'a pas de policies a
+        // evaluer pour ces routes (les policies sont declarees par
+        // entite + operation CRUD), donc on laisse passer au handler
+        // suivant qui appliquera sa propre logique (ex: ProtectedHandler
+        // a deja verifie l'auth, le handler verifiera les permissions
+        // metier si necessaire).
+        //
+        // Cas previous bug : le middleware refusait en 403 ces routes,
+        // cassant /auth/me, /auth/logout, /auth/refresh, downloads de
+        // fichiers, M2M attach/detach, etc.
+        spdlog::get("sea.http")->debug(
+            "AUTHZ {} {} : route non-CRUD, passe au handler",
             method_str, real_path_str
             );
-        rep = make_forbidden_response(std::move(rep),
-                                      "Route not recognized for authorization");
-        co_return std::move(rep);
+        co_return co_await inner_->handle(path, std::move(req), std::move(rep));
     }
 
 
