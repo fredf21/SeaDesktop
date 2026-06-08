@@ -322,4 +322,35 @@ def render_test_yaml(
                     allow_roles: [admin, manager]
                   delete:
                     allow_roles: [admin]
+                    
+              # ─── UserNote : entite de test ABAC-2 ownership ────
+              # owner_field=user_id → un user peut update/delete
+              # seulement ses propres notes. default_allow_admin=true
+              # permet a l'admin de tout faire.
+              - name: UserNote
+                owner_field: user_id
+                fields:
+                  - name: id
+                    type: uuid
+                    required: true
+                    unique: true
+                  - name: title
+                    type: string
+                    required: true
+                  - name: user_id
+                    type: uuid
+                    required: true
+                access_control:
+                  list:
+                    allow_roles: [admin, manager, user]
+                  get_by_id:
+                    allow_roles: [admin, manager, user]
+                  create:
+                    allow_roles: [admin, manager, user]
+                  update:
+                    allow_roles: [admin, manager, user]
+                    own_resource: true
+                  delete:
+                    allow_roles: [admin, manager, user]
+                    own_resource: true
         """)
