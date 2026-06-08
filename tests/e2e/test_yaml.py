@@ -195,6 +195,9 @@ def render_test_yaml(
                   - name: full_name
                     type: string
                     required: false
+                  - name: team_id
+                    type: string
+                    required: false
 
               - name: Document
                 fields:
@@ -353,4 +356,37 @@ def render_test_yaml(
                   delete:
                     allow_roles: [admin, manager, user]
                     own_resource: true
+                    
+              # ─── TeamDocument : entite de test ABAC-3 same_scope ──
+              # scope_field=team_id → un user ne voit que les
+              # TeamDocument de sa team (subject.team_id == resource.team_id).
+              # default_allow_admin=true permet a l'admin de tout voir.
+              - name: TeamDocument
+                scope_field: team_id
+                fields:
+                  - name: id
+                    type: uuid
+                    required: true
+                    unique: true
+                  - name: title
+                    type: string
+                    required: true
+                  - name: team_id
+                    type: string
+                    required: true
+                access_control:
+                  list:
+                    allow_roles: [admin, manager, user]
+                    same_scope: true
+                  get_by_id:
+                    allow_roles: [admin, manager, user]
+                    same_scope: true
+                  create:
+                    allow_roles: [admin, manager, user]
+                  update:
+                    allow_roles: [admin, manager, user]
+                    same_scope: true
+                  delete:
+                    allow_roles: [admin, manager]
+                    same_scope: true
         """)
