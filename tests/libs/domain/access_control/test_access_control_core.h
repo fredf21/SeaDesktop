@@ -116,4 +116,12 @@ private slots:
     void operatorEvaluator_notEqualsWithEmptyLeft_shouldNotShortCircuit();
     void policyEngine_doubleNotCondition_shouldReturnOriginal();
     void policyEngine_nestedComposite_shouldEvaluateCorrectly();
+    // ── Gaps P0 : couverture du PolicyEngine ──────────────────
+    void policyEngine_allShortCircuitOn_shouldStopAtFirstFalse();
+    void policyEngine_allShortCircuitOff_shouldEvaluateAllChildren();
+    void policyEngine_anyShortCircuitOn_shouldStopAtFirstTrue();
+    void policyEngine_anyShortCircuitOff_shouldEvaluateAllChildren();
+    void policyEngine_strictModeResolutionError_shouldSetResolutionReason();
+    void policyEngine_emptyPredicateCondition_shouldDenyAndNotCount();
+    void policyEngine_predicatesEvaluatedCounter_shouldAccumulateAcrossTree();
 };

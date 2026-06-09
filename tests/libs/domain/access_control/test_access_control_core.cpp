@@ -1210,4 +1210,228 @@ void TestAccessControlCore::policyEngine_nestedComposite_shouldEvaluateCorrectly
         );
 
     QVERIFY(result.allowed);
+}// ═════════════════════════════════════════════════════════════
+// Gaps P0 : couverture supplementaire PolicyEngine
+//
+// Comble les trous identifies par l'audit du 09 juin 2026 :
+//   - short_circuit ON/OFF en All (AND) et Any (OR)
+//   - reason "Resolution error: ..." en strict mode
+//   - condition Predicate sans predicate (edge case is_empty)
+//   - accumulation du compteur predicates_evaluated sur arbre composite
+// ═════════════════════════════════════════════════════════════
+
+void TestAccessControlCore::policyEngine_allShortCircuitOn_shouldStopAtFirstFalse()
+{
+    // AND avec short_circuit=true : des qu'un enfant evalue false, on
+    // s'arrete. Le compteur predicates_evaluated doit refleter ce stop
+    // (1 seul predicat evalue, pas 2).
+    auto registry = OperatorRegistry::create_default();
+    PolicyEngine engine(registry);
+
+    // all_of[guest (false), admin (true)] : avec short_circuit, on
+    // s'arrete au premier (guest = false) sans evaluer le second.
+    auto condition = PolicyCondition::all_of({
+        PolicyCondition(makeSubjectRoleEqualsGuestPredicate()),
+        PolicyCondition(makeSubjectRoleContainsAdminPredicate())
+    });
+
+    auto opts = EvaluationOptions::production();
+    opts.short_circuit = true;
+
+    auto result = engine.evaluate(
+        condition,
+        makeSubject(),
+        makeResource(),
+        makeContext(),
+        opts
+        );
+
+    QVERIFY(!result.allowed);
+    QCOMPARE(result.predicates_evaluated, std::size_t(1));
+}
+
+void TestAccessControlCore::policyEngine_allShortCircuitOff_shouldEvaluateAllChildren()
+{
+    // AND avec short_circuit=false : meme si un enfant est false, on
+    // continue d'evaluer les suivants (utile en mode debug verbose
+    // pour voir toutes les regles qui echouent). Compteur = 2.
+    auto registry = OperatorRegistry::create_default();
+    PolicyEngine engine(registry);
+
+    auto condition = PolicyCondition::all_of({
+        PolicyCondition(makeSubjectRoleEqualsGuestPredicate()),
+        PolicyCondition(makeSubjectRoleContainsAdminPredicate())
+    });
+
+    auto opts = EvaluationOptions::production();
+    opts.short_circuit = false;
+
+    auto result = engine.evaluate(
+        condition,
+        makeSubject(),
+        makeResource(),
+        makeContext(),
+        opts
+        );
+
+    QVERIFY(!result.allowed);
+    // Les deux predicats ont ete evalues
+    QCOMPARE(result.predicates_evaluated, std::size_t(2));
+}
+
+void TestAccessControlCore::policyEngine_anyShortCircuitOn_shouldStopAtFirstTrue()
+{
+    // OR avec short_circuit=true : des qu'un enfant evalue true, on
+    // s'arrete. Compteur = 1.
+    auto registry = OperatorRegistry::create_default();
+    PolicyEngine engine(registry);
+
+    // any_of[admin (true), guest (false)] : avec short_circuit, on
+    // s'arrete au premier sans evaluer le second.
+    auto condition = PolicyCondition::any_of({
+        PolicyCondition(makeSubjectRoleContainsAdminPredicate()),
+        PolicyCondition(makeSubjectRoleEqualsGuestPredicate())
+    });
+
+    auto opts = EvaluationOptions::production();
+    opts.short_circuit = true;
+
+    auto result = engine.evaluate(
+        condition,
+        makeSubject(),
+        makeResource(),
+        makeContext(),
+        opts
+        );
+
+    QVERIFY(result.allowed);
+    QCOMPARE(result.predicates_evaluated, std::size_t(1));
+}
+
+void TestAccessControlCore::policyEngine_anyShortCircuitOff_shouldEvaluateAllChildren()
+{
+    // OR avec short_circuit=false : on evalue tous les enfants meme
+    // si un est deja true (utile en mode debug). Compteur = 2.
+    auto registry = OperatorRegistry::create_default();
+    PolicyEngine engine(registry);
+
+    auto condition = PolicyCondition::any_of({
+        PolicyCondition(makeSubjectRoleContainsAdminPredicate()),
+        PolicyCondition(makeSubjectRoleEqualsGuestPredicate())
+    });
+
+    auto opts = EvaluationOptions::production();
+    opts.short_circuit = false;
+
+    auto result = engine.evaluate(
+        condition,
+        makeSubject(),
+        makeResource(),
+        makeContext(),
+        opts
+        );
+
+    QVERIFY(result.allowed);
+    // Les deux predicats ont ete evalues
+    QCOMPARE(result.predicates_evaluated, std::size_t(2));
+}
+
+void TestAccessControlCore::policyEngine_strictModeResolutionError_shouldSetResolutionReason()
+{
+    // En strict mode + detail_level >= WithReason, une erreur de
+    // resolution (path inexistant) doit etre catchee par
+    // evaluate_predicate et mettre reason="Resolution error: ...".
+    auto registry = OperatorRegistry::create_default();
+    PolicyEngine engine(registry);
+
+    // Predicat sur un attribut subject inexistant
+    auto predicate = PolicyPredicate::make(
+        PolicyValueRef::from_subject("attributes.nonexistent_attr"),
+        PolicyOperator::Equals,
+        PolicyValueRef::from_literal("anything")
+        );
+    PolicyCondition condition(std::move(predicate));
+
+    // EvaluationOptions strict + WithReason :
+    // - strict_mode=Strict → ValueResolver throw runtime_error
+    // - detail_level >= WithReason → result.reason est rempli
+    EvaluationOptions opts;
+    opts.strict_mode = StrictMode::Strict;
+    opts.detail_level = DetailLevel::WithReason;
+    opts.short_circuit = true;
+
+    auto result = engine.evaluate(
+        condition,
+        makeSubject(),
+        makeResource(),
+        makeContext(),
+        opts
+        );
+
+    QVERIFY(!result.allowed);
+    QVERIFY(result.reason.has_value());
+    QVERIFY(QString::fromStdString(*result.reason).contains("Resolution error"));
+}
+
+void TestAccessControlCore::policyEngine_emptyPredicateCondition_shouldDenyAndNotCount()
+{
+    // Edge case : condition de type Predicate mais sans predicate
+    // (state invalide mais constructible via PolicyCondition() default).
+    // evaluate_condition retourne false dans ce cas, sans incrementer
+    // le compteur (rien n'est evalue).
+    auto registry = OperatorRegistry::create_default();
+    PolicyEngine engine(registry);
+
+    // PolicyCondition par defaut : type=Predicate, predicate=nullopt
+    PolicyCondition condition;
+    QVERIFY(condition.is_empty());
+
+    auto result = engine.evaluate(
+        condition,
+        makeSubject(),
+        makeResource(),
+        makeContext(),
+        EvaluationOptions::production()
+        );
+
+    QVERIFY(!result.allowed);
+    QCOMPARE(result.predicates_evaluated, std::size_t(0));
+}
+
+void TestAccessControlCore::policyEngine_predicatesEvaluatedCounter_shouldAccumulateAcrossTree()
+{
+    // Sur un arbre composite imbrique evalue completement (sans
+    // short_circuit), le compteur predicates_evaluated doit refleter
+    // chaque predicat evalue (les composites comme all_of/any_of/not
+    // ne comptent PAS, seuls les Predicate feuilles incrementent).
+    //
+    // Arbre : all_of[ admin, any_of[ guest, admin ] ]
+    // Avec short_circuit=false :
+    //   - admin (1)
+    //   - any_of evalue ses 2 enfants : guest (2), admin (3)
+    // Total : 3 predicats evalues.
+    auto registry = OperatorRegistry::create_default();
+    PolicyEngine engine(registry);
+
+    auto condition = PolicyCondition::all_of({
+        PolicyCondition(makeSubjectRoleContainsAdminPredicate()),
+        PolicyCondition::any_of({
+            PolicyCondition(makeSubjectRoleEqualsGuestPredicate()),
+            PolicyCondition(makeSubjectRoleContainsAdminPredicate())
+        })
+    });
+
+    auto opts = EvaluationOptions::production();
+    opts.short_circuit = false;  // force l'evaluation complete
+
+    auto result = engine.evaluate(
+        condition,
+        makeSubject(),
+        makeResource(),
+        makeContext(),
+        opts
+        );
+
+    QVERIFY(result.allowed);
+    QCOMPARE(result.predicates_evaluated, std::size_t(3));
 }
