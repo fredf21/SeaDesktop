@@ -1715,7 +1715,6 @@ entities:
 CORS controls which external origins are allowed to call the API from a browser.
 
 ### Complete block
-
 ```yaml
 security:
   cors:
@@ -1725,8 +1724,8 @@ security:
     allowed_methods: [GET, POST, PUT, DELETE, OPTIONS]
     allowed_headers: [Content-Type, Authorization]
     allow_credentials: true
+    origin_policy: permissive
 ```
-
 ### Accepted keys
 
 | Key | Description |
@@ -1736,10 +1735,26 @@ security:
 | `allowed_methods` | List of allowed HTTP methods. |
 | `allowed_headers` | List of allowed request headers. |
 | `allow_credentials` | Allows cookies and credentials when true. |
+| `origin_policy` | How to handle requests from non-allowed origins: `permissive` (default) or `strict`. |
 
 ### Expected behavior
-
 When enabled, SeaDesktop adds the required CORS headers and handles preflight requests according to the declared configuration.
+
+### `origin_policy`: permissive vs strict
+
+Controls how the server responds when a request comes from an `Origin` that is **not** in `allowed_origins`:
+
+- **`permissive`** (default, spec-compliant): the server processes the request normally but **omits** the `Access-Control-Allow-Origin` header from the response. The browser blocks the response on the client side. Non-browser clients (server-to-server, curl, mobile apps) that ignore CORS receive the data. This is the standard CORS behavior recommended by the spec.
+
+- **`strict`**: the server **immediately refuses** the request with `403 Forbidden` and a clear error message mentioning the rejected Origin. The request never reaches the handler. This is helpful in development to make CORS misconfigurations visible server-side rather than as a silent client-side block.
+
+| Use case | Recommended policy |
+|---|---|
+| Public-facing API serving browsers + B2B backends | `permissive` |
+| Internal API with a strict list of frontend clients | `strict` |
+| Development environment | `strict` (faster diagnostic) |
+
+Note: `permissive` is the spec-conformant behavior. Choose `strict` only if you control all your clients and want explicit refusal of unknown origins.
 
 ---
 

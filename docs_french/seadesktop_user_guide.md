@@ -2108,8 +2108,8 @@ security:
     expose_headers: [X-Request-Id]
     allow_credentials: true
     max_age: 3600
+    origin_policy: permissive
 ```
-
 ### Clés acceptées
 
 | Clé | Type | Valeur par défaut | Description |
@@ -2121,12 +2121,28 @@ security:
 | `expose_headers` | liste | `[]` | En-têtes que le client peut lire dans les réponses. |
 | `allow_credentials` | booléen | `false` | Si `true`, le client peut envoyer des cookies et utiliser l'authentification. |
 | `max_age` | entier (secondes) | `3600` | Durée de mise en cache des réponses preflight `OPTIONS`. |
+| `origin_policy` | chaîne | `permissive` | Comportement face à une origine non autorisée : `permissive` ou `strict`. Voir la section ci-dessous. |
 
 ### Comportement attendu
-
 - Pour chaque requête, si CORS est activé et l'origine du client est dans `allowed_origins`, les en-têtes CORS sont ajoutés à la réponse.
 - Les requêtes preflight `OPTIONS` sont traitées automatiquement.
-- Si l'origine n'est pas autorisée, la requête est traitée normalement mais le navigateur la bloque côté client.
+- Si l'origine n'est pas autorisée, le comportement dépend de `origin_policy` (voir ci-dessous).
+
+### `origin_policy` : permissive ou strict
+
+Contrôle comment le serveur répond quand une requête provient d'un `Origin` qui n'est **pas** dans `allowed_origins` :
+
+- **`permissive`** (par défaut, conforme à la spec) : le serveur traite la requête normalement mais **n'ajoute pas** l'en-tête `Access-Control-Allow-Origin` à la réponse. Le navigateur bloque la réponse côté client. Les clients non-navigateurs (server-to-server, curl, applications mobiles) qui ignorent CORS reçoivent les données. C'est le comportement CORS standard recommandé par la spec.
+
+- **`strict`** : le serveur **refuse immédiatement** la requête avec `403 Forbidden` et un message d'erreur clair mentionnant l'origine rejetée. La requête n'atteint jamais le handler. Utile en développement pour rendre les erreurs CORS visibles côté serveur plutôt que comme un blocage silencieux côté client.
+
+| Cas d'usage | Policy recommandée |
+|---|---|
+| API publique servant à la fois navigateurs et backends B2B | `permissive` |
+| API interne avec une liste stricte de clients frontend | `strict` |
+| Environnement de développement | `strict` (diagnostic plus rapide) |
+
+Note : `permissive` est le comportement conforme à la spec. Choisir `strict` uniquement si vous contrôlez tous vos clients et voulez un refus explicite des origines inconnues.
 
 ---
 
