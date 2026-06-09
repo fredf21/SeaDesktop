@@ -3,6 +3,11 @@
 namespace sea::infrastructure::runtime {
 
 void SchemaRuntimeRegistry::register_schema(const sea::domain::Schema& schema) {
+    // Vide le contenu precedent : register_schema (au singulier)
+    // REMPLACE le schema courant, il ne fait pas un merge.
+    // Pour ajouter une entite a un registre existant sans tout
+    // remplacer, utiliser register_entity().
+    entities_.clear();
 
     for (const auto& entity : schema.entities) {
         entities_[entity.name] = entity;
