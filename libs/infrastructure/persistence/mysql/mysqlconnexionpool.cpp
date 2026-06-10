@@ -1,5 +1,6 @@
 #include "mysqlconnexionpool.h"
 #include "exception_handling.h"
+#include "spdlog/spdlog.h"
 
 #include <stdexcept>
 #include <utility>
@@ -83,15 +84,29 @@ MysqlConnexionPool::stop()
 seastar::future<sql::Connection*>
 MysqlConnexionPool::acquire()
 {
-    /**
-     * Attend qu'une connexion soit disponible.
-     *
-     * Cette attente est non bloquante pour Seastar.
-     */
     co_await _sem.wait(1);
-
     auto* conn = _available.front();
     _available.pop();
+
+    // Health check léger : si la connexion est explicitement fermée
+    // (timeout MySQL, server gone away), on la remplace avant de la
+    // rendre au caller. isClosed() est local et ne fait pas d'I/O.
+    bool closed = false;
+    try {
+        closed = conn->isClosed();
+    } catch (...) {
+        // isClosed() ne devrait pas throw, mais par sécurité.
+        closed = true;
+    }
+
+    if (closed) {
+        co_await discard_and_replace(conn);
+        // Re-acquire (on a juste signalé le sémaphore dans
+        // discard_and_replace, donc wait(1) passe immédiatement).
+        co_await _sem.wait(1);
+        conn = _available.front();
+        _available.pop();
+    }
 
     co_return conn;
 }
@@ -112,4 +127,79 @@ void MysqlConnexionPool::release(sql::Connection* conn)
     _sem.signal(1);
 }
 
+seastar::future<>
+MysqlConnexionPool::discard_and_replace(sql::Connection* conn)
+{
+    if (!conn) {
+        spdlog::get("sea.persistence")->warn(
+            "discard_and_replace called with nullptr"
+            );
+    }
+
+    // 1. Trouve l'unique_ptr proprietaire dans _connections, et
+    //    le sort du vector.
+    std::unique_ptr<sql::Connection> dead;
+    if (conn) {
+        for (auto it = _connections.begin();
+             it != _connections.end(); ++it)
+        {
+            if (it->get() == conn) {
+                dead = std::move(*it);
+                _connections.erase(it);
+                break;
+            }
+        }
+        if (!dead) {
+            spdlog::get("sea.persistence")->warn(
+                "discard_and_replace: connection not found in pool"
+                );
+        }
+    }
+
+    // 2. Volontairement, on NE detruit PAS la connexion morte.
+    //
+    // Raison : libmysqlclient 21 crash (SEGFAULT dans son cleanup
+    // interne) quand on detruit une connexion qui a recu une
+    // "Lost connection to MySQL server during query" cote client.
+    // Le destructeur ~MySQL_Connection essaie de close() proprement
+    // mais le state interne est corrompu → crash.
+    //
+    // On accepte le leak (~quelques KB par connexion morte) pour
+    // garder le serveur stable. En pratique, ca n'arrive que sous
+    // saturation MySQL ou si le serveur est tue, donc le volume
+    // reste limite.
+    //
+    // Le unique_ptr `dead` sort de scope ici sans appeler delete
+    // sur son contenu : on lui retire la propriete via .release().
+    if (dead) {
+        sql::Connection* leaked = dead.release();
+        (void)leaked;  // intentionnellement non delete
+        spdlog::get("sea.persistence")->warn(
+            "Leaking dead MySQL connection to avoid libmysqlclient crash"
+            );
+    }
+
+    // 3. Cree la nouvelle connexion hors reactor. La lambda ne
+    //    capture que `this` (copiable), et retourne le unique_ptr
+    //    par valeur (move-return : pas de souci de copiabilite
+    //    sur le RETOUR, seulement sur la capture).
+    std::unique_ptr<sql::Connection> fresh =
+        co_await _executor->submit(
+            [this]() {
+                return _connector.createConnection();
+            }
+            );
+
+    // 4. Enregistre la nouvelle et signale.
+    auto* raw_fresh = fresh.get();
+    _connections.push_back(std::move(fresh));
+    _available.push(raw_fresh);
+    _sem.signal(1);
+
+    spdlog::get("sea.persistence")->debug(
+        "Connection replaced (pool size: {})", _connections.size()
+        );
+
+    co_return;
+}
 } // namespace sea::infrastructure::persistence::mysql

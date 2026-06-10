@@ -451,7 +451,7 @@ int main(int argc, char** argv)
                 static_cast<unsigned int>(service.database_config.port)
                 );
 
-            constexpr std::size_t pool_size = 2;
+            constexpr std::size_t pool_size = 16;
 
             co_await mysql_pool->start(std::move(connector), pool_size, blocking_executor);
 

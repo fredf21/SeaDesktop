@@ -61,6 +61,16 @@ public:
     void release(sql::Connection* conn);
 
     /**
+    * Jette une connexion morte/cassée et la remplace par une fraîche
+    * avant de signaler le sémaphore. À utiliser quand on a détecté
+    * qu'une connexion ne peut plus servir (Lost connection MySQL,
+    * server gone away, isClosed() après une exception, etc.).
+    *
+    * Garantit que la taille effective du pool reste constante.
+    */
+    seastar::future<> discard_and_replace(sql::Connection* conn);
+
+    /**
      * Helper optionnel pour exécuter une opération MySQL avec une connexion.
      *
      * La fonction fournie est exécutée dans le blocking executor.
