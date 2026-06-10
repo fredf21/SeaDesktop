@@ -150,9 +150,14 @@ class SeaDesktopUser(HttpUser):
         """GET /teams/{id} — read individuel."""
         team_id = pool.random_team()
         if team_id:
-            self.client.get(f"/teams/{team_id}",
-                            headers=self._auth_headers(),
-                            name="/teams/[id]")
+            with self.client.get(
+                f"/teams/{team_id}",
+                headers=self._auth_headers(),
+                name="/teams/[id]",
+                catch_response=True
+            ) as resp:
+                if resp.status_code in (200, 404):
+                    resp.success()
     
     @task(15)
     def list_projects(self):
@@ -200,13 +205,16 @@ class SeaDesktopUser(HttpUser):
         """PUT /teams/{id} — update."""
         team_id = pool.random_team()
         if team_id:
-            self.client.put(
+            with self.client.put(
                 f"/teams/{team_id}",
                 headers=self._auth_headers(),
                 json={"name": f"UpdatedTeam-{uuid.uuid4().hex[:6]}",
                       "description": "Updated description"},
-                name="/teams/[id] [update]"
-            )
+                name="/teams/[id] [update]",
+                catch_response=True
+            ) as resp:
+                if resp.status_code in (200, 404):
+                    resp.success()
     
     # ─── 5% deletes ───────────────────────────────────────────
     
@@ -216,12 +224,14 @@ class SeaDesktopUser(HttpUser):
         pas trop reduire le pool de teams)."""
         project_id = pool.random_project()
         if project_id:
-            self.client.delete(
+            with self.client.delete(
                 f"/projects/{project_id}",
                 headers=self._auth_headers(),
-                name="/projects/[id] [delete]"
-            )
-    
+                name="/projects/[id] [delete]",
+                catch_response=True
+            ) as resp:
+                if resp.status_code in (200, 204, 404):
+                    resp.success()
     # ─── 5% auth ──────────────────────────────────────────────
     
     @task(5)
