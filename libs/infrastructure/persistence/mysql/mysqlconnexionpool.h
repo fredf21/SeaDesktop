@@ -23,6 +23,7 @@ namespace sea::infrastructure::persistence::mysql {
  * MySQL Connector/C++ est bloquant.
  * Donc la création de connexions et l'exécution de requêtes SQL
  * doivent passer par IBlockingExecutor.
+ * Actuellement un soucis d asynchronisme avec MYSQL due a cppconn a gerer apres
  */
 class MysqlConnexionPool
 {
