@@ -1,0 +1,122 @@
+project:
+  name: SeaDesktopLoadTest
+
+services:
+  - name: LoadTestApi
+    port: 8080
+
+    database:
+      type: mysql
+      host: 127.0.0.1
+      port: 13306
+      database_name: load_test_db
+      username: root
+      password: itest_root_pwd
+      migrations:
+        enabled: true
+        mode: aggressive
+        create_database_if_missing: true
+
+    storage:
+      backend: filesystem
+      root_path: ./load_test_storage
+      file_mode: "0640"
+      directory_mode: "0750"
+
+    security:
+      authentication:
+        type: jwt
+        algorithm: HS256
+        secret: ${SEA_DESKTOP_JWT_SECRET}
+        access_token_ttl: 15m
+        refresh_token_ttl: 7d
+        token_delivery: body
+
+      http_limits:
+        max_body_size: 10MB
+        max_header_size: 8KB
+        max_headers_count: 50
+        max_url_length: 8192
+        request_timeout: 60s
+        keepalive_timeout: 60s
+        max_connections_per_ip: 100
+
+      headers:
+        preset: recommended
+
+      cors:
+        enabled: true
+        allowed_origins: ["*"]
+        allowed_methods: [GET, POST, PUT, DELETE, OPTIONS]
+        allowed_headers: [Content-Type, Authorization]
+        allow_credentials: false
+        origin_policy: permissive
+
+    logging:
+      enabled: true
+      level: info
+      modules:
+        sea.persistence: debug
+      sinks:
+        - type: console
+          format: text
+          enabled: true
+
+    entities:
+      - name: User
+        options:
+          is_auth_source: true
+        fields:
+          - name: id
+            type: uuid
+            required: true
+            unique: true
+          - name: email
+            type: email
+            required: true
+            unique: true
+          - name: password
+            type: password
+            required: true
+          - name: full_name
+            type: string
+            required: false
+          - name: role
+            type: string
+            required: false
+
+      - name: Team
+        fields:
+          - name: id
+            type: uuid
+            required: true
+            unique: true
+          - name: name
+            type: string
+            required: true
+          - name: description
+            type: string
+            required: false
+
+      - name: Project
+        fields:
+          - name: id
+            type: uuid
+            required: true
+            unique: true
+          - name: name
+            type: string
+            required: true
+          - name: team_id
+            type: uuid
+            required: false
+
+      - name: Tag
+        fields:
+          - name: id
+            type: uuid
+            required: true
+            unique: true
+          - name: label
+            type: string
+            required: true
