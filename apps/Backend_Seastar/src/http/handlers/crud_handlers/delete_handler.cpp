@@ -1,6 +1,7 @@
 #include "delete_handler.h"
 #include "../access_control/resource_authorization_helper.h"
 #include "../../utils/http_utils.h"
+#include "../../errors/error_response_factory.h"
 
 #include "access_control/crud_operation.h"
 #include "http/handlers/file_handlers/file_upload_extractor.h"
@@ -23,6 +24,8 @@
 namespace sea::http::handlers::crud {
 
 using json = nlohmann::json;
+namespace errors = sea::http::errors;
+using Status = seastar::http::reply::status_type;
 
 DeleteHandler::DeleteHandler(
     std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
@@ -87,10 +90,8 @@ DeleteHandler::handle(const seastar::sstring&,
 {
     const auto id = std::string(sea::http::utils::strip_leading_slash(req->get_path_param("id")));
     if (id.empty()) {
-        rep->set_status(seastar::http::reply::status_type::bad_request);
-        rep->write_body("application/json",
-                        json{{"error", "Parametre 'id' manquant."}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::bad_request, "BAD_REQUEST", "Parametre 'id' manquant.");
     }
 
     try {
@@ -119,10 +120,9 @@ DeleteHandler::handle(const seastar::sstring&,
                 entity_name_, std::string(id));
 
             if (!existing_record.has_value()) {
-                rep->set_status(seastar::http::reply::status_type::not_found);
-                rep->write_body("application/json",
-                                json{{"error", "Enregistrement introuvable."}}.dump());
-                co_return std::move(rep);
+                co_return errors::make_error_reply(
+                    Status::not_found, "NOT_FOUND",
+                    "Enregistrement introuvable.");
             }
         }
 
@@ -143,11 +143,11 @@ DeleteHandler::handle(const seastar::sstring&,
                 );
 
             if (!check.allowed) {
-                rep->set_status(seastar::http::reply::status_type::forbidden);
-                rep->write_body("application/json",
-                                json{{"error", "Forbidden"},
-                                     {"message", check.reason}}.dump());
-                co_return std::move(rep);
+                co_return errors::make_error_reply(
+                    Status::forbidden, "AUTHORIZATION_ERROR",
+                    check.reason.empty()
+                        ? "Acces refuse."
+                        : check.reason);
             }
         }
 
@@ -166,18 +166,12 @@ DeleteHandler::handle(const seastar::sstring&,
             // (via PUT/PATCH) avant de pouvoir supprimer l'entité.
             for (const auto& af : attached_files) {
                 if (af.rule == sea::domain::OnDeleteFile::Restrict) {
-                    rep->set_status(seastar::http::reply::status_type::conflict);
-                    rep->write_body(
-                        "application/json",
-                        json{
-                            {"error", "Conflict"},
-                            {"message",
-                             "L'entite '" + entity_name_ +
-                                 "' ne peut pas etre supprimee : le champ file '" +
-                                 af.field_name + "' a une regle on_delete=restrict. "
-                                                 "Detacher/remplacer le fichier avant suppression."}
-                        }.dump());
-                    co_return std::move(rep);
+                    co_return errors::make_error_reply(
+                        Status::conflict, "CONFLICT",
+                        "L'entite '" + entity_name_ +
+                            "' ne peut pas etre supprimee : le champ file '" +
+                            af.field_name + "' a une regle on_delete=restrict. "
+                                            "Detacher/remplacer le fichier avant suppression.");
                 }
             }
         }
@@ -190,13 +184,12 @@ DeleteHandler::handle(const seastar::sstring&,
         // que l'entité soit bien supprimée et que les éventuels fichiers
         // orphelins soient récupérés par release_orphans offline si
         // jamais le release échoue.
-        std::vector<std::string> remove_errors;  // ← déclaré ICI
-        bool restrict_violation = false;          // ← idem
+        std::vector<std::string> remove_errors;
+        bool restrict_violation = false;
         bool deleted = false;
         if (file_extractor_ != nullptr && entity_has_files) {
             // Avec gestion files : utilise une transaction explicite
             // pour wrap le DELETE (cohérence avec Create/Update).
-
 
             auto tx = co_await crud_engine_->get_repository()->in_transaction(
                 [this, id_str = std::string(id), &deleted, &remove_errors,
@@ -210,33 +203,38 @@ DeleteHandler::handle(const seastar::sstring&,
                 });
 
             if (!tx.committed) {
-                rep->set_status(seastar::http::reply::status_type::internal_server_error);
-                rep->write_body("application/json",
-                                json{{"error", "Transaction DELETE echouee."}}.dump());
-                co_return std::move(rep);
+                // Logue pour investigation : cas suspect.
+                spdlog::get("sea.http")->error(
+                    "DeleteHandler: transaction DELETE echouee "
+                    "(entity={}, id={})", entity_name_, id);
+                co_return errors::make_internal_error_reply();
             }
         } else {
             // Mode legacy : pas de tx explicite, comportement d'origine.
             const auto remove_result = co_await crud_engine_->remove(entity_name_, std::string(id));
             deleted = remove_result.success;
             remove_errors = remove_result.errors;
-            restrict_violation = remove_result.restrict_violation; // ← nouveau, à déclarer en dehors
+            restrict_violation = remove_result.restrict_violation;
         }
         if (!deleted) {
             if (restrict_violation) {
-                rep->set_status(seastar::http::reply::status_type::conflict);
-                nlohmann::json body = {
-                    {"error", "Conflict"},
-                    {"message", "Suppression refusée : entité référencée"},
-                    {"details", remove_errors}
-                };
-                rep->write_body("application/json", body.dump());
-            } else {
-                rep->set_status(seastar::http::reply::status_type::not_found);
-                rep->write_body("application/json",
-                                json{{"error", "Enregistrement introuvable."}}.dump());
+                // Conflit referentiel : entite reference ailleurs.
+                std::string detail = "Suppression refusee : entite referencee";
+                if (!remove_errors.empty()) {
+                    detail += " (";
+                    for (std::size_t i = 0; i < remove_errors.size(); ++i) {
+                        if (i != 0) detail += "; ";
+                        detail += remove_errors[i];
+                    }
+                    detail += ")";
+                }
+                co_return errors::make_error_reply(
+                    Status::conflict, "CONFLICT", detail);
             }
-            co_return std::move(rep);
+            // Pas trouve : 404.
+            co_return errors::make_error_reply(
+                Status::not_found, "NOT_FOUND",
+                "Enregistrement introuvable.");
         }
 
         // ─── Release des UUIDs (Cascade/SetNull, best-effort) ─
@@ -261,14 +259,21 @@ DeleteHandler::handle(const seastar::sstring&,
             }
         }
 
-        rep->set_status(seastar::http::reply::status_type::ok);
+        rep->set_status(Status::ok);
         rep->write_body("application/json", json{{"message", "Deleted"}}.dump());
         co_return std::move(rep);
 
+    } catch (const errors::HttpException& e) {
+        // Erreur metier deja typee : on respecte son statut.
+        co_return errors::make_error_reply(e);
     } catch (const std::exception& e) {
-        rep->set_status(seastar::http::reply::status_type::internal_server_error);
-        rep->write_body("application/json", json{{"error", e.what()}}.dump());
-        co_return std::move(rep);
+        // Erreur generique non typee : on logue et on retourne 500.
+        // (Choix different de create/update qui retournent 400 : ici
+        //  c'est typiquement une erreur de persistance, pas de payload.)
+        spdlog::get("sea.http")->error(
+            "DeleteHandler: unhandled exception (entity={}, id={}): {}",
+            entity_name_, id, e.what());
+        co_return errors::make_internal_error_reply();
     }
 }
 
