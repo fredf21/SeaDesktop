@@ -1,5 +1,6 @@
 #include "register_handler.h"
 #include "../../utils/http_utils.h"
+#include "../../errors/error_response_factory.h"
 
 #include "authservice.h"
 #include "database_config.h"
@@ -14,6 +15,8 @@
 namespace sea::http::handlers::auth {
 
 using json = nlohmann::json;
+namespace errors = sea::http::errors;
+using Status = seastar::http::reply::status_type;
 
 RegisterHandler::RegisterHandler(
     std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
@@ -47,10 +50,9 @@ RegisterHandler::handle(const seastar::sstring&,
     const auto* entity = registry_->find_entity("User");
 
     if (entity == nullptr) {
-        rep->set_status(seastar::http::reply::status_type::not_found);
-        rep->write_body("application/json",
-                        json{{"error", "Entite User introuvable."}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::not_found, "NOT_FOUND",
+            "Entite User introuvable.");
     }
 
     try {
@@ -65,20 +67,18 @@ RegisterHandler::handle(const seastar::sstring&,
         // Validation email
         const auto email_it = record.find("email");
         if (email_it == record.end()) {
-            rep->set_status(seastar::http::reply::status_type::bad_request);
-            rep->write_body("application/json",
-                            json{{"error", "Champ email manquant."}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::bad_request, "VALIDATION_ERROR",
+                "Champ email manquant.");
         }
 
         const auto email =
             sea::http::utils::dynamic_value_to_string(email_it->second);
 
         if (!email.has_value()) {
-            rep->set_status(seastar::http::reply::status_type::bad_request);
-            rep->write_body("application/json",
-                            json{{"error", "Email invalide."}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::bad_request, "VALIDATION_ERROR",
+                "Email invalide.");
         }
 
         // Vérifie unicité email
@@ -86,29 +86,26 @@ RegisterHandler::handle(const seastar::sstring&,
             co_await crud_engine_->find_one_by_field("User", "email", *email);
 
         if (existing_user.has_value()) {
-            rep->set_status(seastar::http::reply::status_type::conflict);
-            rep->write_body("application/json",
-                            json{{"error", "Cet email existe deja."}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::conflict, "CONFLICT",
+                "Cet email existe deja.");
         }
 
         // Validation password
         const auto password_it = record.find("password");
         if (password_it == record.end()) {
-            rep->set_status(seastar::http::reply::status_type::bad_request);
-            rep->write_body("application/json",
-                            json{{"error", "Champ password manquant."}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::bad_request, "VALIDATION_ERROR",
+                "Champ password manquant.");
         }
 
         const auto plain_password =
             sea::http::utils::dynamic_value_to_string(password_it->second);
 
         if (!plain_password.has_value()) {
-            rep->set_status(seastar::http::reply::status_type::bad_request);
-            rep->write_body("application/json",
-                            json{{"error", "Password invalide."}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::bad_request, "VALIDATION_ERROR",
+                "Password invalide.");
         }
 
         /**
@@ -177,17 +174,26 @@ RegisterHandler::handle(const seastar::sstring&,
             }
         }
 
-
-
         // Création utilisateur
         const auto result =
             co_await crud_engine_->create("User", std::move(record));
 
         if (!result.success || !result.record.has_value()) {
-            rep->set_status(seastar::http::reply::status_type::bad_request);
-            rep->write_body("application/json",
-                            json{{"error", "Impossible de creer l'utilisateur."}}.dump());
-            co_return std::move(rep);
+            // Concatene les erreurs metier si presentes.
+            if (!result.errors.empty()) {
+                std::string combined;
+                for (std::size_t i = 0; i < result.errors.size(); ++i) {
+                    if (i != 0) combined += "; ";
+                    combined += result.errors[i];
+                }
+                co_return errors::make_error_reply(
+                    Status::bad_request, "VALIDATION_ERROR", combined);
+            }
+            // Echec sans message d'erreur explicite : cas suspect.
+            spdlog::get("sea.http")->error(
+                "RegisterHandler: create('User') failed sans message d'erreur "
+                "(email='{}')", *email);
+            co_return errors::make_internal_error_reply();
         }
 
         // Nettoyage réponse
@@ -196,16 +202,21 @@ RegisterHandler::handle(const seastar::sstring&,
 
         user_json.erase("password");
 
-        rep->set_status(seastar::http::reply::status_type::created);
+        rep->set_status(Status::created);
         rep->write_body("application/json", user_json.dump());
 
         co_return std::move(rep);
 
+    } catch (const errors::HttpException& e) {
+        // Erreur metier deja typee : on respecte son statut.
+        co_return errors::make_error_reply(e);
     } catch (const std::exception& e) {
-        rep->set_status(seastar::http::reply::status_type::bad_request);
-        rep->write_body("application/json",
-                        json{{"error", std::string("Erreur register: ") + e.what()}}.dump());
-        co_return std::move(rep);
+        // Erreur generique : probable JSON malforme ou parsing.
+        spdlog::get("sea.http")->warn(
+            "RegisterHandler: unhandled exception: {}", e.what());
+        co_return errors::make_error_reply(
+            Status::bad_request, "BAD_REQUEST",
+            std::string("Erreur register: ") + e.what());
     }
 }
 
