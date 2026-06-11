@@ -1,6 +1,7 @@
 #include "create_handler.h"
 #include "../access_control/resource_authorization_helper.h"
 #include "../../utils/http_utils.h"
+#include "../../errors/error_response_factory.h"
 
 #include "authservice.h"
 #include "access_control/crud_operation.h"
@@ -12,12 +13,13 @@
 #include <nlohmann/json.hpp>
 #include <seastar/core/thread.hh>
 #include <spdlog/spdlog.h>
-#include <sstream>
 #include <utility>
 
 namespace sea::http::handlers::crud {
 
 using json = nlohmann::json;
+namespace errors = sea::http::errors;
+using Status = seastar::http::reply::status_type;
 
 CreateHandler::CreateHandler(
     std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
@@ -46,9 +48,8 @@ CreateHandler::handle(const seastar::sstring&,
 {
     const auto* entity = registry_->find_entity(entity_name_);
     if (entity == nullptr) {
-        rep->set_status(seastar::http::reply::status_type::not_found);
-        rep->write_body("application/json", json{{"error", "Entite inconnue."}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::not_found, "NOT_FOUND", "Entite inconnue.");
     }
 
     // ─────────────────────────────────────────────────────────
@@ -87,19 +88,17 @@ CreateHandler::handle(const seastar::sstring&,
                 std::string_view(content_type_h.data(), content_type_h.size()));
 
             if (!boundary.has_value()) {
-                rep->set_status(seastar::http::reply::status_type::bad_request);
-                rep->write_body("application/json",
-                                json{{"error", "Content-Type multipart sans boundary."}}.dump());
-                co_return std::move(rep);
+                co_return errors::make_error_reply(
+                    Status::bad_request, "BAD_REQUEST",
+                    "Content-Type multipart sans boundary.");
             }
 
             try {
                 parsed_multipart = sea::http::utils::multipart::parse(body, *boundary);
             } catch (const std::exception& e) {
-                rep->set_status(seastar::http::reply::status_type::bad_request);
-                rep->write_body("application/json",
-                                json{{"error", std::string("Multipart invalide: ") + e.what()}}.dump());
-                co_return std::move(rep);
+                co_return errors::make_error_reply(
+                    Status::bad_request, "BAD_REQUEST",
+                    std::string("Multipart invalide: ") + e.what());
             }
 
             // Construit un JSON équivalent depuis les text parts pour
@@ -112,10 +111,9 @@ CreateHandler::handle(const seastar::sstring&,
             try {
                 record = parser.parse(*entity, json_from_text_parts.dump());
             } catch (const std::exception& e) {
-                rep->set_status(seastar::http::reply::status_type::bad_request);
-                rep->write_body("application/json",
-                                json{{"error", std::string("Champs texte invalides: ") + e.what()}}.dump());
-                co_return std::move(rep);
+                co_return errors::make_error_reply(
+                    Status::bad_request, "VALIDATION_ERROR",
+                    std::string("Champs texte invalides: ") + e.what());
             }
         } else {
             // Mode JSON classique
@@ -129,9 +127,9 @@ CreateHandler::handle(const seastar::sstring&,
         if (password_it != record.end()) {
             const auto plain_password = sea::http::utils::dynamic_value_to_string(password_it->second);
             if (!plain_password.has_value()) {
-                rep->set_status(seastar::http::reply::status_type::bad_request);
-                rep->write_body("application/json", json{{"error", "Password invalide."}}.dump());
-                co_return std::move(rep);
+                co_return errors::make_error_reply(
+                    Status::bad_request, "VALIDATION_ERROR",
+                    "Password invalide.");
             }
 
             const auto hashed_password =
@@ -181,13 +179,11 @@ CreateHandler::handle(const seastar::sstring&,
                 );
 
             if (!check.allowed) {
-                rep->set_status(seastar::http::reply::status_type::forbidden);
-                rep->write_body("application/json",
-                                json{
-                                    {"error", "Forbidden"},
-                                    {"message", check.reason}
-                                }.dump());
-                co_return std::move(rep);
+                co_return errors::make_error_reply(
+                    Status::forbidden, "AUTHORIZATION_ERROR",
+                    check.reason.empty()
+                        ? "Acces refuse."
+                        : check.reason);
             }
         }
 
@@ -296,31 +292,42 @@ CreateHandler::handle(const seastar::sstring&,
 
             // Construit la réponse d'erreur
             if (!op_result.success && !op_result.errors.empty()) {
-                std::ostringstream oss;
-                oss << "{ \"errors\": [";
+                // Concatene les erreurs metier en un message unique.
+                std::string combined;
                 for (std::size_t i = 0; i < op_result.errors.size(); ++i) {
-                    if (i != 0) oss << ",";
-                    oss << "\"" << sea::http::utils::json_escape(op_result.errors[i]) << "\"";
+                    if (i != 0) combined += "; ";
+                    combined += op_result.errors[i];
                 }
-                oss << "] }";
-                rep->set_status(seastar::http::reply::status_type::bad_request);
-                rep->write_body("application/json", oss.str());
-            } else {
-                rep->set_status(seastar::http::reply::status_type::internal_server_error);
-                rep->write_body("application/json",
-                                json{{"error", "Transaction echouee."}}.dump());
+                co_return errors::make_error_reply(
+                    Status::bad_request, "VALIDATION_ERROR", combined);
             }
-            co_return std::move(rep);
+
+            // Echec sans erreur metier explicite : interne.
+            // Logue pour investigation - cas suspect, ne devrait pas arriver.
+            spdlog::get("sea.http")->error(
+                "CreateHandler: transaction echouee sans message d'erreur (entity={})",
+                entity_name_);
+            co_return errors::make_internal_error_reply();
         }
 
-        rep->set_status(seastar::http::reply::status_type::created);
-        rep->write_body("application/json", sea::http::utils::record_to_json(*op_result.record));
+        rep->set_status(Status::created);
+        rep->write_body("application/json",
+                        sea::http::utils::record_to_json(*op_result.record));
         co_return std::move(rep);
 
+    } catch (const errors::HttpException& e) {
+        // Erreur metier deja typee : on respecte son statut.
+        co_return errors::make_error_reply(e);
     } catch (const std::exception& e) {
-        rep->set_status(seastar::http::reply::status_type::bad_request);
-        rep->write_body("application/json", json{{"error", std::string("Erreur: ") + e.what()}}.dump());
-        co_return std::move(rep);
+        // Erreur generique : on logue et on retourne 400 (probablement
+        // une erreur de parsing ou de format). Si c'est en fait une
+        // erreur interne, le code en amont devrait throw
+        // InternalServerException explicitement.
+        spdlog::get("sea.http")->warn(
+            "CreateHandler: unhandled exception: {}", e.what());
+        co_return errors::make_error_reply(
+            Status::bad_request, "BAD_REQUEST",
+            std::string("Erreur: ") + e.what());
     }
 }
 
