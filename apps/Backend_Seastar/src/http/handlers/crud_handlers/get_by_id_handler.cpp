@@ -1,6 +1,7 @@
 #include "get_by_id_handler.h"
 #include "../access_control/resource_authorization_helper.h"
 #include "../../utils/http_utils.h"
+#include "../../errors/error_response_factory.h"
 
 #include "access_control/crud_operation.h"
 #include "runtime/generic_crud_engine.h"
@@ -11,6 +12,8 @@
 namespace sea::http::handlers::crud {
 
 using json = nlohmann::json;
+namespace errors = sea::http::errors;
+using Status = seastar::http::reply::status_type;
 
 GetByIdHandler::GetByIdHandler(
     std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
@@ -29,16 +32,14 @@ GetByIdHandler::handle(const seastar::sstring&,
 {
     const auto id = std::string(sea::http::utils::strip_leading_slash(req->get_path_param("id")));
     if (id.empty()) {
-        rep->set_status(seastar::http::reply::status_type::bad_request);
-        rep->write_body("application/json", json{{"error", "Parametre 'id' manquant."}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::bad_request, "BAD_REQUEST", "Parametre 'id' manquant.");
     }
 
     const auto record = co_await crud_engine_->get_by_id(entity_name_, std::string(id));
     if (!record.has_value()) {
-        rep->set_status(seastar::http::reply::status_type::not_found);
-        rep->write_body("application/json", json{{"error", "Enregistrement introuvable."}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::not_found, "NOT_FOUND", "Enregistrement introuvable.");
     }
 
     const std::string record_json = sea::http::utils::record_to_json(*record);
@@ -61,17 +62,15 @@ GetByIdHandler::handle(const seastar::sstring&,
             );
 
         if (!check.allowed) {
-            rep->set_status(seastar::http::reply::status_type::forbidden);
-            rep->write_body("application/json",
-                            json{
-                                {"error", "Forbidden"},
-                                {"message", check.reason}
-                            }.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::forbidden, "AUTHORIZATION_ERROR",
+                check.reason.empty()
+                    ? "Acces refuse."
+                    : check.reason);
         }
     }
 
-    rep->set_status(seastar::http::reply::status_type::ok);
+    rep->set_status(Status::ok);
     rep->write_body("application/json", record_json);
     co_return std::move(rep);
 }
