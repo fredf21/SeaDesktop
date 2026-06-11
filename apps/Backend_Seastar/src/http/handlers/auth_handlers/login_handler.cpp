@@ -1,6 +1,7 @@
 #include "login_handler.h"
 #include "../../utils/http_utils.h"
 #include "../../utils/cookie_helper.h"
+#include "../../errors/error_response_factory.h"
 
 #include "authservice.h"
 #include "token_tracking_service.h"
@@ -8,12 +9,15 @@
 #include "security/jwt_service.h"
 
 #include <nlohmann/json.hpp>
+#include <spdlog/spdlog.h>
 #include <set>
 #include <utility>
 
 namespace sea::http::handlers::auth {
 
 using json = nlohmann::json;
+namespace errors = sea::http::errors;
+using Status = seastar::http::reply::status_type;
 
 LoginHandler::LoginHandler(
     std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
@@ -64,10 +68,9 @@ LoginHandler::handle(const seastar::sstring&,
         const auto body = json::parse(reqbody);
 
         if (!body.contains("email") || !body.contains("password")) {
-            rep->set_status(seastar::http::reply::status_type::bad_request);
-            rep->write_body("application/json",
-                            json{{"error", "email et password sont requis"}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::bad_request, "BAD_REQUEST",
+                "email et password sont requis.");
         }
 
         const std::string email    = body["email"].get<std::string>();
@@ -78,29 +81,26 @@ LoginHandler::handle(const seastar::sstring&,
             co_await crud_engine_->find_one_by_field("User", "email", email);
 
         if (!user_record.has_value()) {
-            rep->set_status(seastar::http::reply::status_type::unauthorized);
-            rep->write_body("application/json",
-                            json{{"error", "Identifiants invalides"}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::unauthorized, "AUTHENTICATION_ERROR",
+                "Identifiants invalides.");
         }
 
         // Recuperation hash password
         const auto pwd_it = user_record->find("password");
         if (pwd_it == user_record->end()) {
-            rep->set_status(seastar::http::reply::status_type::unauthorized);
-            rep->write_body("application/json",
-                            json{{"error", "Identifiants invalides"}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::unauthorized, "AUTHENTICATION_ERROR",
+                "Identifiants invalides.");
         }
 
         const auto stored_hash =
             sea::http::utils::dynamic_value_to_string(pwd_it->second);
 
         if (!stored_hash.has_value() || stored_hash->empty()) {
-            rep->set_status(seastar::http::reply::status_type::unauthorized);
-            rep->write_body("application/json",
-                            json{{"error", "Identifiants invalides"}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::unauthorized, "AUTHENTICATION_ERROR",
+                "Identifiants invalides.");
         }
 
         // ─── 3. Verification password (hors reactor) ────────────
@@ -114,29 +114,32 @@ LoginHandler::handle(const seastar::sstring&,
                 );
 
         if (!password_ok) {
-            rep->set_status(seastar::http::reply::status_type::unauthorized);
-            rep->write_body("application/json",
-                            json{{"error", "Identifiants invalides"}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::unauthorized, "AUTHENTICATION_ERROR",
+                "Identifiants invalides.");
         }
 
         // ─── 4. Extraction user_id, role ────────────────────────
         const auto id_it = user_record->find("id");
         if (id_it == user_record->end()) {
-            rep->set_status(seastar::http::reply::status_type::internal_server_error);
-            rep->write_body("application/json",
-                            json{{"error", "Utilisateur sans id"}}.dump());
-            co_return std::move(rep);
+            // Cas suspect : un User en base sans id, ne devrait pas
+            // arriver. On logue pour investigation et retourne 500
+            // generique (ne pas exposer ce detail interne au client).
+            spdlog::get("sea.http")->error(
+                "LoginHandler: user found by email='{}' has no id field",
+                email);
+            co_return errors::make_internal_error_reply();
         }
 
         const auto user_id =
             sea::http::utils::dynamic_value_to_string_id(id_it->second);
 
         if (!user_id.has_value()) {
-            rep->set_status(seastar::http::reply::status_type::internal_server_error);
-            rep->write_body("application/json",
-                            json{{"error", "ID utilisateur invalide"}}.dump());
-            co_return std::move(rep);
+            // Pareil : id present mais inconvertible. Cas suspect.
+            spdlog::get("sea.http")->error(
+                "LoginHandler: user (email='{}') has invalid id type",
+                email);
+            co_return errors::make_internal_error_reply();
         }
 
         std::string role = "user";
@@ -261,16 +264,26 @@ LoginHandler::handle(const seastar::sstring&,
             rep->add_header("Set-Cookie", refresh_cookie);
         }
 
-        rep->set_status(seastar::http::reply::status_type::ok);
+        rep->set_status(Status::ok);
         rep->write_body("application/json", response_body.dump());
 
         co_return std::move(rep);
 
+    } catch (const errors::HttpException& e) {
+        // Erreur metier deja typee : on respecte son statut.
+        co_return errors::make_error_reply(e);
+    } catch (const std::exception& e) {
+        // Erreur generique : probable JSON malforme ou champ manquant.
+        // 400 avec message generique (ne pas exposer de details).
+        spdlog::get("sea.http")->warn(
+            "LoginHandler: unhandled exception: {}", e.what());
+        co_return errors::make_error_reply(
+            Status::bad_request, "BAD_REQUEST",
+            "Requete invalide.");
     } catch (...) {
-        rep->set_status(seastar::http::reply::status_type::bad_request);
-        rep->write_body("application/json",
-                        json{{"error", "Requete invalide"}}.dump());
-        co_return std::move(rep);
+        // Catch-all final : rien ne doit echapper.
+        spdlog::get("sea.http")->error("LoginHandler: unknown exception");
+        co_return errors::make_internal_error_reply();
     }
 }
 
