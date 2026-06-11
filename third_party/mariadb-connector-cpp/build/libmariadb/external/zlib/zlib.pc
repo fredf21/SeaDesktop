@@ -1,0 +1,13 @@
+prefix=/home/frederic/QtProjects/SeaDesktop/third_party/mariadb-connector-cpp/install
+exec_prefix=/home/frederic/QtProjects/SeaDesktop/third_party/mariadb-connector-cpp/install
+libdir=/home/frederic/QtProjects/SeaDesktop/third_party/mariadb-connector-cpp/install/lib
+sharedlibdir=/home/frederic/QtProjects/SeaDesktop/third_party/mariadb-connector-cpp/install/lib
+includedir=/home/frederic/QtProjects/SeaDesktop/third_party/mariadb-connector-cpp/install/include
+
+Name: zlib
+Description: zlib compression library
+Version: 1.3.1
+
+Requires:
+Libs: -L${libdir} -L${sharedlibdir} -lz
+Cflags: -I${includedir}

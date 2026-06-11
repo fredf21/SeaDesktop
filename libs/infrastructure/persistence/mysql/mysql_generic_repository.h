@@ -3,7 +3,6 @@
 #include <persistence/i_generic_repository.h>
 #include "runtime/schema_runtime_registry.h"
 #include <memory>
-#include <cppconn/prepared_statement.h>
 #include <seastar/core/future.hh>
 #include <seastar/core/semaphore.hh>
 #include <seastar/core/sharded.hh>

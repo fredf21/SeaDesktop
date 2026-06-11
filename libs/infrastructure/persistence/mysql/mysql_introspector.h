@@ -3,7 +3,6 @@
 #include "thread_pool_execution/i_blocking_executor.h"
 #include "mysqlconnexionpool.h"
 
-#include <cppconn/connection.h>
 
 #include <memory>
 #include <optional>

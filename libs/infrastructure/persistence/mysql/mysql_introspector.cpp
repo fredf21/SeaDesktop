@@ -1,10 +1,6 @@
 #include "mysql_introspector.h"
 #include "spdlog/spdlog.h"
 
-#include <cppconn/exception.h>
-#include <cppconn/prepared_statement.h>
-#include <cppconn/resultset.h>
-#include <cppconn/statement.h>
 
 #include <seastar/core/coroutine.hh>
 
@@ -80,7 +76,7 @@ MysqlIntrospector::database_exists(const std::string& database_name)
                     return rs->getInt(1) > 0;
                 }
                 return false;
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 spdlog::get("sea.persistence")->error(
                     "INTROSPECT database_exists error: {}", e.what()
                     );
@@ -111,7 +107,7 @@ MysqlIntrospector::list_tables()
                 while (rs->next()) {
                     tables.push_back(std::string(rs->getString(1)));
                 }
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 spdlog::get("sea.persistence")->error(
                     "INTROSPECT list_tables error: {}", e.what()
                     );
@@ -173,7 +169,7 @@ MysqlIntrospector::list_columns(const std::string& table_name)
 
                     columns.push_back(std::move(info));
                 }
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 spdlog::get("sea.persistence")->error(
                     "INTROSPECT list_columns({}) error: {}", table_name, e.what()
                     );
@@ -225,7 +221,7 @@ MysqlIntrospector::list_indexes(const std::string& table_name)
                     }
                     info.columns.push_back(col_name);
                 }
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 spdlog::get("sea.persistence")->error(
                     "INTROSPECT list_indexes({}) error: {}", table_name, e.what()
                     );
@@ -284,7 +280,7 @@ MysqlIntrospector::list_foreign_keys(const std::string& table_name)
                     fk.on_delete_action = std::string(rs->getString("DELETE_RULE"));
                     fks.push_back(std::move(fk));
                 }
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 spdlog::get("sea.persistence")->error(
                     "INTROSPECT list_foreign_keys({}) error: {}", table_name, e.what()
                     );

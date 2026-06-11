@@ -397,7 +397,7 @@ int main(int argc, char** argv)
          * - vérification ou signature JWT si libcrypto est impliquée
          */
         auto blocking_executor =
-            std::make_shared<StdThreadPoolExecutor>(1);
+            std::make_shared<StdThreadPoolExecutor>(16);
 
         // ─────────────────────────────────────────────────────
         // 7. Pool MySQL + Bootstrap (Phase A)

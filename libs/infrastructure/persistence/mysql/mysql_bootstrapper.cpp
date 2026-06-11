@@ -1,10 +1,5 @@
 #include "mysql_bootstrapper.h"
 
-#include <cppconn/driver.h>
-#include <cppconn/connection.h>
-#include <cppconn/exception.h>
-#include <cppconn/prepared_statement.h>
-#include <cppconn/statement.h>
 
 #include <seastar/core/coroutine.hh>
 
@@ -104,7 +99,7 @@ MysqlBootstrapper::ensure_database_exists()
     const bool ok = co_await _executor->submit(
         [mysql_url, user, pass, dbname, dry_run]() -> bool {
             try {
-                auto* driver = sql::mysql::get_mysql_driver_instance();
+                auto* driver = sql::mariadb::get_driver_instance();
                 auto conn = std::unique_ptr<sql::Connection>(
                     driver->connect(mysql_url, user, pass)
                     );
@@ -153,7 +148,7 @@ MysqlBootstrapper::ensure_database_exists()
                     );
 
                 return true;
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 spdlog::get("sea.persistence")->error(
                     "CREATE DATABASE error: {}", e.what()
                     );
@@ -228,7 +223,7 @@ MysqlBootstrapper::execute_sql(const std::string& sql)
                 auto stmt = std::unique_ptr<sql::Statement>(conn->createStatement());
                 stmt->execute(sql);
                 return true;
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 spdlog::get("sea.persistence")->error(
                     "SQL error: {} (SQL was: {})", e.what(), sql
                     );
@@ -259,14 +254,14 @@ MysqlBootstrapper::execute_sql_without_database(const std::string& sql)
     co_return co_await _executor->submit(
         [mysql_url, user, pass, sql]() -> bool {
             try {
-                auto* driver = sql::mysql::get_mysql_driver_instance();
+                auto* driver = sql::mariadb::get_driver_instance();
                 auto conn = std::unique_ptr<sql::Connection>(
                     driver->connect(mysql_url, user, pass)
                     );
                 auto stmt = std::unique_ptr<sql::Statement>(conn->createStatement());
                 stmt->execute(sql);
                 return true;
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 spdlog::get("sea.persistence")->error(
                     "SQL error (no db): {}", e.what()
                     );

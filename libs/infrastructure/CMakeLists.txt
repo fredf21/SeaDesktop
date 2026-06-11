@@ -3,21 +3,30 @@ find_package(nlohmann_json REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(Seastar REQUIRED)
 
-find_path(MYSQLCPP_INCLUDE_DIR
-    NAMES mysql_connection.h
-    PATHS /usr/include
-    REQUIRED
-)
+# MariaDB Connector/C++ — pre-build dans third_party/mariadb-connector-cpp/install/.
+# Le script third_party/build_mariadb_connector.sh compile le source et
+# installe les binaires dans third_party/mariadb-connector-cpp/install/.
+set(MARIADB_CPP_ROOT
+    "${CMAKE_SOURCE_DIR}/third_party/mariadb-connector-cpp/install")
 
-find_library(MYSQLCPP_LIBRARY
-    NAMES mysqlcppconn
-    PATHS /usr/lib/x86_64-linux-gnu
-    NO_DEFAULT_PATH
-    REQUIRED
-)
+set(MARIADB_CPP_INCLUDE "${MARIADB_CPP_ROOT}/include")
+set(MARIADB_CPP_LIB "${MARIADB_CPP_ROOT}/lib/mariadb/libmariadbcpp.so")
 
-message(STATUS "MYSQLCPP_INCLUDE_DIR = ${MYSQLCPP_INCLUDE_DIR}")
-message(STATUS "MYSQLCPP_LIBRARY = ${MYSQLCPP_LIBRARY}")
+if(NOT EXISTS "${MARIADB_CPP_LIB}")
+    message(FATAL_ERROR
+        "MariaDB Connector/C++ non build. Lancer :\n"
+        "  cd third_party && ./build_mariadb_connector.sh\n"
+        "Chemin attendu : ${MARIADB_CPP_LIB}")
+endif()
+
+if(NOT EXISTS "${MARIADB_CPP_INCLUDE}/mariadb/conncpp.hpp")
+    message(FATAL_ERROR
+        "MariaDB Connector/C++ headers manquants.\n"
+        "Chemin attendu : ${MARIADB_CPP_INCLUDE}/mariadb/conncpp.hpp")
+endif()
+
+message(STATUS "MARIADB_CPP_INCLUDE = ${MARIADB_CPP_INCLUDE}")
+message(STATUS "MARIADB_CPP_LIB     = ${MARIADB_CPP_LIB}")
 
 include(FetchContent)
 
@@ -102,7 +111,7 @@ target_include_directories(sea_infrastructure
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<INSTALL_INTERFACE:include>
-        ${MYSQLCPP_INCLUDE_DIR}
+        ${MARIADB_CPP_INCLUDE}
         # libbcrypt : seed_orchestrator.cpp inclut <bcrypt/BCrypt.hpp>.
         # En PUBLIC pour que les cibles qui linkent sea_infrastructure
         # (sea_integration_tests notamment) trouvent aussi le header.
@@ -117,7 +126,7 @@ target_link_libraries(sea_infrastructure
         nlohmann_json::nlohmann_json
         jwt-cpp
         OpenSSL::Crypto
-        ${MYSQLCPP_LIBRARY}
+        ${MARIADB_CPP_LIB}
         Seastar::seastar
         Sea::errors
         pthread
@@ -131,5 +140,10 @@ target_link_libraries(sea_infrastructure
     PRIVATE
         spdlog::spdlog_header_only
 )
-
+# RPATH : permet au binaire de trouver libmariadbcpp.so au runtime
+# sans avoir besoin de LD_LIBRARY_PATH ou d'installer dans le systeme.
+set_target_properties(sea_infrastructure PROPERTIES
+    INSTALL_RPATH "${MARIADB_CPP_ROOT}/lib/mariadb"
+    BUILD_RPATH   "${MARIADB_CPP_ROOT}/lib/mariadb"
+)
 target_compile_features(sea_infrastructure PUBLIC cxx_std_20)

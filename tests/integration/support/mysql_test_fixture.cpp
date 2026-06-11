@@ -9,23 +9,20 @@
 
 #include "thread_pool_execution/std_thread_pool_executor.h"
 
-// Connexion directe au driver cppconn, SANS passer par MySQLConnector.
+// Connexion directe au driver, SANS passer par MySQLConnector.
 //
-// Raison : MySQLConnector::createConnection() appelle toujours
-// setSchema(_database). Or pour CREATE/DROP DATABASE on doit se
-// connecter SANS base sélectionnée (la base jetable n'existe pas
-// encore au moment du CREATE). MySQL rejette setSchema("") avec
+// Raison : MySQLConnector::createConnection() inclut toujours la base
+// dans l'URL (format MariaDB Connector). Or pour CREATE/DROP DATABASE
+// on doit se connecter SANS base selectionnee (la base jetable n'existe
+// pas encore au moment du CREATE). MariaDB rejette une URL vide avec
 // "No database selected".
 //
 // C'est exactement le choix fait par MysqlBootstrapper, qui pour son
 // propre CREATE DATABASE appelle driver->connect(...) directement
-// sans setSchema. La fixture calque ce pattern : on reste cohérent
+// sans base. La fixture calque ce pattern : on reste coherent
 // avec le code de production et on ne le modifie pas.
-#include <cppconn/driver.h>
-#include <cppconn/connection.h>
-#include <cppconn/statement.h>
-#include <cppconn/exception.h>
-#include <mysql_driver.h>
+
+#include <mariadb/conncpp.hpp>
 
 #include <seastar/core/future.hh>
 #include <seastar/core/loop.hh>
@@ -71,8 +68,7 @@ connect_without_schema(const sea::itest::MysqlConnectionParams& params)
     std::ostringstream url;
     url << "tcp://" << params.host << ":" << params.port;
 
-    sql::mysql::MySQL_Driver* driver = sql::mysql::get_mysql_driver_instance();
-
+    sql::Driver* driver = sql::mariadb::get_driver_instance();
     return std::unique_ptr<sql::Connection>(
         driver->connect(url.str(), params.user, params.password));
 }

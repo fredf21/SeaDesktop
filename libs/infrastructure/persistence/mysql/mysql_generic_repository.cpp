@@ -1,10 +1,4 @@
 #include "mysql_generic_repository.h"
-#include <cppconn/connection.h>
-#include <cppconn/exception.h>
-#include <cppconn/metadata.h>
-#include <cppconn/resultset.h>
-#include <cppconn/resultset_metadata.h>
-#include <cppconn/statement.h>
 #include "database_mappings/mysql_type_mapping.h"
 #include "exception_handling.h"
 #include "persistence/utilities.h"
@@ -37,10 +31,10 @@ namespace {
  * dans le pool et provoquera un SEGFAULT au prochain usage.
  */
 
-inline bool is_connection_dead_exception(const sql::SQLException& e) noexcept
+inline bool is_connection_dead_exception(sql::SQLException& e) noexcept
 {
     const int code = e.getErrorCode();
-    const std::string state = e.getSQLState();
+    const std::string state(static_cast<const char*>(e.getSQLState()));
     return
         code == 2006 || code == 2013 || code == 2003 ||
         code == 2055 || code == 2026 ||
@@ -106,7 +100,7 @@ runtime::DynamicValue read_typed_value(
         int column_index = rs->findColumn(field_name);
         return sea::infrastructure::runtime::NativeValue{
             .dialect = "mysql",
-            .sql_type = meta->getColumnTypeName(column_index),
+            .sql_type = std::string(static_cast<const char*>(meta->getColumnTypeName(column_index))),
             .value = std::string(rs->getString(field_name))
         };
     }
@@ -223,7 +217,7 @@ std::optional<std::string> generate_mysql_uuid(sql::Connection* conn)
             return std::string(rs->getString(1));
         }
         return std::nullopt;
-    } catch (const sql::SQLException& e) {
+    } catch (sql::SQLException& e) {
         if (is_connection_dead_exception(e)) {
             throw;
         }
@@ -330,7 +324,7 @@ seastar::future<Result> run_blocking_mysql(
         }
         co_return result;
 
-    } catch (const sql::SQLException& e) {
+    } catch (sql::SQLException& e) {
         // Detection des erreurs ou la connexion est devenue
         // definitivement inutilisable :
         //   2006 = MySQL server has gone away
@@ -340,7 +334,7 @@ seastar::future<Result> run_blocking_mysql(
         //   2026 = SSL connection error
         // SQL state 08xxx = Connection exception (ISO/IEC 9075).
         const int code = e.getErrorCode();
-        const std::string state = e.getSQLState();
+        const std::string state(static_cast<const char*>(e.getSQLState()));
         connection_dead =
             code == 2006 || code == 2013 || code == 2003 ||
             code == 2055 || code == 2026 ||
@@ -487,7 +481,7 @@ MySQLGenericRepository::create(
                     }
                 }
                 return record;
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 if (is_connection_dead_exception(e)) {
                     spdlog::get("sea.persistence")->error("CREATE EXCEPTION (connection dead, will discard): {}",e.what());
                     throw;
@@ -537,7 +531,7 @@ MySQLGenericRepository::find_all(const std::string& entity_name)
                     results.push_back(resultset_to_record(rs.get(), *entity));
                 }
                 return results;
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 if (is_connection_dead_exception(e)) {
                     spdlog::get("sea.persistence")->error(
                         "find_all connection dead: {} (code={})",
@@ -595,7 +589,7 @@ MySQLGenericRepository::find_by_id(
                     return std::nullopt;
                 }
                 return resultset_to_record(rs.get(), *entity);
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 if (is_connection_dead_exception(e)) {
                     spdlog::get("sea.persistence")->error(
                         "find_by_id connection dead: {} (code={})",
@@ -663,7 +657,7 @@ MySQLGenericRepository::find_one_by_field(
                     return std::nullopt;
                 }
                 return resultset_to_record(rs.get(), *entity);
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 if (is_connection_dead_exception(e)) {
                     spdlog::get("sea.persistence")->error(
                         "find_one_by_field connection dead: {} (code={})",
@@ -713,7 +707,7 @@ MySQLGenericRepository::remove(
                 stmt->setString(1, id);
                 const int affected_rows = stmt->executeUpdate();
                 return affected_rows > 0;
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 if (is_connection_dead_exception(e)) {
                     spdlog::get("sea.persistence")->error(
                         "remove connection dead: {} (code={})",
@@ -814,7 +808,7 @@ MySQLGenericRepository::update(
                     };
                 }
                 return {.status = false, .record = {}};
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 if (is_connection_dead_exception(e)) {
                     spdlog::get("sea.persistence")->error(
                         "updae connection dead: {} (code={})",
@@ -907,7 +901,7 @@ MySQLGenericRepository::insert_pivot(
                 stmt->execute();
                 return true;
 
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 if (is_connection_dead_exception(e)) {
                     spdlog::get("sea.persistence")->error(
                         "insert_pivot connection dead: {} (code={})",
@@ -1003,7 +997,7 @@ MySQLGenericRepository::delete_pivot(
                 const int affected = stmt->executeUpdate();
                 return affected > 0;
 
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 if (is_connection_dead_exception(e)) {
                     spdlog::get("sea.persistence")->error(
                         "delete_pivot connection dead: {} (code={})",
@@ -1094,7 +1088,7 @@ MySQLGenericRepository::pivot_exists(
                 auto rs = std::unique_ptr<sql::ResultSet>(stmt->executeQuery());
                 return rs->next();
 
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 if (is_connection_dead_exception(e)) {
                     spdlog::get("sea.persistence")->error(
                         "pivot_exist connection dead: {} (code={})",
@@ -1296,7 +1290,7 @@ MySQLGenericRepository::count(const std::string& entity_name)
                     return 0;
                 }
                 return static_cast<std::size_t>(rs->getInt64(1));
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 if (is_connection_dead_exception(e)) {
                     spdlog::get("sea.persistence")->error(
                         "count connexion dead (code={}, state={}): {}",
@@ -1378,7 +1372,7 @@ MySQLGenericRepository::list_page(
                 while (rs->next()) {
                     result.items.push_back(resultset_to_record(rs.get(), *entity));
                 }
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 if (is_connection_dead_exception(e)) {
                     spdlog::get("sea.persistence")->error(
                         "list_page connexion dead (code={}, state={}): {}",
@@ -1459,7 +1453,7 @@ MySQLGenericRepository::list_offset(
                 while (rs->next()) {
                     result.items.push_back(resultset_to_record(rs.get(), *entity));
                 }
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 if (is_connection_dead_exception(e)) {
                     spdlog::get("sea.persistence")->error(
                         "list_offset connection dead (code={}, state={}): {}",
@@ -1562,7 +1556,7 @@ MySQLGenericRepository::list_cursor(
                 }
 
                 result.items = std::move(fetched);
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 if (is_connection_dead_exception(e)) {
                     spdlog::get("sea.persistence")->error(
                         "list_cursor connection dead (code={}, state={}): {}",
@@ -1651,7 +1645,7 @@ MySQLGenericRepository::increment_field(
 
                 const int affected_rows = stmt->executeUpdate();
                 return affected_rows == 1;
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 if (is_connection_dead_exception(e)) {
                     spdlog::get("sea.persistence")->error(
                         "increment_field connection dead (code={}, state={}): {}",
@@ -1720,7 +1714,7 @@ MySQLGenericRepository::decrement_field_if_positive(
                 // 1 ligne affectée = décrément effectué.
                 // 0 ligne = id inexistant OU champ déjà <= 0.
                 return affected_rows == 1;
-            } catch (const sql::SQLException& e) {
+            } catch (sql::SQLException& e) {
                 if (is_connection_dead_exception(e)) {
                     spdlog::get("sea.persistence")->error(
                         "decrement_field_if_positive connection dead (code={}, state={}): {}",

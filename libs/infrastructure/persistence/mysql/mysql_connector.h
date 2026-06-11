@@ -1,44 +1,68 @@
 #pragma once
+
 #include <string>
 #include <memory>
-#include <mysql_driver.h>
-#include <mysql_connection.h>
-#include <cppconn/exception.h>
 #include <sstream>
 #include <stdexcept>
 
+// MariaDB Connector/C++ (remplace Oracle's MySQL Connector/C++ pour cause
+// de bug de thread-safety dans libmysqlclient sous charge concurrente —
+// voir bug 19).
+//
+// L'API est intentionnellement tres proche de mysql-cppconn :
+//   - meme namespace sql::
+//   - meme types sql::Connection, sql::PreparedStatement, etc.
+//   - meme sql::SQLException
+//
+// Les seules differences notables a connaitre :
+//   - L'initialisation : sql::mariadb::get_driver_instance() au lieu
+//     du driver Oracle (get_mysql_driver_instance).
+//   - L'URL inclut directement la base de donnees dans le path :
+//     "tcp://host:port/db_name" au lieu de setSchema() apres connect.
+#include <mariadb/conncpp.hpp>
+
 namespace sea::infrastructure::persistence::mysql {
 
-class MySQLConnector{
+class MySQLConnector {
 public:
-
     MySQLConnector(std::string host,
                    std::string user,
                    std::string password,
                    std::string database,
-                   unsigned int port = 3306): _host(std::move(host)), _user(std::move(user)), _password(std::move(password)), _database(std::move(database)), _port(port){};
+                   unsigned int port = 3306)
+        : _host(std::move(host))
+        , _user(std::move(user))
+        , _password(std::move(password))
+        , _database(std::move(database))
+        , _port(port)
+    {}
 
-    //Fonction de connection a la base de donnees Mysql
-    std::unique_ptr<sql::Connection> createConnection() const {
-
+    std::unique_ptr<sql::Connection> createConnection() const
+    {
         try {
-            sql::mysql::MySQL_Driver* driver = sql::mysql::get_mysql_driver_instance();
+            sql::Driver* driver = sql::mariadb::get_driver_instance();
 
             std::ostringstream url;
-            url << "tcp://" << _host << ":" << _port;
+            url << "tcp://" << _host << ":" << _port
+                << "/" << _database;
 
-            std::unique_ptr<sql::Connection> connection(
-                driver->connect(url.str(), _user, _password)
-                );
+            sql::SQLString sql_url(url.str());
+            sql::Properties props({
+                {"user",     _user},
+                {"password", _password}
+            });
 
-            connection->setSchema(_database);
-            return connection;
-        } catch (const sql::SQLException& ex) {
-            throw std::runtime_error(
-                "Erreur connexion MySQL: " + std::string(ex.what())
+            return std::unique_ptr<sql::Connection>(
+                driver->connect(sql_url, props)
                 );
         }
-    };
+        catch (sql::SQLException& ex) {
+            throw std::runtime_error(
+                "Erreur connexion MariaDB/MySQL: "
+                + std::string(ex.what())
+                );
+        }
+    }
 
 private:
     std::string _host;
