@@ -2,6 +2,7 @@
 
 #include "../access_control/resource_authorization_helper.h"
 #include "../../utils/http_utils.h"
+#include "../../errors/error_response_factory.h"
 
 #include "access_control/crud_operation.h"
 #include "runtime/generic_crud_engine.h"
@@ -15,6 +16,8 @@ namespace sea::http::handlers::relation {
 
 using sea::infrastructure::runtime::DynamicRecord;
 using json = nlohmann::json;
+namespace errors = sea::http::errors;
+using Status = seastar::http::reply::status_type;
 
 AttachManyToManyHandler::AttachManyToManyHandler(
     std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
@@ -46,10 +49,9 @@ AttachManyToManyHandler::handle(const seastar::sstring&,
     const auto target_id = std::string(sea::http::utils::strip_leading_slash(req->get_path_param("target_id")));
 
     if (source_id.empty() || target_id.empty()) {
-        rep->set_status(seastar::http::reply::status_type::bad_request);
-        rep->write_body("application/json",
-                        json{{"error", "Parametres 'id' ou 'target_id' manquants."}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::bad_request, "BAD_REQUEST",
+            "Parametres 'id' ou 'target_id' manquants.");
     }
 
     // ─────────────────────────────────────────────────────────
@@ -57,18 +59,16 @@ AttachManyToManyHandler::handle(const seastar::sstring&,
     // ─────────────────────────────────────────────────────────
     const auto source_record = co_await crud_engine_->get_by_id(source_entity_, source_id);
     if (!source_record.has_value()) {
-        rep->set_status(seastar::http::reply::status_type::not_found);
-        rep->write_body("application/json",
-                        json{{"error", "Ressource source introuvable."}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::not_found, "NOT_FOUND",
+            "Ressource source introuvable.");
     }
 
     const auto target_record = co_await crud_engine_->get_by_id(target_entity_, target_id);
     if (!target_record.has_value()) {
-        rep->set_status(seastar::http::reply::status_type::not_found);
-        rep->write_body("application/json",
-                        json{{"error", "Ressource cible introuvable."}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::not_found, "NOT_FOUND",
+            "Ressource cible introuvable.");
     }
 
     // ─────────────────────────────────────────────────────────
@@ -92,11 +92,11 @@ AttachManyToManyHandler::handle(const seastar::sstring&,
             );
 
         if (!source_check.allowed) {
-            rep->set_status(seastar::http::reply::status_type::forbidden);
-            rep->write_body("application/json",
-                            json{{"error", "Forbidden"},
-                                 {"message", source_check.reason}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::forbidden, "AUTHORIZATION_ERROR",
+                source_check.reason.empty()
+                    ? "Acces refuse sur la ressource source."
+                    : source_check.reason);
         }
 
         const std::string target_json =
@@ -111,11 +111,11 @@ AttachManyToManyHandler::handle(const seastar::sstring&,
             );
 
         if (!target_check.allowed) {
-            rep->set_status(seastar::http::reply::status_type::forbidden);
-            rep->write_body("application/json",
-                            json{{"error", "Forbidden"},
-                                 {"message", target_check.reason}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::forbidden, "AUTHORIZATION_ERROR",
+                target_check.reason.empty()
+                    ? "Acces refuse sur la ressource cible."
+                    : target_check.reason);
         }
     }
 
@@ -130,10 +130,7 @@ AttachManyToManyHandler::handle(const seastar::sstring&,
     if (!repository) {
         spdlog::get("sea.http")->error(
             "AttachManyToManyHandler: repository unavailable");
-        rep->set_status(seastar::http::reply::status_type::internal_server_error);
-        rep->write_body("application/json",
-                        json{{"error", "Repository unavailable."}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_internal_error_reply();
     }
 
     // ─────────────────────────────────────────────────────────
@@ -147,10 +144,9 @@ AttachManyToManyHandler::handle(const seastar::sstring&,
         co_await repository->pivot_exists(pivot_table_, lookup_values);
 
     if (already_exists) {
-        rep->set_status(seastar::http::reply::status_type::conflict);
-        rep->write_body("application/json",
-                        json{{"error", "Association deja existante."}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::conflict, "CONFLICT",
+            "Association deja existante.");
     }
 
     // ─────────────────────────────────────────────────────────
@@ -168,10 +164,7 @@ AttachManyToManyHandler::handle(const seastar::sstring&,
             "AttachManyToManyHandler: insert_pivot failed for {} {} -> {}",
             pivot_table_, source_id, target_id);
 
-        rep->set_status(seastar::http::reply::status_type::internal_server_error);
-        rep->write_body("application/json",
-                        json{{"error", "Echec de l'insertion de l'association."}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_internal_error_reply();
     }
 
     spdlog::get("sea.http")->info(
@@ -183,7 +176,7 @@ AttachManyToManyHandler::handle(const seastar::sstring&,
     // ─────────────────────────────────────────────────────────
     // 7. Reponse
     // ─────────────────────────────────────────────────────────
-    rep->set_status(seastar::http::reply::status_type::created);
+    rep->set_status(Status::created);
     rep->write_body("application/json",
                     json{{"status", "associated"},
                          {"source_id", source_id},
