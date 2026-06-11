@@ -1,5 +1,6 @@
 #include "me_handler.h"
 #include "../../utils/http_utils.h"
+#include "../../errors/error_response_factory.h"
 
 #include "runtime/generic_crud_engine.h"
 
@@ -9,6 +10,8 @@
 namespace sea::http::handlers::auth {
 
 using json = nlohmann::json;
+namespace errors = sea::http::errors;
+using Status = seastar::http::reply::status_type;
 
 /**
  * MeHandler
@@ -42,10 +45,9 @@ MeHandler::handle(const seastar::sstring&,
     const auto user_id = req->get_header("X-User-Id");
 
     if (user_id.empty()) {
-        rep->set_status(seastar::http::reply::status_type::unauthorized);
-        rep->write_body("application/json",
-                        json{{"error", "Utilisateur non authentifie"}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::unauthorized, "AUTHENTICATION_ERROR",
+            "Utilisateur non authentifie.");
     }
 
     /**
@@ -56,10 +58,9 @@ MeHandler::handle(const seastar::sstring&,
     const auto user = co_await crud_engine_->get_by_id("User", user_id);
 
     if (!user.has_value()) {
-        rep->set_status(seastar::http::reply::status_type::not_found);
-        rep->write_body("application/json",
-                        json{{"error", "Utilisateur introuvable"}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::not_found, "NOT_FOUND",
+            "Utilisateur introuvable.");
     }
 
     /**
@@ -73,7 +74,7 @@ MeHandler::handle(const seastar::sstring&,
      */
     user_json.erase("password");
 
-    rep->set_status(seastar::http::reply::status_type::ok);
+    rep->set_status(Status::ok);
     rep->write_body("application/json", user_json.dump());
 
     co_return std::move(rep);
