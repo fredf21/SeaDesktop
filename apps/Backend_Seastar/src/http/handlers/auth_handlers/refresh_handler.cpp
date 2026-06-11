@@ -1,6 +1,7 @@
 #include "refresh_handler.h"
 #include "../../utils/http_utils.h"
 #include "../../utils/cookie_helper.h"
+#include "../../errors/error_response_factory.h"
 
 #include "authservice.h"
 #include "token_tracking_service.h"
@@ -8,12 +9,15 @@
 #include "security/jwt_service.h"
 
 #include <nlohmann/json.hpp>
+#include <spdlog/spdlog.h>
 #include <set>
 #include <utility>
 
 namespace sea::http::handlers::auth {
 
 using json = nlohmann::json;
+namespace errors = sea::http::errors;
+using Status = seastar::http::reply::status_type;
 
 namespace {
 
@@ -97,10 +101,9 @@ RefreshHandler::handle(const seastar::sstring&,
             body_str
             );
         if (!refresh_token_opt.has_value() || refresh_token_opt->empty()) {
-            rep->set_status(seastar::http::reply::status_type::bad_request);
-            rep->write_body("application/json",
-                            json{{"error", "refresh_token manquant"}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::bad_request, "BAD_REQUEST",
+                "refresh_token manquant.");
         }
         const std::string& refresh_token = *refresh_token_opt;
 
@@ -114,30 +117,27 @@ RefreshHandler::handle(const seastar::sstring&,
         };
         const auto jwt_claims = JwtService::verify_token(verify_params);
         if (!jwt_claims.has_value()) {
-            rep->set_status(seastar::http::reply::status_type::unauthorized);
-            rep->write_body("application/json",
-                            json{{"error", "refresh_token invalide"}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::unauthorized, "AUTHENTICATION_ERROR",
+                "refresh_token invalide.");
         }
 
         const std::string user_id     = jwt_claims->user_id;
         const std::string refresh_jti = jwt_claims->jti;
 
         if (user_id.empty()) {
-            rep->set_status(seastar::http::reply::status_type::unauthorized);
-            rep->write_body("application/json",
-                            json{{"error", "refresh_token incomplet"}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::unauthorized, "AUTHENTICATION_ERROR",
+                "refresh_token incomplet.");
         }
 
         // ─── 4. Verification allowlist (tracking) ────────────────────
         if (token_tracking_ && !refresh_jti.empty()) {
             const bool valid = co_await token_tracking_->is_refresh_valid(refresh_jti);
             if (!valid) {
-                rep->set_status(seastar::http::reply::status_type::unauthorized);
-                rep->write_body("application/json",
-                                json{{"error", "refresh_token revoque ou expire"}}.dump());
-                co_return std::move(rep);
+                co_return errors::make_error_reply(
+                    Status::unauthorized, "AUTHENTICATION_ERROR",
+                    "refresh_token revoque ou expire.");
             }
         }
 
@@ -145,10 +145,9 @@ RefreshHandler::handle(const seastar::sstring&,
         const auto user_record =
             co_await crud_engine_->get_by_id("User", user_id);
         if (!user_record.has_value()) {
-            rep->set_status(seastar::http::reply::status_type::unauthorized);
-            rep->write_body("application/json",
-                            json{{"error", "Utilisateur introuvable"}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::unauthorized, "AUTHENTICATION_ERROR",
+                "Utilisateur introuvable.");
         }
 
         // Email
@@ -241,10 +240,9 @@ RefreshHandler::handle(const seastar::sstring&,
                 );
 
             if (!rotated) {
-                rep->set_status(seastar::http::reply::status_type::unauthorized);
-                rep->write_body("application/json",
-                                json{{"error", "Rotation du refresh impossible"}}.dump());
-                co_return std::move(rep);
+                co_return errors::make_error_reply(
+                    Status::unauthorized, "AUTHENTICATION_ERROR",
+                    "Rotation du refresh impossible.");
             }
         }
 
@@ -283,15 +281,24 @@ RefreshHandler::handle(const seastar::sstring&,
             }
         }
 
-        rep->set_status(seastar::http::reply::status_type::ok);
+        rep->set_status(Status::ok);
         rep->write_body("application/json", response_body.dump());
         co_return std::move(rep);
 
+    } catch (const errors::HttpException& e) {
+        // Erreur metier deja typee : on respecte son statut.
+        co_return errors::make_error_reply(e);
+    } catch (const std::exception& e) {
+        // Erreur generique : probable JSON malforme.
+        spdlog::get("sea.http")->warn(
+            "RefreshHandler: unhandled exception: {}", e.what());
+        co_return errors::make_error_reply(
+            Status::bad_request, "BAD_REQUEST",
+            "Requete invalide.");
     } catch (...) {
-        rep->set_status(seastar::http::reply::status_type::bad_request);
-        rep->write_body("application/json",
-                        json{{"error", "Requete invalide"}}.dump());
-        co_return std::move(rep);
+        // Catch-all final.
+        spdlog::get("sea.http")->error("RefreshHandler: unknown exception");
+        co_return errors::make_internal_error_reply();
     }
 }
 
