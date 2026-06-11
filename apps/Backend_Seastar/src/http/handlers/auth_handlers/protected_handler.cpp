@@ -1,6 +1,7 @@
 #include "protected_handler.h"
 #include "../../utils/http_utils.h"
 #include "../../utils/cookie_helper.h"
+#include "../../errors/error_response_factory.h"
 
 #include "authservice.h"
 #include "token_tracking_service.h"
@@ -12,6 +13,8 @@
 namespace sea::http::handlers::auth {
 
 using json = nlohmann::json;
+namespace errors = sea::http::errors;
+using Status = seastar::http::reply::status_type;
 
 namespace {
 
@@ -68,10 +71,9 @@ ProtectedHandler::handle(const seastar::sstring& path,
         *req, cookie_config_.access_token_name()
         );
     if (!token.has_value() || token->empty()) {
-        rep->set_status(seastar::http::reply::status_type::unauthorized);
-        rep->write_body("application/json",
-                        json{{"error", "Token manquant"}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::unauthorized, "AUTHENTICATION_ERROR",
+            "Token manquant.");
     }
 
     // ─── 2. Verification signature / exp (hors reactor) ─────────────
@@ -79,10 +81,9 @@ ProtectedHandler::handle(const seastar::sstring& path,
         co_await auth_service_->verify_token_async(*token, *blocking_executor_);
 
     if (!claims.has_value()) {
-        rep->set_status(seastar::http::reply::status_type::unauthorized);
-        rep->write_body("application/json",
-                        json{{"error", "Token invalide"}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::unauthorized, "AUTHENTICATION_ERROR",
+            "Token invalide.");
     }
 
     // ─── 3. Verification denylist (token tracking) ──────────────────
@@ -105,10 +106,9 @@ ProtectedHandler::handle(const seastar::sstring& path,
                 raw_claims->jti
                 );
             if (revoked) {
-                rep->set_status(seastar::http::reply::status_type::unauthorized);
-                rep->write_body("application/json",
-                                json{{"error", "Token revoque"}}.dump());
-                co_return std::move(rep);
+                co_return errors::make_error_reply(
+                    Status::unauthorized, "AUTHENTICATION_ERROR",
+                    "Token revoque.");
             }
         }
         // Si raw_claims->jti est vide, on accepte (compat tokens pre-1.3).
