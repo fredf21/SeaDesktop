@@ -1,6 +1,7 @@
 #include "get_one_by_fk_handler.h"
 #include "../access_control/resource_authorization_helper.h"
 #include "../../utils/http_utils.h"
+#include "../../errors/error_response_factory.h"
 
 #include "access_control/crud_operation.h"
 
@@ -8,6 +9,11 @@
 #include <utility>
 
 using namespace sea::http::handlers::relation;
+
+namespace {
+namespace errors = sea::http::errors;
+using Status = seastar::http::reply::status_type;
+}
 
 GetOneByFkHandler::GetOneByFkHandler(
     std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
@@ -54,23 +60,21 @@ GetOneByFkHandler::handle(const seastar::sstring&,
                     );
 
                 if (!check.allowed) {
-                    rep->set_status(seastar::http::reply::status_type::forbidden);
-                    rep->write_body("application/json",
-                                    nlohmann::json{
-                                        {"error", "Forbidden"},
-                                        {"message", check.reason}
-                                    }.dump());
-                    co_return std::move(rep);
+                    co_return errors::make_error_reply(
+                        Status::forbidden, "AUTHORIZATION_ERROR",
+                        check.reason.empty()
+                            ? "Acces refuse."
+                            : check.reason);
                 }
             }
 
-            rep->set_status(seastar::http::reply::status_type::ok);
+            rep->set_status(Status::ok);
             rep->write_body("application/json", record_json);
             co_return std::move(rep);
         }
     }
 
-    rep->set_status(seastar::http::reply::status_type::not_found);
-    rep->write_body("application/json", R"({"error":"introuvable"})");
-    co_return std::move(rep);
+    co_return errors::make_error_reply(
+        Status::not_found, "NOT_FOUND",
+        "Enregistrement introuvable.");
 }
