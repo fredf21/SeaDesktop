@@ -1,6 +1,7 @@
 #include "file_download_by_field_handler.h"
 #include "../access_control/resource_authorization_helper.h"
 #include "../../utils/http_utils.h"
+#include "../../errors/error_response_factory.h"
 
 #include "access_control/crud_operation.h"
 #include "fileservice.h"
@@ -20,6 +21,8 @@
 namespace sea::http::handlers::files {
 
 using json = nlohmann::json;
+namespace errors = sea::http::errors;
+using Status = seastar::http::reply::status_type;
 
 namespace {
 
@@ -82,19 +85,17 @@ FileDownloadByFieldHandler::handle(const seastar::sstring&,
     // ─── Validation des params URL ────────────────────────
     const auto id = std::string(sea::http::utils::strip_leading_slash(req->get_path_param("id")));
     if (id.empty()) {
-        rep->set_status(seastar::http::reply::status_type::bad_request);
-        rep->write_body("application/json",
-                        json{{"error", "Parametre 'id' manquant."}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::bad_request, "BAD_REQUEST",
+            "Parametre 'id' manquant.");
     }
 
     // ─── Récupération de l'entité depuis le registry ──────
     const auto* entity = registry_->find_entity(entity_name_);
     if (entity == nullptr) {
-        rep->set_status(seastar::http::reply::status_type::not_found);
-        rep->write_body("application/json",
-                        json{{"error", "Entite inconnue."}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::not_found, "NOT_FOUND",
+            "Entite inconnue.");
     }
 
     // ─── Validation que field_name_ est bien un champ File ─
@@ -110,10 +111,9 @@ FileDownloadByFieldHandler::handle(const seastar::sstring&,
         }
     }
     if (field == nullptr) {
-        rep->set_status(seastar::http::reply::status_type::not_found);
-        rep->write_body("application/json",
-                        json{{"error", "Champ inconnu ou non-file."}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::not_found, "NOT_FOUND",
+            "Champ inconnu ou non-file.");
     }
 
     try {
@@ -122,10 +122,9 @@ FileDownloadByFieldHandler::handle(const seastar::sstring&,
             entity_name_, std::string(id));
 
         if (!record.has_value()) {
-            rep->set_status(seastar::http::reply::status_type::not_found);
-            rep->write_body("application/json",
-                            json{{"error", "Enregistrement introuvable."}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::not_found, "NOT_FOUND",
+                "Enregistrement introuvable.");
         }
 
         // ─── ABAC : check Read sur l'entité parente ───────
@@ -147,21 +146,20 @@ FileDownloadByFieldHandler::handle(const seastar::sstring&,
                 );
 
             if (!check.allowed) {
-                rep->set_status(seastar::http::reply::status_type::forbidden);
-                rep->write_body("application/json",
-                                json{{"error", "Forbidden"},
-                                     {"message", check.reason}}.dump());
-                co_return std::move(rep);
+                co_return errors::make_error_reply(
+                    Status::forbidden, "AUTHORIZATION_ERROR",
+                    check.reason.empty()
+                        ? "Acces refuse."
+                        : check.reason);
             }
         }
 
         // ─── Extraction de l'UUID du champ File ───────────
         const auto field_it = record->find(field_name_);
         if (field_it == record->end()) {
-            rep->set_status(seastar::http::reply::status_type::not_found);
-            rep->write_body("application/json",
-                            json{{"error", "Champ vide sur ce record."}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::not_found, "NOT_FOUND",
+                "Champ vide sur ce record.");
         }
 
         if (!std::holds_alternative<std::string>(field_it->second)) {
@@ -169,10 +167,9 @@ FileDownloadByFieldHandler::handle(const seastar::sstring&,
             // Document peut etre cree sans son champ file optionnel).
             // On detecte ca via le std::monostate du variant DynamicValue.
             if (std::holds_alternative<std::monostate>(field_it->second)) {
-                rep->set_status(seastar::http::reply::status_type::not_found);
-                rep->write_body("application/json",
-                                json{{"error", "Aucun fichier attache."}}.dump());
-                co_return std::move(rep);
+                co_return errors::make_error_reply(
+                    Status::not_found, "NOT_FOUND",
+                    "Aucun fichier attache.");
             }
 
             // Tout autre type non-string = vraie corruption (un fichier
@@ -180,18 +177,14 @@ FileDownloadByFieldHandler::handle(const seastar::sstring&,
             log->error("FileDownloadByFieldHandler: field '{}' on {}/{} "
                        "is not a string (corrupted record?)",
                        field_name_, entity_name_, id);
-            rep->set_status(seastar::http::reply::status_type::internal_server_error);
-            rep->write_body("application/json",
-                            json{{"error", "Type de valeur invalide pour ce champ."}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_internal_error_reply();
         }
 
         const std::string uuid = std::get<std::string>(field_it->second);
         if (uuid.empty()) {
-            rep->set_status(seastar::http::reply::status_type::not_found);
-            rep->write_body("application/json",
-                            json{{"error", "Aucun fichier attache."}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::not_found, "NOT_FOUND",
+                "Aucun fichier attache.");
         }
 
         // ─── Download via FileService ─────────────────────
@@ -205,14 +198,13 @@ FileDownloadByFieldHandler::handle(const seastar::sstring&,
                 "FileDownloadByFieldHandler: uuid={} referenced by {}/{}/{} "
                 "but not found in sea_files",
                 uuid, entity_name_, id, field_name_);
-            rep->set_status(seastar::http::reply::status_type::not_found);
-            rep->write_body("application/json",
-                            json{{"error", "Fichier introuvable."}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::not_found, "NOT_FOUND",
+                "Fichier introuvable.");
         }
 
         // ─── Réponse binaire ──────────────────────────────
-        rep->set_status(seastar::http::reply::status_type::ok);
+        rep->set_status(Status::ok);
 
         // Content-Type : type MIME stocké dans sea_files au moment de
         // l'upload. Si vide (cas dégénéré), fallback générique.
@@ -239,17 +231,18 @@ FileDownloadByFieldHandler::handle(const seastar::sstring&,
     } catch (const sea_errors_handling::StorageException& e) {
         // Storage I/O échoué (fichier disparu du disque ? perms ?)
         log->error("FileDownloadByFieldHandler: StorageException: {}", e.what());
-        rep->set_status(seastar::http::reply::status_type::not_found);
-        rep->write_body("application/json",
-                        json{{"error", "Fichier physique introuvable."}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::not_found, "NOT_FOUND",
+            "Fichier physique introuvable.");
+
+    } catch (const errors::HttpException& e) {
+        // Erreur metier deja typee : on respecte son statut.
+        co_return errors::make_error_reply(e);
 
     } catch (const std::exception& e) {
-        log->error("FileDownloadByFieldHandler: exception: {}", e.what());
-        rep->set_status(seastar::http::reply::status_type::internal_server_error);
-        rep->write_body("application/json",
-                        json{{"error", e.what()}}.dump());
-        co_return std::move(rep);
+        log->error("FileDownloadByFieldHandler: exception (entity={}, id={}, field={}): {}",
+                   entity_name_, id, field_name_, e.what());
+        co_return errors::make_internal_error_reply();
     }
 }
 
