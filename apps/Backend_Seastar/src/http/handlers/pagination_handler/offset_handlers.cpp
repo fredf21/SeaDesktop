@@ -3,6 +3,7 @@
 #include "../access_control/resource_authorization_helper.h"
 #include "../../utils/http_utils.h"
 #include "../../utils/pagination_query.h"
+#include "../../errors/error_response_factory.h"
 
 #include "access_control/crud_operation.h"
 #include "runtime/generic_crud_engine.h"
@@ -21,6 +22,8 @@ using json = nlohmann::json;
 using sea::infrastructure::runtime::DynamicRecord;
 using sea::infrastructure::persistence::OffsetRequest;
 using sea::infrastructure::persistence::OffsetResult;
+namespace errors = sea::http::errors;
+using Status = seastar::http::reply::status_type;
 
 // ─────────────────────────────────────────────────────────────────────
 // Helper interne : construit l'enveloppe JSON offset/limit.
@@ -50,14 +53,15 @@ using sea::infrastructure::persistence::OffsetResult;
     return oss.str();
 }
 
+// Helper : produit une reponse 400 standardisee via la factory.
+// Le parametre `rep` n'est plus utilise mais on garde la signature
+// pour minimiser les changements aux call sites.
 [[nodiscard]] std::unique_ptr<seastar::http::reply> bad_request(
-    std::unique_ptr<seastar::http::reply> rep,
+    std::unique_ptr<seastar::http::reply> /*rep*/,
     const std::string& message)
 {
-    rep->set_status(seastar::http::reply::status_type::bad_request);
-    rep->write_body("application/json",
-                    json{{"error", "Bad Request"}, {"message", message}}.dump());
-    return rep;
+    return errors::make_error_reply(
+        Status::bad_request, "BAD_REQUEST", message);
 }
 
 // Voir page_handlers.cpp pour la justification de cette limitation MVP.
@@ -120,7 +124,7 @@ ListOffsetHandler::handle(const seastar::sstring&,
     const std::string filtered = apply_abac_filter(items_json, entity_name_, auth_helper_, *req);
     const std::string envelope = build_offset_envelope(filtered, request, page.total);
 
-    rep->set_status(seastar::http::reply::status_type::ok);
+    rep->set_status(Status::ok);
     rep->write_body("application/json", envelope);
     co_return std::move(rep);
 }
@@ -154,7 +158,7 @@ ListByFkOffsetHandler::handle(const seastar::sstring&,
 {
     const auto parent_id_sstring = sea::http::utils::strip_leading_slash(req->get_path_param("id"));
     if (parent_id_sstring.empty()) {
-        co_return bad_request(std::move(rep), "id manquant");
+        co_return bad_request(std::move(rep), "Parametre 'id' manquant.");
     }
     const std::string parent_id{std::string_view(parent_id_sstring)};
 
@@ -181,7 +185,7 @@ ListByFkOffsetHandler::handle(const seastar::sstring&,
     const std::string abac_filtered = apply_abac_filter(items_json, child_entity_, auth_helper_, *req);
     const std::string envelope = build_offset_envelope(abac_filtered, request, page.total);
 
-    rep->set_status(seastar::http::reply::status_type::ok);
+    rep->set_status(Status::ok);
     rep->write_body("application/json", envelope);
     co_return std::move(rep);
 }
@@ -216,7 +220,7 @@ ListByFkFieldOffsetHandler::handle(const seastar::sstring&,
 {
     const auto value_sstring = sea::http::utils::strip_leading_slash(req->get_path_param("value"));
     if (value_sstring.empty()) {
-        co_return bad_request(std::move(rep), "value manquant");
+        co_return bad_request(std::move(rep), "Parametre 'value' manquant.");
     }
     const std::string value{std::string_view(value_sstring)};
 
@@ -241,10 +245,9 @@ ListByFkFieldOffsetHandler::handle(const seastar::sstring&,
     }
 
     if (!parent_id.has_value()) {
-        rep->set_status(seastar::http::reply::status_type::not_found);
-        rep->write_body("application/json",
-                        json{{"error", "parent introuvable"}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::not_found, "NOT_FOUND",
+            "Parent introuvable.");
     }
 
     // 2. Pagination sur enfants
@@ -267,7 +270,7 @@ ListByFkFieldOffsetHandler::handle(const seastar::sstring&,
     const std::string abac_filtered = apply_abac_filter(items_json, child_entity_, auth_helper_, *req);
     const std::string envelope = build_offset_envelope(abac_filtered, request, page.total);
 
-    rep->set_status(seastar::http::reply::status_type::ok);
+    rep->set_status(Status::ok);
     rep->write_body("application/json", envelope);
     co_return std::move(rep);
 }
@@ -306,7 +309,7 @@ ListManyToManyOffsetHandler::handle(const seastar::sstring&,
 {
     const auto source_id_sstring = sea::http::utils::strip_leading_slash(req->get_path_param("id"));
     if (source_id_sstring.empty()) {
-        co_return bad_request(std::move(rep), "id manquant");
+        co_return bad_request(std::move(rep), "Parametre 'id' manquant.");
     }
     const std::string source_id{std::string_view(source_id_sstring)};
 
@@ -360,7 +363,7 @@ ListManyToManyOffsetHandler::handle(const seastar::sstring&,
     const std::string abac_filtered = apply_abac_filter(items_json, target_entity_, auth_helper_, *req);
     const std::string envelope = build_offset_envelope(abac_filtered, request, total);
 
-    rep->set_status(seastar::http::reply::status_type::ok);
+    rep->set_status(Status::ok);
     rep->write_body("application/json", envelope);
     co_return std::move(rep);
 }
@@ -401,7 +404,7 @@ GetWithChildrenOffsetHandler::handle(const seastar::sstring&,
 {
     const auto id_sstring = sea::http::utils::strip_leading_slash(req->get_path_param("id"));
     if (id_sstring.empty()) {
-        co_return bad_request(std::move(rep), "id manquant");
+        co_return bad_request(std::move(rep), "Parametre 'id' manquant.");
     }
     const std::string id{std::string_view(id_sstring)};
 
@@ -414,10 +417,9 @@ GetWithChildrenOffsetHandler::handle(const seastar::sstring&,
     // 1. Recupere le parent
     auto parent = co_await crud_engine_->get_by_id(parent_entity_, id);
     if (!parent.has_value()) {
-        rep->set_status(seastar::http::reply::status_type::not_found);
-        rep->write_body("application/json",
-                        json{{"error", "parent introuvable"}}.dump());
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::not_found, "NOT_FOUND",
+            "Parent introuvable.");
     }
 
     const std::string parent_json = sea::http::utils::record_to_json(*parent);
@@ -437,10 +439,11 @@ GetWithChildrenOffsetHandler::handle(const seastar::sstring&,
             );
 
         if (!check.allowed) {
-            rep->set_status(seastar::http::reply::status_type::forbidden);
-            rep->write_body("application/json",
-                            json{{"error", "Forbidden"}, {"message", check.reason}}.dump());
-            co_return std::move(rep);
+            co_return errors::make_error_reply(
+                Status::forbidden, "AUTHORIZATION_ERROR",
+                check.reason.empty()
+                    ? "Acces refuse."
+                    : check.reason);
         }
     }
 
@@ -473,7 +476,7 @@ GetWithChildrenOffsetHandler::handle(const seastar::sstring&,
     result += children_envelope;
     result += "}";
 
-    rep->set_status(seastar::http::reply::status_type::ok);
+    rep->set_status(Status::ok);
     rep->write_body("application/json", result);
     co_return std::move(rep);
 }
