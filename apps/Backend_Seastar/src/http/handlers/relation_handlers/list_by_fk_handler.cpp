@@ -1,12 +1,18 @@
 #include "list_by_fk_handler.h"
 #include "../access_control/resource_authorization_helper.h"
 #include "../../utils/http_utils.h"
+#include "../../errors/error_response_factory.h"
 
 #include "access_control/crud_operation.h"
 
 #include <utility>
 
 using namespace sea::http::handlers::relation;
+
+namespace {
+namespace errors = sea::http::errors;
+using Status = seastar::http::reply::status_type;
+}
 
 ListByFkHandler::ListByFkHandler(
     std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
@@ -27,9 +33,9 @@ ListByFkHandler::handle(const seastar::sstring&,
 {
     const auto parent_id = std::string(sea::http::utils::strip_leading_slash(req->get_path_param("id")));;
     if (parent_id.empty()) {
-        rep->set_status(seastar::http::reply::status_type::bad_request);
-        rep->write_body("application/json", R"({"error":"id manquant"})");
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::bad_request, "BAD_REQUEST",
+            "Parametre 'id' manquant.");
     }
 
     const auto records = co_await crud_engine_->list(child_entity_);
@@ -64,7 +70,7 @@ ListByFkHandler::handle(const seastar::sstring&,
             );
     }
 
-    rep->set_status(seastar::http::reply::status_type::ok);
+    rep->set_status(Status::ok);
     rep->write_body("application/json", final_json);
     co_return std::move(rep);
 }
