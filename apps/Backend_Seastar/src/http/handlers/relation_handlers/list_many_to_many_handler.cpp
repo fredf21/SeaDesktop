@@ -1,6 +1,7 @@
 #include "list_many_to_many_handler.h"
 #include "../access_control/resource_authorization_helper.h"
 #include "../../utils/http_utils.h"
+#include "../../errors/error_response_factory.h"
 
 #include "access_control/crud_operation.h"
 #include "runtime/generic_crud_engine.h"
@@ -12,6 +13,8 @@
 namespace sea::http::handlers::relation {
 
 using sea::infrastructure::runtime::DynamicRecord;
+namespace errors = sea::http::errors;
+using Status = seastar::http::reply::status_type;
 
 ListManyToManyHandler::ListManyToManyHandler(
     std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
@@ -36,9 +39,9 @@ ListManyToManyHandler::handle(const seastar::sstring&,
 {
     const auto source_id = std::string(sea::http::utils::strip_leading_slash(req->get_path_param("id")));
     if (source_id.empty()) {
-        rep->set_status(seastar::http::reply::status_type::bad_request);
-        rep->write_body("application/json", R"({"error":"Parametre 'id' manquant."})");
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::bad_request, "BAD_REQUEST",
+            "Parametre 'id' manquant.");
     }
 
     const auto pivot_records = co_await crud_engine_->list(pivot_table_);
@@ -96,7 +99,7 @@ ListManyToManyHandler::handle(const seastar::sstring&,
             );
     }
 
-    rep->set_status(seastar::http::reply::status_type::ok);
+    rep->set_status(Status::ok);
     rep->write_body("application/json", final_json);
     co_return std::move(rep);
 }
