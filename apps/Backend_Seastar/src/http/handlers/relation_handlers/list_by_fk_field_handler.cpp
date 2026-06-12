@@ -1,12 +1,18 @@
 #include "list_by_fk_field_handler.h"
 #include "../access_control/resource_authorization_helper.h"
 #include "../../utils/http_utils.h"
+#include "../../errors/error_response_factory.h"
 
 #include "access_control/crud_operation.h"
 
 #include <utility>
 
 using namespace sea::http::handlers::relation;
+
+namespace {
+namespace errors = sea::http::errors;
+using Status = seastar::http::reply::status_type;
+}
 
 ListByFkFieldHandler::ListByFkFieldHandler(
     std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
@@ -34,9 +40,9 @@ ListByFkFieldHandler::handle(const seastar::sstring&,
     // Ex: /employees/filter/with_department_name/IT
     const auto value = std::string(sea::http::utils::strip_leading_slash(req->get_path_param("value")));
     if (value.empty()) {
-        rep->set_status(seastar::http::reply::status_type::bad_request);
-        rep->write_body("application/json", R"({"error":"value manquant"})");
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::bad_request, "BAD_REQUEST",
+            "Parametre 'value' manquant.");
     }
 
     const auto parents = co_await crud_engine_->list(parent_entity_);
@@ -63,9 +69,9 @@ ListByFkFieldHandler::handle(const seastar::sstring&,
     }
 
     if (!parent_id.has_value()) {
-        rep->set_status(seastar::http::reply::status_type::not_found);
-        rep->write_body("application/json", R"({"error":"parent introuvable"})");
-        co_return std::move(rep);
+        co_return errors::make_error_reply(
+            Status::not_found, "NOT_FOUND",
+            "Parent introuvable.");
     }
 
     const auto children = co_await crud_engine_->list(child_entity_);
@@ -100,7 +106,7 @@ ListByFkFieldHandler::handle(const seastar::sstring&,
             );
     }
 
-    rep->set_status(seastar::http::reply::status_type::ok);
+    rep->set_status(Status::ok);
     rep->write_body("application/json", final_json);
     co_return std::move(rep);
 }
