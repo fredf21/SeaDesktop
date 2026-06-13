@@ -19,6 +19,49 @@ using json = nlohmann::json;
 namespace errors = sea::http::errors;
 using Status = seastar::http::reply::status_type;
 
+namespace {
+
+// ─────────────────────────────────────────────────────────────────────
+// Helpers internes pour les logs sea.security.
+// Extraction de l'IP client (X-Forwarded-For prioritaire, X-Real-IP
+// fallback) et troncation du User-Agent pour ne pas noyer les logs.
+// ─────────────────────────────────────────────────────────────────────
+
+std::string extract_client_ip(const seastar::http::request& req)
+{
+    if (const auto it = req._headers.find("X-Forwarded-For");
+        it != req._headers.end()) {
+        // X-Forwarded-For peut etre "ip1, ip2, ip3" : on prend la 1ere
+        std::string value(it->second.data(), it->second.size());
+        const auto comma = value.find(',');
+        if (comma != std::string::npos) {
+            value.resize(comma);
+        }
+        while (!value.empty() && value.front() == ' ') value.erase(0, 1);
+        while (!value.empty() && value.back() == ' ') value.pop_back();
+        return value;
+    }
+    if (const auto it = req._headers.find("X-Real-IP");
+        it != req._headers.end()) {
+        return std::string(it->second.data(), it->second.size());
+    }
+    return {};
+}
+
+std::string extract_user_agent_short(const seastar::http::request& req)
+{
+    constexpr std::size_t MAX_LEN = 80;
+    if (const auto it = req._headers.find("User-Agent");
+        it != req._headers.end()) {
+        std::string ua(it->second.data(), it->second.size());
+        if (ua.size() > MAX_LEN) ua.resize(MAX_LEN);
+        return ua;
+    }
+    return {};
+}
+
+} // namespace anonyme
+
 LoginHandler::LoginHandler(
     std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
     std::shared_ptr<sea::application::AuthService> auth_service,
@@ -51,6 +94,12 @@ LoginHandler::LoginHandler(
  * 4. Generer access_token + refresh_token (JwtService produit le jti UUID v4)
  * 5. Enregistrer refresh_jti dans l'allowlist (TokenTrackingService)
  * 6. Selon token_delivery, poser les Set-Cookie + retourner body
+ *
+ * Logs (sea.security) :
+ * - info  : login_success
+ * - warn  : login_failed avec reason precise (user_not_found,
+ *           password_missing, wrong_password)
+ * - error : login_invalid_user_record (user sans id ou id mal type)
  */
 seastar::future<std::unique_ptr<seastar::http::reply>>
 LoginHandler::handle(const seastar::sstring&,
@@ -59,6 +108,9 @@ LoginHandler::handle(const seastar::sstring&,
 {
     using sea::domain::security::TokenDelivery;
     namespace cookie_helper = sea::http::utils;
+
+    auto sec_log = spdlog::get("sea.security");
+    const std::string client_ip = extract_client_ip(*req);
 
     try {
         // ─── 1. Lecture body ────────────────────────────────────
@@ -81,6 +133,9 @@ LoginHandler::handle(const seastar::sstring&,
             co_await crud_engine_->find_one_by_field("User", "email", email);
 
         if (!user_record.has_value()) {
+            sec_log->warn(
+                "login_failed: reason='user_not_found' email='{}' ip='{}'",
+                email, client_ip);
             co_return errors::make_error_reply(
                 Status::unauthorized, "AUTHENTICATION_ERROR",
                 "Identifiants invalides.");
@@ -89,6 +144,9 @@ LoginHandler::handle(const seastar::sstring&,
         // Recuperation hash password
         const auto pwd_it = user_record->find("password");
         if (pwd_it == user_record->end()) {
+            sec_log->warn(
+                "login_failed: reason='password_missing' email='{}' ip='{}'",
+                email, client_ip);
             co_return errors::make_error_reply(
                 Status::unauthorized, "AUTHENTICATION_ERROR",
                 "Identifiants invalides.");
@@ -98,6 +156,9 @@ LoginHandler::handle(const seastar::sstring&,
             sea::http::utils::dynamic_value_to_string(pwd_it->second);
 
         if (!stored_hash.has_value() || stored_hash->empty()) {
+            sec_log->warn(
+                "login_failed: reason='password_missing' email='{}' ip='{}'",
+                email, client_ip);
             co_return errors::make_error_reply(
                 Status::unauthorized, "AUTHENTICATION_ERROR",
                 "Identifiants invalides.");
@@ -114,6 +175,9 @@ LoginHandler::handle(const seastar::sstring&,
                 );
 
         if (!password_ok) {
+            sec_log->warn(
+                "login_failed: reason='wrong_password' email='{}' ip='{}'",
+                email, client_ip);
             co_return errors::make_error_reply(
                 Status::unauthorized, "AUTHENTICATION_ERROR",
                 "Identifiants invalides.");
@@ -125,6 +189,9 @@ LoginHandler::handle(const seastar::sstring&,
             // Cas suspect : un User en base sans id, ne devrait pas
             // arriver. On logue pour investigation et retourne 500
             // generique (ne pas exposer ce detail interne au client).
+            sec_log->error(
+                "login_invalid_user_record: email='{}' issue='no_id_field'",
+                email);
             spdlog::get("sea.http")->error(
                 "LoginHandler: user found by email='{}' has no id field",
                 email);
@@ -136,6 +203,9 @@ LoginHandler::handle(const seastar::sstring&,
 
         if (!user_id.has_value()) {
             // Pareil : id present mais inconvertible. Cas suspect.
+            sec_log->error(
+                "login_invalid_user_record: email='{}' issue='invalid_id_type'",
+                email);
             spdlog::get("sea.http")->error(
                 "LoginHandler: user (email='{}') has invalid id type",
                 email);
@@ -251,21 +321,19 @@ LoginHandler::handle(const seastar::sstring&,
                 cookie_config_, refresh_token, refresh_token_ttl_
                 );
 
-            // Seastar : on peut ajouter plusieurs Set-Cookie via _headers
-            // (chaine ou via insertion multiple selon l'API).
-            // Le pattern courant : on ajoute deux headers Set-Cookie.
-            // Si la map ne supporte qu'une valeur par cle, on les
-            // concatene avec une virgule (compatible HTTP/1.1 RFC 7230).
-            //
-            // Note Seastar : req->_headers est un std::unordered_map donc
-            // pas de doublons. On utilise add_header() si dispo,
-            // sinon concatenation avec "\r\nSet-Cookie: " (raw header).
             rep->add_header("Set-Cookie", access_cookie);
             rep->add_header("Set-Cookie", refresh_cookie);
         }
 
         rep->set_status(Status::ok);
         rep->write_body("application/json", response_body.dump());
+
+        // Log succes : on logue user_id + email pour audit, role pour
+        // visibilite, ip + device pour traque (forensics).
+        sec_log->info(
+            "login_success: user_id='{}' email='{}' role='{}' ip='{}' device='{}'",
+            *user_id, email, role, client_ip,
+            extract_user_agent_short(*req));
 
         co_return std::move(rep);
 
