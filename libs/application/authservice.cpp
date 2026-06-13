@@ -3,6 +3,7 @@
 #include "security/jwt_service.h"
 
 #include <bcrypt/BCrypt.hpp>
+#include <spdlog/spdlog.h>
 
 #include <stdexcept>
 #include <utility>
@@ -72,6 +73,8 @@ AuthService::AuthService(
 {
     using AuthType = sea::domain::security::AuthType;
 
+    auto log = spdlog::get("sea.application");
+
     /**
      * Valide la configuration de sécurité.
      *
@@ -79,8 +82,19 @@ AuthService::AuthService(
      * - type d'auth valide
      * - TTL cohérents
      * - secret JWT présent ou généré avant
+     *
+     * Si validate() throw, c'est un probleme de configuration grave :
+     * le service ne pourra pas demarrer. On logue avant de propager.
      */
-    config_.validate();
+    try {
+        config_.validate();
+    } catch (const std::exception& e) {
+        if (log) {
+            log->error(
+                "AuthService: configuration validation failed: {}", e.what());
+        }
+        throw;
+    }
 
     /**
      * Pour le moment, AuthService supporte uniquement JWT.
@@ -89,6 +103,11 @@ AuthService::AuthService(
      * c'est ici que tu pourras brancher les autres stratégies.
      */
     if (config_.type() != AuthType::Jwt) {
+        if (log) {
+            log->error(
+                "AuthService: unsupported auth type '{}' (only JWT is supported)",
+                to_string(config_.type()));
+        }
         throw std::runtime_error(
             "AuthService: seul le type JWT est supporte pour le moment "
             "(type recu: " + std::string(to_string(config_.type())) + ")"
@@ -107,12 +126,27 @@ AuthService::AuthService(
         effective_issuer_ = config_.jwt_issuer();
     } else {
         if (service_name.empty()) {
+            if (log) {
+                log->error(
+                    "AuthService: neither jwt_issuer nor service_name provided "
+                    "(impossible to determine issuer)");
+            }
             throw std::runtime_error(
                 "AuthService: ni jwt_issuer ni service_name fourni"
                 );
         }
 
         effective_issuer_ = std::move(service_name);
+    }
+
+    if (log) {
+        log->info(
+            "AuthService initialized: type='{}' issuer='{}' "
+            "access_ttl={}s refresh_ttl={}s",
+            to_string(config_.type()),
+            effective_issuer_,
+            config_.access_token_ttl().count(),
+            config_.refresh_token_ttl().count());
     }
 }
 
