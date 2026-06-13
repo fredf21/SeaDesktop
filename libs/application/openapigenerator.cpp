@@ -1067,19 +1067,102 @@ void OpenApiGenerator::add_auth_paths(json& paths) const {
 // =====================================================================
 
 void OpenApiGenerator::add_health_path(json& paths) const {
+    // ─── /health : liveness probe ───────────────────────────────
+    // Reponse statique, sans dependance. Verifie uniquement que le
+    // process tourne et que le serveur HTTP accepte les requetes.
     paths["/health"]["get"] = {
         {"tags", json::array({"System"})},
-        {"summary", "Health check"},
+        {"summary", "Liveness check"},
+        {"description",
+         "Verifie que le process est vivant. Reponse statique, sans "
+         "dependance externe. A utiliser comme livenessProbe k8s."},
         {"security", json::array()},
         {"responses", {
                           {"200", {
-                                      {"description", "Service is healthy"},
+                                      {"description", "Service is alive"},
                                       {"content", {
                                                       {"application/json", {
                                                                                {"schema", {
                                                                                               {"type", "object"},
                                                                                               {"properties", {
-                                                                                                                 {"status", {{"type", "string"}, {"example", "ok"}}}
+                                                                                                                 {"status", {{"type", "string"}, {"example", "RUNNING"}}}
+                                                                                                             }}
+                                                                                          }}
+                                                                           }}
+                                                  }}
+                                  }}
+                      }}
+    };
+
+    // ─── /health/ready : readiness probe ────────────────────────
+    // Verifie que toutes les dependances critiques (base de donnees,
+    // storage) repondent. Retourne 503 si au moins une est en erreur.
+    paths["/health/ready"]["get"] = {
+        {"tags", json::array({"System"})},
+        {"summary", "Readiness check"},
+        {"description",
+         "Verifie que le service est PRET a traiter des requetes en "
+         "controlant ses dependances critiques (base de donnees, "
+         "storage). Retourne 503 si au moins une dependance est en "
+         "erreur. A utiliser comme readinessProbe k8s."},
+        {"security", json::array()},
+        {"responses", {
+                          {"200", {
+                                      {"description", "Service is ready"},
+                                      {"content", {
+                                                      {"application/json", {
+                                                                               {"schema", {
+                                                                                              {"type", "object"},
+                                                                                              {"required", json::array({"status", "checks", "timestamp"})},
+                                                                                              {"properties", {
+                                                                                                                 {"status", {
+                                                                                                                                {"type", "string"},
+                                                                                                                                {"enum", json::array({"ready"})},
+                                                                                                                                {"example", "ready"}
+                                                                                                                            }},
+                                                                                                                 {"checks", {
+                                                                                                                                {"type", "object"},
+                                                                                                                                {"additionalProperties", {{"type", "string"}}},
+                                                                                                                                {"example", {
+                                                                                                                                                {"database", "ok"},
+                                                                                                                                                {"storage", "ok"}
+                                                                                                                                            }}
+                                                                                                                            }},
+                                                                                                                 {"timestamp", {
+                                                                                                                                   {"type", "string"},
+                                                                                                                                   {"format", "date-time"},
+                                                                                                                                   {"example", "2026-06-13T15:32:00.123Z"}
+                                                                                                                               }}
+                                                                                                             }}
+                                                                                          }}
+                                                                           }}
+                                                  }}
+                                  }},
+                          {"503", {
+                                      {"description", "Service is not ready (one or more dependencies are unhealthy)"},
+                                      {"content", {
+                                                      {"application/json", {
+                                                                               {"schema", {
+                                                                                              {"type", "object"},
+                                                                                              {"required", json::array({"status", "checks", "timestamp"})},
+                                                                                              {"properties", {
+                                                                                                                 {"status", {
+                                                                                                                                {"type", "string"},
+                                                                                                                                {"enum", json::array({"not_ready"})},
+                                                                                                                                {"example", "not_ready"}
+                                                                                                                            }},
+                                                                                                                 {"checks", {
+                                                                                                                                {"type", "object"},
+                                                                                                                                {"additionalProperties", {{"type", "string"}}},
+                                                                                                                                {"example", {
+                                                                                                                                                {"database", "error: Lost connection to MySQL server"},
+                                                                                                                                                {"storage", "ok"}
+                                                                                                                                            }}
+                                                                                                                            }},
+                                                                                                                 {"timestamp", {
+                                                                                                                                   {"type", "string"},
+                                                                                                                                   {"format", "date-time"}
+                                                                                                                               }}
                                                                                                              }}
                                                                                           }}
                                                                            }}
@@ -1088,7 +1171,6 @@ void OpenApiGenerator::add_health_path(json& paths) const {
                       }}
     };
 }
-
 // =====================================================================
 //                       CONVERSION HTTP METHOD
 // =====================================================================
