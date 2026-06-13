@@ -22,7 +22,6 @@ namespace sea::application::logging {
  *   - sea.http         : handlers HTTP, middlewares, routes
  *   - sea.application  : AuthService, TokenTrackingService, PolicyEngine
  *   - sea.persistence  : repositories MySQL/Postgres, schemas
- *   - sea.runtime      : GenericCrudEngine, JsonRecordParser, schemas
  *   - sea.security     : JwtService, secret_store, hash/verify
  *   - seastar          : logs internes Seastar (via hook etape 2.3)
  *
@@ -79,7 +78,6 @@ public:
         static constexpr std::string_view http        = "sea.http";
         static constexpr std::string_view application = "sea.application";
         static constexpr std::string_view persistence = "sea.persistence";
-        static constexpr std::string_view runtime     = "sea.runtime";
         static constexpr std::string_view security    = "sea.security";
         static constexpr std::string_view seastar     = "seastar";
     };

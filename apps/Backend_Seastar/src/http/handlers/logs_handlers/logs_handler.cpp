@@ -296,7 +296,6 @@ LoggersListHandler::handle(const seastar::sstring&,
         std::string(Loggers::http),
         std::string(Loggers::application),
         std::string(Loggers::persistence),
-        std::string(Loggers::runtime),
         std::string(Loggers::security),
         std::string(Loggers::seastar)
     });

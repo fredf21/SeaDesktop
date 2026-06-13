@@ -266,7 +266,6 @@ const std::vector<std::string> kLoggerNames = {
     "sea.http",
     "sea.application",
     "sea.persistence",
-    "sea.runtime",
     "sea.security",
     "seastar",
 };
