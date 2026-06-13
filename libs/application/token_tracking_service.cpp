@@ -8,6 +8,7 @@
 #include <utility>
 
 #include <seastar/core/coroutine.hh>
+#include <spdlog/spdlog.h>
 
 namespace sea::application::auth {
 
@@ -62,6 +63,16 @@ TokenTrackingService::TokenTrackingService(
     , config_(std::move(config))
     , cache_(config_.cache().ttl, config_.cache().max_size)
 {
+    if (auto log = spdlog::get("sea.application")) {
+        log->info(
+            "TokenTrackingService initialized: enabled={} cache={} rotation={} "
+            "refresh_table='{}' revoked_table='{}'",
+            config_.is_enabled() ? "true" : "false",
+            config_.cache().is_enabled() ? "true" : "false",
+            config_.rotation().is_enabled() ? "true" : "false",
+            config_.refresh_table(),
+            config_.revoked_table());
+    }
 }
 
 std::string TokenTrackingService::time_point_to_string(
@@ -78,11 +89,6 @@ std::string TokenTrackingService::time_point_to_string(
     oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
     return oss.str();
 }
-
-
-// ═════════════════════════════════════════════════════════════════════
-// Access tokens — denylist + cache
-// ═════════════════════════════════════════════════════════════════════
 
 seastar::future<bool> TokenTrackingService::is_access_revoked(const std::string& jti)
 {
@@ -167,6 +173,12 @@ seastar::future<> TokenTrackingService::revoke_access(
         cache_.invalidate(jti);
     }
 
+    if (auto log = spdlog::get("sea.application")) {
+        log->info(
+            "revoke_access: jti='{}' user_id='{}' reason='{}'",
+            jti, user_id, reason);
+    }
+
     co_return;
 }
 
@@ -178,34 +190,33 @@ seastar::future<> TokenTrackingService::revoke_access(
 seastar::future<bool> TokenTrackingService::is_refresh_valid(const std::string& jti)
 {
     if (!config_.is_enabled()) {
-        co_return true;   // tracking off -> on accepte tous les refresh signes
+        co_return true;
     }
     if (jti.empty()) {
-        co_return false;   // refresh sans jti = pas valide en mode allowlist
+        co_return false;
     }
 
     const auto record = co_await repository_->find_one_by_field(
         config_.refresh_table(), "jti", jti
         );
     if (!record.has_value()) {
-        co_return false;   // pas dans l'allowlist
+        co_return false;
     }
 
-    // revoked_at present et non vide => revoque
+    // Verifie qu'il n'est pas revoque
     const auto revoked_at = get_string_field(*record, "revoked_at");
     if (revoked_at.has_value() && !revoked_at->empty()) {
         co_return false;
     }
 
-    // expires_at < now => expire
+    // Verifie qu'il n'est pas expire
     const auto expires_at_str = get_string_field(*record, "expires_at");
-    if (!expires_at_str.has_value()) {
-        co_return false;   // donnees corrompues : refuser
-    }
-    const auto expires_at = parse_datetime_string(*expires_at_str);
-    if (!expires_at.has_value() ||
-        *expires_at < std::chrono::system_clock::now()) {
-        co_return false;
+    if (expires_at_str.has_value()) {
+        const auto expires_at = parse_datetime_string(*expires_at_str);
+        if (expires_at.has_value() &&
+            *expires_at < std::chrono::system_clock::now()) {
+            co_return false;
+        }
     }
 
     co_return true;
@@ -235,6 +246,13 @@ seastar::future<> TokenTrackingService::register_refresh(
     if (!ip_address.empty())  record["ip_address"]  = ip_address;
 
     co_await repository_->create(config_.refresh_table(), std::move(record));
+
+    if (auto log = spdlog::get("sea.application")) {
+        log->info(
+            "register_refresh: jti='{}' user_id='{}' ip='{}'",
+            jti, user_id, ip_address);
+    }
+
     co_return;
 }
 
@@ -247,12 +265,16 @@ seastar::future<bool> TokenTrackingService::rotate_refresh(
     const std::string& device_info,
     const std::string& ip_address)
 {
+    auto log = spdlog::get("sea.application");
+
     if (!config_.is_enabled()) {
         co_return false;
     }
 
     const bool rotate_old = config_.rotation().is_enabled();
     bool rotation_ok = true;
+    // Cause d'echec pour le log final
+    std::string failure_reason;
 
     // Idealement on fait ca en transaction. On utilise in_transaction
     // du repo qui passera en mode "memoire" pour InMemory (no-op) et
@@ -266,12 +288,14 @@ seastar::future<bool> TokenTrackingService::rotate_refresh(
                     );
                 if (!old_record.has_value()) {
                     rotation_ok = false;
+                    failure_reason = "old_token_not_found";
                     co_return false;   // pas trouve -> rollback
                 }
 
                 const auto revoked_at = get_string_field(*old_record, "revoked_at");
                 if (revoked_at.has_value() && !revoked_at->empty()) {
                     rotation_ok = false;
+                    failure_reason = "old_token_already_revoked";
                     co_return false;   // deja revoque
                 }
 
@@ -279,6 +303,7 @@ seastar::future<bool> TokenTrackingService::rotate_refresh(
                 const auto id_field = get_string_field(*old_record, "id");
                 if (!id_field.has_value()) {
                     rotation_ok = false;
+                    failure_reason = "old_token_no_id";
                     co_return false;
                 }
 
@@ -293,6 +318,7 @@ seastar::future<bool> TokenTrackingService::rotate_refresh(
                     );
                 if (!update_result.status) {
                     rotation_ok = false;
+                    failure_reason = "update_old_failed";
                     co_return false;
                 }
             }
@@ -311,6 +337,7 @@ seastar::future<bool> TokenTrackingService::rotate_refresh(
                 );
             if (!inserted.has_value()) {
                 rotation_ok = false;
+                failure_reason = "insert_new_failed";
                 co_return false;
             }
 
@@ -318,7 +345,22 @@ seastar::future<bool> TokenTrackingService::rotate_refresh(
         }
         );
 
-    co_return tx_result.committed && rotation_ok;
+    const bool success = tx_result.committed && rotation_ok;
+
+    if (log) {
+        if (success) {
+            log->info(
+                "rotate_refresh: user_id='{}' old_jti='{}' new_jti='{}' ip='{}'",
+                user_id, old_jti, new_jti, ip_address);
+        } else {
+            log->warn(
+                "rotate_refresh_failed: user_id='{}' old_jti='{}' reason='{}'",
+                user_id, old_jti,
+                failure_reason.empty() ? "tx_not_committed" : failure_reason);
+        }
+    }
+
+    co_return success;
 }
 
 seastar::future<bool> TokenTrackingService::revoke_refresh(const std::string& jti)
@@ -331,6 +373,9 @@ seastar::future<bool> TokenTrackingService::revoke_refresh(const std::string& jt
         config_.refresh_table(), "jti", jti
         );
     if (!record.has_value()) {
+        if (auto log = spdlog::get("sea.application")) {
+            log->debug("revoke_refresh: jti='{}' not_found", jti);
+        }
         co_return false;
     }
 
@@ -347,6 +392,17 @@ seastar::future<bool> TokenTrackingService::revoke_refresh(const std::string& jt
     const auto result = co_await repository_->update(
         config_.refresh_table(), *id_field, std::move(update_fields)
         );
+
+    if (result.status) {
+        if (auto log = spdlog::get("sea.application")) {
+            // user_id pour faciliter la traque
+            const auto user_id_str = get_string_field(*record, "user_id");
+            log->info(
+                "revoke_refresh: jti='{}' user_id='{}'",
+                jti, user_id_str.value_or(""));
+        }
+    }
+
     co_return result.status;
 }
 
@@ -361,6 +417,7 @@ seastar::future<> TokenTrackingService::revoke_all_user_tokens(const std::string
     // pourrait ajouter une methode find_all_by_field au repo.
     const auto all_refresh = co_await repository_->find_all(config_.refresh_table());
 
+    std::size_t revoked_count = 0;
     for (const auto& record : all_refresh) {
         const auto user_id_field = get_string_field(record, "user_id");
         if (!user_id_field.has_value() || *user_id_field != user_id) {
@@ -382,6 +439,7 @@ seastar::future<> TokenTrackingService::revoke_all_user_tokens(const std::string
         co_await repository_->update(
             config_.refresh_table(), *id_field, std::move(update_fields)
             );
+        ++revoked_count;
     }
 
     // Invalide tout le cache local (les access du user seront refuses
@@ -389,6 +447,15 @@ seastar::future<> TokenTrackingService::revoke_all_user_tokens(const std::string
     // explicitement revoque dans revoked_table)
     if (config_.cache().is_enabled()) {
         cache_.clear();
+    }
+
+    // Event securite important : force-logout de toutes les sessions
+    // d'un user. Niveau info, voire warn si frequent (admin force,
+    // breach response, etc.).
+    if (auto log = spdlog::get("sea.application")) {
+        log->info(
+            "revoke_all_user_tokens: user_id='{}' revoked_count={}",
+            user_id, revoked_count);
     }
 
     co_return;
@@ -412,40 +479,37 @@ TokenTrackingService::list_active_sessions(const std::string& user_id)
     const auto now = std::chrono::system_clock::now();
 
     for (const auto& record : all_refresh) {
-        const auto rec_user_id = get_string_field(record, "user_id");
-        if (!rec_user_id.has_value() || *rec_user_id != user_id) continue;
+        const auto user_id_field = get_string_field(record, "user_id");
+        if (!user_id_field.has_value() || *user_id_field != user_id) continue;
 
-        // Pas revoque
-        const auto revoked_at = get_string_field(record, "revoked_at");
-        if (revoked_at.has_value() && !revoked_at->empty()) continue;
+        const auto revoked_at_str = get_string_field(record, "revoked_at");
+        if (revoked_at_str.has_value() && !revoked_at_str->empty()) continue;
 
-        // Pas expire
         const auto expires_at_str = get_string_field(record, "expires_at");
         if (!expires_at_str.has_value()) continue;
         const auto expires_at = parse_datetime_string(*expires_at_str);
         if (!expires_at.has_value() || *expires_at < now) continue;
 
-        // Construit la session
-        ActiveSession session;
-        session.jti     = get_string_field(record, "jti").value_or("");
-        session.user_id = *rec_user_id;
-        session.expires_at = *expires_at;
-        if (const auto issued_str = get_string_field(record, "issued_at"); issued_str.has_value()) {
-            session.issued_at = parse_datetime_string(*issued_str).value_or(now);
+        ActiveSession s;
+        s.jti          = get_string_field(record, "jti").value_or("");
+        s.user_id      = user_id;
+        // issued_at : parse depuis le champ string en base
+        if (const auto issued_at_str = get_string_field(record, "issued_at");
+            issued_at_str.has_value()) {
+            const auto issued = parse_datetime_string(*issued_at_str);
+            if (issued.has_value()) {
+                s.issued_at = *issued;
+            }
         }
-        session.device_info = get_string_field(record, "device_info").value_or("");
-        session.ip_address  = get_string_field(record, "ip_address").value_or("");
-
-        sessions.push_back(std::move(session));
+        // expires_at : deja parse plus haut, on le reutilise
+        s.expires_at   = *expires_at;
+        s.device_info  = get_string_field(record, "device_info").value_or("");
+        s.ip_address   = get_string_field(record, "ip_address").value_or("");
+        sessions.push_back(std::move(s));
     }
 
     co_return sessions;
 }
-
-
-// ═════════════════════════════════════════════════════════════════════
-// Maintenance
-// ═════════════════════════════════════════════════════════════════════
 
 seastar::future<TokenTrackingService::CleanupReport>
 TokenTrackingService::cleanup_expired()
@@ -494,6 +558,12 @@ TokenTrackingService::cleanup_expired()
             config_.revoked_table(), *id_field
             );
         if (deleted) ++report.revoked_deleted;
+    }
+
+    if (auto log = spdlog::get("sea.application")) {
+        log->info(
+            "cleanup_expired: refresh_deleted={} revoked_deleted={}",
+            report.refresh_deleted, report.revoked_deleted);
     }
 
     co_return report;
