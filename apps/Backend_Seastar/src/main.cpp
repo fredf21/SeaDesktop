@@ -20,6 +20,7 @@
 #include "http/handlers/auth_handlers/logout_handler.h"
 #include "http/handlers/auth_handlers/refresh_handler.h"
 #include "http/handlers/logs_handlers/logs_handler.h"
+#include "http/handlers/misc_handlers/readiness_handler.h"
 #include "http/routing/pagination_routes.h"
 #include "import_yaml_schema_usecase.h"
 #include "openapigenerator.h"
@@ -562,12 +563,14 @@ int main(int argc, char** argv)
         // : c'est essentiel pour que les transactions englobent INSERT
         // sea_files + INSERT entite dans la meme tx SQL.
         std::shared_ptr<sea::application::FileService> file_service;
+        std::shared_ptr<sea::infrastructure::storage::IFileStorage> file_storage;
         std::shared_ptr<sea::http::handlers::file_upload::FileUploadExtractor> file_extractor;
 
         if (auto bundle = sea::application::FileServiceFactory::make(
                 service, repository, blocking_executor))
         {
             file_service = bundle->file_service;
+            file_storage = bundle->storage;
             // Construit l'extractor cote apps/ (le factory ne le fait pas
             // car FileUploadExtractor vit dans la couche HTTP, au-dessus
             // de sea_application).
@@ -856,7 +859,7 @@ int main(int argc, char** argv)
                                             has_auth_source,
                                             mw_context,
                                             blocking_executor
-                                            , token_tracking](seastar::httpd::routes& r) {
+                                            , token_tracking, file_storage](seastar::httpd::routes& r) {
 
                 using namespace sea::http::routing;
 
@@ -868,6 +871,22 @@ int main(int argc, char** argv)
                     seastar::httpd::url("/health"),
                     wrap_with_middlewares(
                         std::make_unique<sea::http::handlers::misc::HealthHandler>(),
+                        false,
+                        mw_context
+                        ).release()
+                    );
+
+                // /health/ready : verifie les dependances (DB, storage).
+                // file_storage peut etre nullptr si le schema ne declare
+                // aucun champ File ; ReadinessHandler le gere.
+                r.add(
+                    seastar::httpd::operation_type::GET,
+                    seastar::httpd::url("/health/ready"),
+                    wrap_with_middlewares(
+                        std::make_unique<sea::http::handlers::misc::ReadinessHandler>(
+                            crud_engine->get_repository(),
+                            file_storage
+                            ),
                         false,
                         mw_context
                         ).release()
