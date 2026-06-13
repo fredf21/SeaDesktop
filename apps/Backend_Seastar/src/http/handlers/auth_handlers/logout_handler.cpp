@@ -7,6 +7,7 @@
 #include "security/jwt_service.h"
 
 #include <nlohmann/json.hpp>
+#include <spdlog/spdlog.h>
 #include <utility>
 
 namespace sea::http::handlers::auth {
@@ -14,6 +15,29 @@ namespace sea::http::handlers::auth {
 using json = nlohmann::json;
 
 namespace {
+
+// ─────────────────────────────────────────────────────────────────────
+// Helper interne pour extraire l'IP client (cf. login/register).
+// ─────────────────────────────────────────────────────────────────────
+std::string extract_client_ip(const seastar::http::request& req)
+{
+    if (const auto it = req._headers.find("X-Forwarded-For");
+        it != req._headers.end()) {
+        std::string value(it->second.data(), it->second.size());
+        const auto comma = value.find(',');
+        if (comma != std::string::npos) {
+            value.resize(comma);
+        }
+        while (!value.empty() && value.front() == ' ') value.erase(0, 1);
+        while (!value.empty() && value.back() == ' ') value.pop_back();
+        return value;
+    }
+    if (const auto it = req._headers.find("X-Real-IP");
+        it != req._headers.end()) {
+        return std::string(it->second.data(), it->second.size());
+    }
+    return {};
+}
 
 /**
  * Extrait l'access_token depuis :
@@ -80,12 +104,26 @@ LogoutHandler::LogoutHandler(
 {
 }
 
+/**
+ * Logs (sea.security) :
+ * - info logout: avec details du token revoque (user_id, jti, ip)
+ * - info logout: anonymous quand aucun token valide n'est trouve
+ */
 seastar::future<std::unique_ptr<seastar::http::reply>>
 LogoutHandler::handle(const seastar::sstring&,
                       std::unique_ptr<seastar::http::request> req,
                       std::unique_ptr<seastar::http::reply> rep)
 {
     namespace cookie_helper = sea::http::utils;
+
+    auto sec_log = spdlog::get("sea.security");
+    const std::string client_ip = extract_client_ip(*req);
+
+    // Variables pour le log final : on les remplit a mesure qu'on
+    // identifie le user/jti revoque.
+    std::string logged_user_id;
+    std::string revoked_access_jti;
+    std::string revoked_refresh_jti;
 
     // ─── 1. Lecture body (optionnel pour logout) ────────────────
     std::string body_str;
@@ -125,6 +163,8 @@ LogoutHandler::handle(const seastar::sstring&,
                 exp_time_point,
                 "logout"
                 );
+            logged_user_id = claims->user_id;
+            revoked_access_jti = claims->jti;
         }
     }
 
@@ -141,6 +181,12 @@ LogoutHandler::handle(const seastar::sstring&,
 
         if (claims.has_value() && !claims->jti.empty()) {
             co_await token_tracking_->revoke_refresh(claims->jti);
+            // user_id peut ne pas avoir ete capture si l'access etait
+            // expire/invalide : on le complete depuis le refresh.
+            if (logged_user_id.empty()) {
+                logged_user_id = claims->user_id;
+            }
+            revoked_refresh_jti = claims->jti;
         }
     }
 
@@ -158,6 +204,24 @@ LogoutHandler::handle(const seastar::sstring&,
     rep->set_status(seastar::http::reply::status_type::ok);
     rep->write_body("application/json",
                     json{{"message", "Deconnexion reussie"}}.dump());
+
+    // ─── 7. Log securite ────────────────────────────────────────
+    // Trois cas :
+    //   - On a revoque au moins un token  -> log avec details
+    //   - Aucun token valide              -> log anonyme
+    if (!logged_user_id.empty()) {
+        sec_log->info(
+            "logout: user_id='{}' ip='{}' access_jti='{}' refresh_jti='{}'",
+            logged_user_id,
+            client_ip,
+            revoked_access_jti,
+            revoked_refresh_jti);
+    } else {
+        // Cas frequent : utilisateur deja deconnecte (cookies absents
+        // ou tokens expires). Le client appelle quand meme /logout pour
+        // forcer le clear des cookies. Pas une erreur, juste un signal.
+        sec_log->info("logout: anonymous ip='{}'", client_ip);
+    }
 
     co_return std::move(rep);
 }
