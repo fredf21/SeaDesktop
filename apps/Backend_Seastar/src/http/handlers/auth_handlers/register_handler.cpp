@@ -18,6 +18,35 @@ using json = nlohmann::json;
 namespace errors = sea::http::errors;
 using Status = seastar::http::reply::status_type;
 
+namespace {
+
+// ─────────────────────────────────────────────────────────────────────
+// Helper interne pour extraire l'IP client (cf. login_handler).
+// On ne deduplicue pas dans un common util pour eviter une dependance
+// nouvelle. Si plus tard d'autres handlers en ont besoin, on factorisera.
+// ─────────────────────────────────────────────────────────────────────
+std::string extract_client_ip(const seastar::http::request& req)
+{
+    if (const auto it = req._headers.find("X-Forwarded-For");
+        it != req._headers.end()) {
+        std::string value(it->second.data(), it->second.size());
+        const auto comma = value.find(',');
+        if (comma != std::string::npos) {
+            value.resize(comma);
+        }
+        while (!value.empty() && value.front() == ' ') value.erase(0, 1);
+        while (!value.empty() && value.back() == ' ') value.pop_back();
+        return value;
+    }
+    if (const auto it = req._headers.find("X-Real-IP");
+        it != req._headers.end()) {
+        return std::string(it->second.data(), it->second.size());
+    }
+    return {};
+}
+
+} // namespace anonyme
+
 RegisterHandler::RegisterHandler(
     std::shared_ptr<sea::infrastructure::runtime::GenericCrudEngine> crud_engine,
     std::shared_ptr<sea::infrastructure::runtime::SchemaRuntimeRegistry> registry,
@@ -41,12 +70,23 @@ RegisterHandler::RegisterHandler(
  * 3. Hasher le password (hors reactor)
  * 4. Générer ID si nécessaire
  * 5. Créer l'utilisateur
+ *
+ * Logs (sea.security) :
+ * - info  : register_success
+ * - warn  : register_failed reason='email_exists'
+ *
+ * Les erreurs de validation (champ manquant, email mal formate, etc.)
+ * ne sont PAS loguees dans sea.security - ce sont des erreurs de
+ * formulaire, pas des events securite. Trop de bruit sinon.
  */
 seastar::future<std::unique_ptr<seastar::http::reply>>
 RegisterHandler::handle(const seastar::sstring&,
                         std::unique_ptr<seastar::http::request> req,
                         std::unique_ptr<seastar::http::reply> rep)
 {
+    auto sec_log = spdlog::get("sea.security");
+    const std::string client_ip = extract_client_ip(*req);
+
     const auto* entity = registry_->find_entity("User");
 
     if (entity == nullptr) {
@@ -86,6 +126,12 @@ RegisterHandler::handle(const seastar::sstring&,
             co_await crud_engine_->find_one_by_field("User", "email", *email);
 
         if (existing_user.has_value()) {
+            // Event securite : quelqu'un tente de creer un compte avec
+            // un email deja pris. Peut etre une faute de frappe, ou une
+            // tentative d'enumeration. On logue pour analyse.
+            sec_log->warn(
+                "register_failed: reason='email_exists' email='{}' ip='{}'",
+                *email, client_ip);
             co_return errors::make_error_reply(
                 Status::conflict, "CONFLICT",
                 "Cet email existe deja.");
@@ -196,6 +242,24 @@ RegisterHandler::handle(const seastar::sstring&,
             co_return errors::make_internal_error_reply();
         }
 
+        // Extraction du user_id du record cree (pour le log)
+        std::string created_user_id;
+        std::string created_role = "user";
+        if (const auto id_it = result.record->find("id");
+            id_it != result.record->end()) {
+            const auto id_str = sea::http::utils::dynamic_value_to_string_id(
+                id_it->second);
+            if (id_str.has_value()) created_user_id = *id_str;
+        }
+        if (const auto role_it = result.record->find("role");
+            role_it != result.record->end()) {
+            const auto role_str = sea::http::utils::dynamic_value_to_string(
+                role_it->second);
+            if (role_str.has_value() && !role_str->empty()) {
+                created_role = *role_str;
+            }
+        }
+
         // Nettoyage réponse
         json user_json =
             json::parse(sea::http::utils::record_to_json(*result.record));
@@ -204,6 +268,13 @@ RegisterHandler::handle(const seastar::sstring&,
 
         rep->set_status(Status::created);
         rep->write_body("application/json", user_json.dump());
+
+        // Log succes apres construction de la reponse, juste avant
+        // co_return : on ne logue 'success' que sur les flux qui
+        // aboutissent reellement.
+        sec_log->info(
+            "register_success: user_id='{}' email='{}' role='{}' ip='{}'",
+            created_user_id, *email, created_role, client_ip);
 
         co_return std::move(rep);
 
