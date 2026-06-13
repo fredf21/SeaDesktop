@@ -7,6 +7,7 @@
 #include "token_tracking_service.h"
 
 #include <nlohmann/json.hpp>
+#include <spdlog/spdlog.h>
 #include <utility>
 #include "security/jwt_service.h"
 
@@ -17,6 +18,30 @@ namespace errors = sea::http::errors;
 using Status = seastar::http::reply::status_type;
 
 namespace {
+
+// ─────────────────────────────────────────────────────────────────────
+// Helper interne pour extraire l'IP client.
+// Pas factorise dans un common util pour eviter une dependance nouvelle.
+// ─────────────────────────────────────────────────────────────────────
+std::string extract_client_ip(const seastar::http::request& req)
+{
+    if (const auto it = req._headers.find("X-Forwarded-For");
+        it != req._headers.end()) {
+        std::string value(it->second.data(), it->second.size());
+        const auto comma = value.find(',');
+        if (comma != std::string::npos) {
+            value.resize(comma);
+        }
+        while (!value.empty() && value.front() == ' ') value.erase(0, 1);
+        while (!value.empty() && value.back() == ' ') value.pop_back();
+        return value;
+    }
+    if (const auto it = req._headers.find("X-Real-IP");
+        it != req._headers.end()) {
+        return std::string(it->second.data(), it->second.size());
+    }
+    return {};
+}
 
 /**
  * Extrait l'access_token depuis :
@@ -61,16 +86,36 @@ ProtectedHandler::ProtectedHandler(
 {
 }
 
+/**
+ * Logs (sea.security) :
+ * - debug auth_failed reason='token_missing'   -> ip, path
+ *         (frequent, ne pas spammer en info)
+ * - warn  auth_failed reason='invalid_token'   -> ip, path
+ *         (token corrompu/expire ; possible vieux client)
+ * - warn  auth_failed reason='revoked'         -> user_id, jti, ip, path
+ *         (token explicitement revoque ; suspect)
+ *
+ * Pas de log de succes : chaque requete authentifiee passe ici et
+ * spammer en info noierait les vraies alertes. Le succes est implicite
+ * dans les logs HTTP par requete (a activer separement si besoin).
+ */
 seastar::future<std::unique_ptr<seastar::http::reply>>
 ProtectedHandler::handle(const seastar::sstring& path,
                          std::unique_ptr<seastar::http::request> req,
                          std::unique_ptr<seastar::http::reply> rep)
 {
+    auto sec_log = spdlog::get("sea.security");
+    const std::string client_ip = extract_client_ip(*req);
+    const std::string url_path(req->_url.data(), req->_url.size());
+
     // ─── 1. Extraction token : Bearer prioritaire, cookie fallback ──
     const auto token = extract_access_token(
         *req, cookie_config_.access_token_name()
         );
     if (!token.has_value() || token->empty()) {
+        sec_log->debug(
+            "auth_failed: reason='token_missing' ip='{}' path='{}'",
+            client_ip, url_path);
         co_return errors::make_error_reply(
             Status::unauthorized, "AUTHENTICATION_ERROR",
             "Token manquant.");
@@ -81,6 +126,9 @@ ProtectedHandler::handle(const seastar::sstring& path,
         co_await auth_service_->verify_token_async(*token, *blocking_executor_);
 
     if (!claims.has_value()) {
+        sec_log->warn(
+            "auth_failed: reason='invalid_token' ip='{}' path='{}'",
+            client_ip, url_path);
         co_return errors::make_error_reply(
             Status::unauthorized, "AUTHENTICATION_ERROR",
             "Token invalide.");
@@ -106,6 +154,18 @@ ProtectedHandler::handle(const seastar::sstring& path,
                 raw_claims->jti
                 );
             if (revoked) {
+                // Token cryptographiquement valide mais explicitement
+                // revoque. Cas typiques :
+                //   - Logout deja effectue
+                //   - Force-logout admin
+                //   - Vol de cookie : attaquant utilise un token deja
+                //     revoque par le legitime owner
+                // Log warn avec user_id + jti pour traque.
+                sec_log->warn(
+                    "auth_failed: reason='revoked' user_id='{}' "
+                    "jti='{}' ip='{}' path='{}'",
+                    raw_claims->user_id, raw_claims->jti,
+                    client_ip, url_path);
                 co_return errors::make_error_reply(
                     Status::unauthorized, "AUTHENTICATION_ERROR",
                     "Token revoque.");
