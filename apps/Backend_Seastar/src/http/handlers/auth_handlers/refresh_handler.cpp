@@ -21,6 +21,29 @@ using Status = seastar::http::reply::status_type;
 
 namespace {
 
+// ─────────────────────────────────────────────────────────────────────
+// Helper interne pour extraire l'IP client (cf. login/register/logout).
+// ─────────────────────────────────────────────────────────────────────
+std::string extract_client_ip(const seastar::http::request& req)
+{
+    if (const auto it = req._headers.find("X-Forwarded-For");
+        it != req._headers.end()) {
+        std::string value(it->second.data(), it->second.size());
+        const auto comma = value.find(',');
+        if (comma != std::string::npos) {
+            value.resize(comma);
+        }
+        while (!value.empty() && value.front() == ' ') value.erase(0, 1);
+        while (!value.empty() && value.back() == ' ') value.pop_back();
+        return value;
+    }
+    if (const auto it = req._headers.find("X-Real-IP");
+        it != req._headers.end()) {
+        return std::string(it->second.data(), it->second.size());
+    }
+    return {};
+}
+
 /**
  * Lit le refresh_token depuis le body JSON ou le cookie configure.
  * Le body est prioritaire (compatible API/CLI), le cookie est fallback.
@@ -77,6 +100,16 @@ RefreshHandler::RefreshHandler(
 {
 }
 
+/**
+ * Logs (sea.security) :
+ * - info  refresh_success                          -> user_id, ip, rotation
+ * - warn  refresh_failed reason='token_missing'    -> ip
+ * - warn  refresh_failed reason='invalid_jwt'      -> ip
+ * - warn  refresh_failed reason='not_in_allowlist' -> jti, ip (CRITIQUE :
+ *         tente de reutiliser un token revoque ; possible vol de cookie)
+ * - warn  refresh_failed reason='user_not_found'   -> user_id, ip
+ * - error refresh_failed reason='rotation_failed'  -> user_id, jti
+ */
 seastar::future<std::unique_ptr<seastar::http::reply>>
 RefreshHandler::handle(const seastar::sstring&,
                        std::unique_ptr<seastar::http::request> req,
@@ -84,6 +117,9 @@ RefreshHandler::handle(const seastar::sstring&,
 {
     using sea::domain::security::TokenDelivery;
     namespace cookie_helper = sea::http::utils;
+
+    auto sec_log = spdlog::get("sea.security");
+    const std::string client_ip = extract_client_ip(*req);
 
     try {
         // ─── 1. Lecture body (pour /refresh, le body est optionnel) ──
@@ -101,6 +137,9 @@ RefreshHandler::handle(const seastar::sstring&,
             body_str
             );
         if (!refresh_token_opt.has_value() || refresh_token_opt->empty()) {
+            sec_log->warn(
+                "refresh_failed: reason='token_missing' ip='{}'",
+                client_ip);
             co_return errors::make_error_reply(
                 Status::bad_request, "BAD_REQUEST",
                 "refresh_token manquant.");
@@ -117,6 +156,11 @@ RefreshHandler::handle(const seastar::sstring&,
         };
         const auto jwt_claims = JwtService::verify_token(verify_params);
         if (!jwt_claims.has_value()) {
+            // Token invalide cote signature/exp : peut etre normal (token
+            // expire) ou suspect (token forge). On logue dans les 2 cas.
+            sec_log->warn(
+                "refresh_failed: reason='invalid_jwt' ip='{}'",
+                client_ip);
             co_return errors::make_error_reply(
                 Status::unauthorized, "AUTHENTICATION_ERROR",
                 "refresh_token invalide.");
@@ -126,6 +170,9 @@ RefreshHandler::handle(const seastar::sstring&,
         const std::string refresh_jti = jwt_claims->jti;
 
         if (user_id.empty()) {
+            sec_log->warn(
+                "refresh_failed: reason='token_incomplete' jti='{}' ip='{}'",
+                refresh_jti, client_ip);
             co_return errors::make_error_reply(
                 Status::unauthorized, "AUTHENTICATION_ERROR",
                 "refresh_token incomplet.");
@@ -135,6 +182,18 @@ RefreshHandler::handle(const seastar::sstring&,
         if (token_tracking_ && !refresh_jti.empty()) {
             const bool valid = co_await token_tracking_->is_refresh_valid(refresh_jti);
             if (!valid) {
+                // CRITIQUE : token cryptographiquement valide MAIS pas
+                // dans l'allowlist. Cas typiques :
+                //   - Token deja revoque (logout)
+                //   - Token deja utilise puis rotate (apres rotation, le
+                //     vieux n'est plus valide)
+                //   - Vol de cookie : l'attaquant tente d'utiliser un
+                //     vieux token capture
+                // Tous ces cas meritent un warn pour analyse.
+                sec_log->warn(
+                    "refresh_failed: reason='not_in_allowlist' "
+                    "user_id='{}' jti='{}' ip='{}'",
+                    user_id, refresh_jti, client_ip);
                 co_return errors::make_error_reply(
                     Status::unauthorized, "AUTHENTICATION_ERROR",
                     "refresh_token revoque ou expire.");
@@ -145,6 +204,11 @@ RefreshHandler::handle(const seastar::sstring&,
         const auto user_record =
             co_await crud_engine_->get_by_id("User", user_id);
         if (!user_record.has_value()) {
+            // Token valide mais user supprime entre temps : log pour
+            // detection d'incoherence.
+            sec_log->warn(
+                "refresh_failed: reason='user_not_found' user_id='{}' ip='{}'",
+                user_id, client_ip);
             co_return errors::make_error_reply(
                 Status::unauthorized, "AUTHENTICATION_ERROR",
                 "Utilisateur introuvable.");
@@ -240,6 +304,12 @@ RefreshHandler::handle(const seastar::sstring&,
                 );
 
             if (!rotated) {
+                // Erreur DB pendant la rotation atomique : cas suspect,
+                // ne devrait pas arriver. Niveau error pour visibilite.
+                sec_log->error(
+                    "refresh_failed: reason='rotation_failed' "
+                    "user_id='{}' jti='{}'",
+                    user_id, refresh_jti);
                 co_return errors::make_error_reply(
                     Status::unauthorized, "AUTHENTICATION_ERROR",
                     "Rotation du refresh impossible.");
@@ -283,6 +353,17 @@ RefreshHandler::handle(const seastar::sstring&,
 
         rep->set_status(Status::ok);
         rep->write_body("application/json", response_body.dump());
+
+        // Log succes (apres construction de la reponse, juste avant
+        // co_return).
+        sec_log->info(
+            "refresh_success: user_id='{}' ip='{}' rotation={} "
+            "old_jti='{}' new_jti='{}'",
+            user_id, client_ip,
+            rotation_enabled ? "true" : "false",
+            refresh_jti,
+            rotation_enabled ? new_refresh_jti : refresh_jti);
+
         co_return std::move(rep);
 
     } catch (const errors::HttpException& e) {
