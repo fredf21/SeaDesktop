@@ -2714,3 +2714,146 @@ services:
         [[maybe_unused]] auto project = parser.parse_project_file(path.toStdString());
     });
 }
+
+void TestYamlSchemaParser::envVariableWithDefault_whenMissing_shouldUseDefault() {
+    // ${VAR:-default} : si VAR n'est pas definie, "default" est utilise.
+    // Le YAML doit parser sans erreur, et host vaut "fallback-host".
+    qunsetenv("SEA_TEST_ABSENT_HOST");
+
+    const QString path = writeTempYaml(R"(
+services:
+  - name: ApiService
+    database:
+      type: mysql
+      host: "${SEA_TEST_ABSENT_HOST:-fallback-host}"
+      port: 3306
+      database_name: testdb
+      username: ""
+      password: ""
+    security:
+      authentication:
+        type: jwt
+        algorithm: HS256
+        secret: a_very_long_secret_key_at_least_32c
+        access_token_ttl: 15m
+        refresh_token_ttl: 7d
+)");
+
+    YamlSchemaParser parser;
+    sea::domain::Project project;
+    verifyNoThrow([&]() {
+        project = parser.parse_project_file(path.toStdString());
+    });
+
+    QVERIFY(!project.services.empty());
+    QCOMPARE(QString::fromStdString(project.services[0].database_config.host),
+             QString("fallback-host"));
+}
+
+void TestYamlSchemaParser::envVariableWithDefault_whenEmpty_shouldUseDefault() {
+    // Convention POSIX shell : ":-" remplace aussi les valeurs vides
+    // (pas seulement les variables absentes). C'est un point important
+    // car en Docker une variable peut etre declaree mais vide.
+    qputenv("SEA_TEST_EMPTY_HOST", "");
+
+    const QString path = writeTempYaml(R"(
+services:
+  - name: ApiService
+    database:
+      type: mysql
+      host: "${SEA_TEST_EMPTY_HOST:-fallback-host}"
+      port: 3306
+      database_name: testdb
+      username: ""
+      password: ""
+    security:
+      authentication:
+        type: jwt
+        algorithm: HS256
+        secret: a_very_long_secret_key_at_least_32c
+        access_token_ttl: 15m
+        refresh_token_ttl: 7d
+)");
+
+    YamlSchemaParser parser;
+    sea::domain::Project project;
+    verifyNoThrow([&]() {
+        project = parser.parse_project_file(path.toStdString());
+    });
+
+    QCOMPARE(QString::fromStdString(project.services[0].database_config.host),
+             QString("fallback-host"));
+
+    qunsetenv("SEA_TEST_EMPTY_HOST");
+}
+
+void TestYamlSchemaParser::envVariableWithDefault_whenSet_shouldUseEnvValue() {
+    // Si la variable est definie et non vide, sa valeur l'emporte
+    // sur le defaut. C'est le scenario nominal en Docker.
+    qputenv("SEA_TEST_DEFINED_HOST", "real-host-from-env");
+
+    const QString path = writeTempYaml(R"(
+services:
+  - name: ApiService
+    database:
+      type: mysql
+      host: "${SEA_TEST_DEFINED_HOST:-fallback-host}"
+      port: 3306
+      database_name: testdb
+      username: ""
+      password: ""
+    security:
+      authentication:
+        type: jwt
+        algorithm: HS256
+        secret: a_very_long_secret_key_at_least_32c
+        access_token_ttl: 15m
+        refresh_token_ttl: 7d
+)");
+
+    YamlSchemaParser parser;
+    sea::domain::Project project;
+    verifyNoThrow([&]() {
+        project = parser.parse_project_file(path.toStdString());
+    });
+
+    QCOMPARE(QString::fromStdString(project.services[0].database_config.host),
+             QString("real-host-from-env"));
+
+    qunsetenv("SEA_TEST_DEFINED_HOST");
+}
+
+void TestYamlSchemaParser::envVariableWithEmptyDefault_whenMissing_shouldReturnEmpty() {
+    // ${VAR:-} : defaut vide explicite. Si VAR est absente, on obtient
+    // une chaine vide -- ce qui est valide pour username/password MySQL
+    // (utilise par exemple en dev local).
+    qunsetenv("SEA_TEST_OPTIONAL_USER");
+
+    const QString path = writeTempYaml(R"(
+services:
+  - name: ApiService
+    database:
+      type: mysql
+      host: 127.0.0.1
+      port: 3306
+      database_name: testdb
+      username: "${SEA_TEST_OPTIONAL_USER:-}"
+      password: ""
+    security:
+      authentication:
+        type: jwt
+        algorithm: HS256
+        secret: a_very_long_secret_key_at_least_32c
+        access_token_ttl: 15m
+        refresh_token_ttl: 7d
+)");
+
+    YamlSchemaParser parser;
+    sea::domain::Project project;
+    verifyNoThrow([&]() {
+        project = parser.parse_project_file(path.toStdString());
+    });
+
+    QCOMPARE(QString::fromStdString(project.services[0].database_config.username),
+             QString(""));
+}

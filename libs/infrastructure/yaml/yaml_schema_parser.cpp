@@ -128,23 +128,55 @@ std::string YamlSchemaParser::require_string(const YAML::Node& node,
 
 std::string YamlSchemaParser::resolve_env(const std::string &value) const
 {
-    if (value.size() >= 4 &&
-        value[0] == '$' &&
-        value[1] == '{' &&
-        value.back() == '}') {
+    // Pattern accepte :
+    //   "${VAR}"           -> resout VAR ou throw si absente
+    //   "${VAR:-default}"  -> resout VAR ou utilise "default" si absente/vide
+    //
+    // La valeur DOIT etre exactement de la forme "${...}" pour etre
+    // resolue : pas de substitution partielle au sein d'une chaine
+    // (ex: "prefix-${VAR}-suffix" est traite litteralement).
+    //
+    // Le defaut peut etre vide : "${VAR:-}" donne "" si VAR est absente.
+    if (value.size() < 4 ||
+        value[0] != '$' ||
+        value[1] != '{' ||
+        value.back() != '}') {
+        return value;
+    }
 
-        const std::string var_name = value.substr(2, value.size() - 3);
-        const char* env_value = std::getenv(var_name.c_str());
+    const std::string inner = value.substr(2, value.size() - 3);
 
+    // Recherche du separateur ":-" qui introduit la valeur par defaut.
+    const auto sep_pos = inner.find(":-");
+
+    if (sep_pos == std::string::npos) {
+        // Forme simple "${VAR}" : on resout strictement ou on throw.
+        const char* env_value = std::getenv(inner.c_str());
         if (env_value == nullptr) {
             throw sea::sea_errors_handling::YamlParsingException(
-                "[YAML PARSING EXCEPTION] Missing environment variable: " + var_name
+                "[YAML PARSING EXCEPTION] Missing environment variable: " + inner
                 );
         }
-
         return std::string(env_value);
     }
-    return value;
+
+    // Forme avec defaut "${VAR:-default}".
+    const std::string var_name = inner.substr(0, sep_pos);
+    const std::string default_value = inner.substr(sep_pos + 2);
+
+    if (var_name.empty()) {
+        throw sea::sea_errors_handling::YamlParsingException(
+            "[YAML PARSING EXCEPTION] Empty variable name in: " + value
+            );
+    }
+
+    const char* env_value = std::getenv(var_name.c_str());
+    if (env_value == nullptr || env_value[0] == '\0') {
+        // Conforme a la convention shell POSIX : ":-" remplace aussi
+        // les valeurs vides, pas seulement les variables absentes.
+        return default_value;
+    }
+    return std::string(env_value);
 }
 
 sea::domain::Project YamlSchemaParser::parse_project_file(const std::string& file_path) const {
@@ -1430,10 +1462,10 @@ YamlSchemaParser::parse_database_config_node(const YAML::Node& node) const {
     const std::string type_str = get_or_default<std::string>(node, "type", "memory");
     config.type = parse_database_type(type_str);
 
-    config.host          = get_or_default<std::string>(node, "host", config.host);
+    config.host          = resolve_env(get_or_default<std::string>(node, "host", config.host));
     config.port          = get_or_default<int>(node, "port", config.port);
     config.database_name = get_or_default<std::string>(node, "database_name", "");
-    config.username      = get_or_default<std::string>(node, "username", "");
+    config.username      = resolve_env(get_or_default<std::string>(node, "username", ""));
     config.password      = get_or_default<std::string>(node, "password", "");
     if (const YAML::Node preset = node["migrations"]) {
 

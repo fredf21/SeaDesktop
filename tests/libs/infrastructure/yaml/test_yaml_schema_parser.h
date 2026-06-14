@@ -247,4 +247,8 @@ private slots:
     void invalidSizeSuffix_shouldThrow();
     void envVariableResolution_shouldSucceed();
     void envVariableMissing_shouldThrow();
+    void envVariableWithDefault_whenMissing_shouldUseDefault();
+    void envVariableWithDefault_whenEmpty_shouldUseDefault();
+    void envVariableWithDefault_whenSet_shouldUseEnvValue();
+    void envVariableWithEmptyDefault_whenMissing_shouldReturnEmpty();
 };
