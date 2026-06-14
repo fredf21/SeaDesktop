@@ -1464,9 +1464,9 @@ YamlSchemaParser::parse_database_config_node(const YAML::Node& node) const {
 
     config.host          = resolve_env(get_or_default<std::string>(node, "host", config.host));
     config.port          = get_or_default<int>(node, "port", config.port);
-    config.database_name = get_or_default<std::string>(node, "database_name", "");
+    config.database_name = resolve_env(get_or_default<std::string>(node, "database_name", ""));
     config.username      = resolve_env(get_or_default<std::string>(node, "username", ""));
-    config.password      = get_or_default<std::string>(node, "password", "");
+    config.password      = resolve_env(get_or_default<std::string>(node, "password", ""));
     if (const YAML::Node preset = node["migrations"]) {
 
     }
