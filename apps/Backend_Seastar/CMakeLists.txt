@@ -93,7 +93,7 @@ add_executable(backend_seastar
     src/http/utils/cookie_helper.h src/http/utils/cookie_helper.cpp
     src/http/handlers/auth_handlers/refresh_handler.h src/http/handlers/auth_handlers/refresh_handler.cpp
     src/http/handlers/auth_handlers/logout_handler.h src/http/handlers/auth_handlers/logout_handler.cpp
-    src/http/handlers/logs_handlers/logs_handler.h src/http/handlers/logs_handlers/logs_handler.cpp
+    src/http/handlers/admin_handlers/logs_handler.h src/http/handlers/admin_handlers/logs_handler.cpp
     src/http/utils/multipart_parser.h src/http/utils/multipart_parser.cpp
     src/http/handlers/file_handlers/file_upload_extractor.h src/http/handlers/file_handlers/file_upload_extractor.cpp
     src/http/handlers/file_handlers/file_download_by_field_handler.h src/http/handlers/file_handlers/file_download_by_field_handler.cpp
