@@ -16,6 +16,7 @@
 #include "authservice.h"
 #include "fileservice.h"
 #include "fileservicefactory.h"
+#include "http/handlers/admin_handlers/create_project_handler.h"
 #include "http/handlers/admin_handlers/get_project_handler.h"
 #include "http/handlers/admin_handlers/save_project_handler.h"
 #include "http/handlers/file_handlers/file_upload_extractor.h"
@@ -1077,7 +1078,25 @@ int main(int argc, char** argv)
                                 mw_context
                                 ).release()
                             );
-                        // /admin/projects : liste les projets YAML disponibles
+                        // POST /admin/projects/{file} : cree un nouveau YAML
+                        {
+                            auto create_proj_handler =
+                                std::make_unique<sea::http::handlers::admin::CreateProjectHandler>(
+                                    configs_dir,
+                                    service.access_control.admin_role()
+                                    );
+                            auto wrapped = sea::http::routing::wrap_with_middlewares(
+                                std::move(create_proj_handler),
+                                true,
+                                mw_context
+                                );
+                            auto* rule = sea::http::routing::build_match_rule_from_template(
+                                "/admin/projects/{file}",
+                                wrapped.release()
+                                );
+                            r.add(rule, seastar::httpd::operation_type::POST);
+                        }
+                        // GET /admin/projects : liste les projets YAML disponibles
                         r.add(
                             seastar::httpd::operation_type::GET,
                             seastar::httpd::url("/admin/projects"),
