@@ -24,8 +24,17 @@ set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
 # Compile spdlog en bibliothèque (au lieu de header-only)
 # temps de compilation des cibles fortement réduit
 set(SPDLOG_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "" FORCE)
-
+find_package(fmt QUIET)
+if(fmt_FOUND)
+    message(STATUS "Using system fmt (found at ${fmt_DIR})")
+    set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "" FORCE)
+else()
+    message(WARNING
+        "System fmt not found. spdlog will use its bundled fmt. "
+        "If your build links Seastar (which depends on system fmt), "
+        "expect ABI mismatches at runtime. Install libfmt-dev to fix.")
+    set(SPDLOG_FMT_EXTERNAL OFF CACHE BOOL "" FORCE)
+endif()
 FetchContent_Declare(
     spdlog
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
