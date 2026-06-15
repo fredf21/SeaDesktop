@@ -17,6 +17,7 @@
 #include "fileservice.h"
 #include "fileservicefactory.h"
 #include "http/handlers/admin_handlers/create_project_handler.h"
+#include "http/handlers/admin_handlers/delete_project_handler.h"
 #include "http/handlers/admin_handlers/get_project_handler.h"
 #include "http/handlers/admin_handlers/save_project_handler.h"
 #include "http/handlers/file_handlers/file_upload_extractor.h"
@@ -1144,6 +1145,24 @@ int main(int argc, char** argv)
                                 wrapped.release()
                                 );
                             r.add(rule, seastar::httpd::operation_type::PUT);
+                        }
+                        // DELETE /admin/projects/{file} : supprime un YAML
+                        {
+                            auto delete_proj_handler =
+                                std::make_unique<sea::http::handlers::admin::DeleteProjectHandler>(
+                                    configs_dir,
+                                    service.access_control.admin_role()
+                                    );
+                            auto wrapped = sea::http::routing::wrap_with_middlewares(
+                                std::move(delete_proj_handler),
+                                true,
+                                mw_context
+                                );
+                            auto* rule = sea::http::routing::build_match_rule_from_template(
+                                "/admin/projects/{file}",
+                                wrapped.release()
+                                );
+                            r.add(rule, seastar::httpd::operation_type::DELETE);
                         }
                         r.add(
                             seastar::httpd::operation_type::GET,
