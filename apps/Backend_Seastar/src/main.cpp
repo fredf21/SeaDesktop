@@ -19,7 +19,7 @@
 #include "http/handlers/file_handlers/file_upload_extractor.h"
 #include "http/handlers/auth_handlers/logout_handler.h"
 #include "http/handlers/auth_handlers/refresh_handler.h"
-#include "http/handlers/logs_handlers/logs_handler.h"
+#include "http/handlers/admin_handlers/logs_handler.h"
 #include "http/handlers/misc_handlers/readiness_handler.h"
 #include "http/routing/pagination_routes.h"
 #include "import_yaml_schema_usecase.h"

@@ -24,7 +24,7 @@ set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
 # Compile spdlog en bibliothèque (au lieu de header-only)
 # temps de compilation des cibles fortement réduit
 set(SPDLOG_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-set(SPDLOG_FMT_EXTERNAL OFF CACHE BOOL "" FORCE)
+set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
     spdlog
