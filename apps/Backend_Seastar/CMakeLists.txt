@@ -103,6 +103,7 @@ add_executable(backend_seastar
     src/http/handlers/relation_handlers/detach_many_to_many_handler.h src/http/handlers/relation_handlers/detach_many_to_many_handler.cpp
     src/http/handlers/misc_handlers/preflight_handler.h
     src/http/handlers/misc_handlers/readiness_handler.h src/http/handlers/misc_handlers/readiness_handler.cpp
+    src/http/handlers/admin_handlers/get_project_handler.h src/http/handlers/admin_handlers/get_project_handler.cpp
 
 
 

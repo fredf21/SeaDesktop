@@ -16,11 +16,13 @@
 #include "authservice.h"
 #include "fileservice.h"
 #include "fileservicefactory.h"
+#include "http/handlers/admin_handlers/get_project_handler.h"
 #include "http/handlers/file_handlers/file_upload_extractor.h"
 #include "http/handlers/auth_handlers/logout_handler.h"
 #include "http/handlers/auth_handlers/refresh_handler.h"
 #include "http/handlers/admin_handlers/logs_handler.h"
 #include "http/handlers/misc_handlers/readiness_handler.h"
+#include "http/routing/paginated_match_rule.h"
 #include "http/routing/pagination_routes.h"
 #include "import_yaml_schema_usecase.h"
 #include "openapigenerator.h"
@@ -1074,7 +1076,7 @@ int main(int argc, char** argv)
                                 mw_context
                                 ).release()
                             );
-                        // /api/admin/projects : liste les projets YAML disponibles
+                        // /admin/projects : liste les projets YAML disponibles
                         r.add(
                             seastar::httpd::operation_type::GET,
                             seastar::httpd::url("/admin/projects"),
@@ -1087,6 +1089,24 @@ int main(int argc, char** argv)
                                 mw_context
                                 ).release()
                             );
+                        // /admin/projects/{file} : recupere le contenu d'un YAML
+                        {
+                            auto get_proj_handler =
+                                std::make_unique<sea::http::handlers::admin::GetProjectHandler>(
+                                    configs_dir,
+                                    service.access_control.admin_role()
+                                    );
+                            auto wrapped = sea::http::routing::wrap_with_middlewares(
+                                std::move(get_proj_handler),
+                                true,
+                                mw_context
+                                );
+                            auto* rule = sea::http::routing::build_match_rule_from_template(
+                                "/admin/projects/{file}",
+                                wrapped.release()
+                                );
+                            r.add(rule, seastar::httpd::operation_type::GET);
+                        }
                         r.add(
                             seastar::httpd::operation_type::GET,
                             seastar::httpd::url("/admin/logs/loggers"),
