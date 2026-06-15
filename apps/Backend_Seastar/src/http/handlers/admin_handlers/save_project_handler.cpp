@@ -240,12 +240,30 @@ SaveProjectHandler::handle(const seastar::sstring&,
     }
 
     // ─── 7. Validation du YAML via ImportYamlSchemaUseCase ───────
+    // En plus de la validation syntaxe/schema, on verifie que le
+    // champ project.name du YAML correspond au basename du fichier
+    // (sans extension). Ex: fichier "TestDemo.yaml" doit contenir
+    // project.name: "TestDemo".
     try {
         sea::application::ImportYamlSchemaUseCase importer;
         const auto project = importer.execute(tmp_path.string());
-        // execute() lance une exception si le YAML est invalide.
-        // On n'utilise pas l'objet project ici : la validation suffit.
-        (void) project;
+
+        // Verification de coherence nom de fichier <-> project.name
+        const fs::path file_path(file);
+        const std::string expected_name = file_path.stem().string();
+        if (project.name != expected_name) {
+            fs::remove(tmp_path, ec);
+            if (auto log = spdlog::get("sea.http")) {
+                log->info(
+                    "SaveProjectHandler: name mismatch in '{}': "
+                    "project.name='{}' but filename expects '{}'",
+                    file, project.name, expected_name);
+            }
+            co_return errors::make_error_reply(
+                Status::bad_request, "VALIDATION_ERROR",
+                "project.name in YAML ('" + project.name +
+                    "') must match filename ('" + expected_name + "').");
+        }
     } catch (const std::exception& e) {
         // YAML invalide. Cleanup et retour du message d'erreur au client.
         fs::remove(tmp_path, ec);
