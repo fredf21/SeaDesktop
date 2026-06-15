@@ -64,6 +64,8 @@
 #include "access_control/policy_engine.h"
 #include "access_control/operators/operator_registry.h"
 #include "logging_initializer.h"
+#include "http/handlers/admin_handlers/admin_paths.h"
+#include "http/handlers/admin_handlers/list_projects_handler.h"
 
 namespace bpo = boost::program_options;
 
@@ -99,6 +101,9 @@ int main(int argc, char** argv)
 
         const std::string config_path =
             cfg["config"].as<std::string>();
+
+        const std::string configs_dir =
+            sea::http::handlers::admin::resolve_configs_dir(config_path);
 
         const std::string service_name =
             cfg["service_name"].as<std::string>();
@@ -859,7 +864,7 @@ int main(int argc, char** argv)
                                             has_auth_source,
                                             mw_context,
                                             blocking_executor
-                                            , token_tracking, file_storage](seastar::httpd::routes& r) {
+                                            , token_tracking, file_storage, configs_dir](seastar::httpd::routes& r) {
 
                 using namespace sea::http::routing;
 
@@ -1069,7 +1074,19 @@ int main(int argc, char** argv)
                                 mw_context
                                 ).release()
                             );
-
+                        // /api/admin/projects : liste les projets YAML disponibles
+                        r.add(
+                            seastar::httpd::operation_type::GET,
+                            seastar::httpd::url("/admin/projects"),
+                            wrap_with_middlewares(
+                                std::make_unique<sea::http::handlers::admin::ListProjectsHandler>(
+                                    configs_dir,
+                                    service.access_control.admin_role()
+                                    ),
+                                true,
+                                mw_context
+                                ).release()
+                            );
                         r.add(
                             seastar::httpd::operation_type::GET,
                             seastar::httpd::url("/admin/logs/loggers"),
