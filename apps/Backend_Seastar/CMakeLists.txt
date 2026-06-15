@@ -104,6 +104,7 @@ add_executable(backend_seastar
     src/http/handlers/misc_handlers/preflight_handler.h
     src/http/handlers/misc_handlers/readiness_handler.h src/http/handlers/misc_handlers/readiness_handler.cpp
     src/http/handlers/admin_handlers/get_project_handler.h src/http/handlers/admin_handlers/get_project_handler.cpp
+    src/http/handlers/admin_handlers/save_project_handler.h src/http/handlers/admin_handlers/save_project_handler.cpp
 
 
 
