@@ -19,6 +19,7 @@
 #include "http/handlers/admin_handlers/create_project_handler.h"
 #include "http/handlers/admin_handlers/delete_project_handler.h"
 #include "http/handlers/admin_handlers/get_project_handler.h"
+#include "http/handlers/admin_handlers/restart_handler.h"
 #include "http/handlers/admin_handlers/save_project_handler.h"
 #include "http/handlers/file_handlers/file_upload_extractor.h"
 #include "http/handlers/auth_handlers/logout_handler.h"
@@ -1172,6 +1173,18 @@ int main(int argc, char** argv)
                                     admin_role_name
                                     ),
                                 true,            // requires_auth
+                                mw_context
+                                ).release()
+                            );
+                        // POST /admin/restart : redemarre le service (le process exit, Docker relance)
+                        r.add(
+                            seastar::httpd::operation_type::POST,
+                            seastar::httpd::url("/admin/restart"),
+                            wrap_with_middlewares(
+                                std::make_unique<sea::http::handlers::admin::RestartHandler>(
+                                    service.access_control.admin_role()
+                                    ),
+                                true,
                                 mw_context
                                 ).release()
                             );
