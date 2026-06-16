@@ -22,6 +22,8 @@ qt_add_executable(SeaUI
     routelistmodel.h routelistmodel.cpp
     routelistitemdelegate.h routelistitemdelegate.cpp
     translation_manager.h translation_manager.cpp
+    IProjectRepository.h
+    localprojectrepository.h localprojectrepository.cpp
 
 )
 

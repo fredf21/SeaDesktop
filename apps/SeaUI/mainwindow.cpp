@@ -2,7 +2,6 @@
 #include "routelistitemdelegate.h"
 #include "ui_mainwindow.h"
 
-#include "../../libs/infrastructure/yaml/yaml_schema_parser.h"
 
 #include <QDebug>
 #include <QDesktopServices>
@@ -39,6 +38,7 @@
 #include <QEvent>
 #include <QTextStream>
 #include <QStringConverter>
+#include "localprojectrepository.h"
 
 namespace {
 
@@ -208,7 +208,7 @@ MainWindow::MainWindow(TranslationManager* translationManager, QWidget *parent)
     ui->setupUi(this);
     showMaximized();
     setWindowTitle(tr("SeaDesktop"));
-
+    _projectRepository = std::make_unique<LocalProjectRepository>(appConfigsDir());
     ui->projectListView->setModel(_projectModel);
     ui->serviceListView->setModel(_serviceModel);
     ui->entityListView->setModel(_entityModel);
@@ -464,30 +464,13 @@ void MainWindow::on_actionFrancais_triggered()
 void MainWindow::loadProjects()
 {
     try {
-        const QString configsDir = appConfigsDir();
-        QDir().mkpath(configsDir);
+        auto result = _projectRepository->listProjects();
 
-        QDir dir(configsDir);
-        QStringList files = dir.entryList(QStringList() << "*.yaml" << "*.yml",
-                                          QDir::Files);
-
-        sea::infrastructure::yaml::YamlSchemaParser parser;
-        std::vector<sea::domain::Project> projects;
-
-        QStringList errors;
-
-        for (const QString& file : std::as_const(files)) {
-            const std::filesystem::path path =
-                std::filesystem::path(configsDir.toStdString()) / file.toStdString();
-
-            try {
-                projects.push_back(parser.parse_project_file(path.string()));
-            } catch (const std::exception& e) {
-                qWarning() << "Erreur fichier:" << file << ":" << e.what();
-            }
+        for (const QString& err : std::as_const(result.errors)) {
+            qWarning() << "Erreur fichier:" << err;
         }
 
-        _projectModel->setProjects(projects);
+        _projectModel->setProjects(result.projects);
 
         // Restauration sélection (inchangé)
         if (_currentProjectRow >= 0 &&
@@ -1720,36 +1703,36 @@ void MainWindow::on_actionAdd_New_Project_triggered()
         return;
     }
 
-    // 2. Construire le chemin dans configs/.
-    const QString configDir = appConfigsDir();
-    QDir().mkpath(configDir);
-
-    const QString filePath = configDir + "/" + projectName + ".yaml";
-
-    // 3. Refuser d'ecraser un projet existant.
-    if (QFileInfo::exists(filePath)) {
-        QMessageBox::warning(this, tr("Error"),
-                             tr("This project already exists."));
-        return;
-    }
-
-    // 4. Creer le fichier.
-    QFile file(filePath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+    // 2. Refuser d'ecraser un projet existant.
+    try {
+        if (_projectRepository->projectExists(projectName)) {
+            QMessageBox::warning(this, tr("Error"),
+                                 tr("This project already exists."));
+            return;
+        }
+    } catch (const std::exception& e) {
         QMessageBox::critical(this, tr("Error"),
-                              tr("Unable to create the file."));
+                              tr("Failed to check project existence: %1")
+                                  .arg(QString::fromUtf8(e.what())));
         return;
     }
 
-    QTextStream out(&file);
-    out.setEncoding(QStringConverter::Utf8);
-    out << buildProductionYaml(projectName, serviceName);
+    // 3. Creer le fichier YAML via le repository.
+    try {
+        _projectRepository->writeRawYaml(
+            projectName,
+            buildProductionYaml(projectName, serviceName)
+            );
+    } catch (const std::exception& e) {
+        QMessageBox::critical(this, tr("Error"),
+                              tr("Unable to create the file: %1")
+                                  .arg(QString::fromUtf8(e.what())));
+        return;
+    }
 
-    file.close();
-
-    // Recharger explicitement la liste des projets : on ne depend pas du
-    // QFileSystemWatcher, dont la detection des ajouts de fichiers peut
-    // etre differee ou manquee selon le systeme.
+    // 4. Recharger explicitement la liste des projets : on ne depend pas du
+    //    QFileSystemWatcher, dont la detection des ajouts de fichiers peut
+    //    etre differee ou manquee selon le systeme.
     loadProjects();
 
     QMessageBox::information(this, tr("Success"),
@@ -1825,36 +1808,21 @@ void MainWindow::on_actionAdd_New_Service_triggered()
         return;
     }
 
-    // 5. Localiser le fichier YAML du projet.
-    const QString yamlPath = yamlPathForProject(projectName);
-    if (!QFileInfo::exists(yamlPath)) {
+    // 5. Lire le contenu YAML actuel via le repository.
+    QString content;
+    try {
+        content = _projectRepository->readRawYaml(projectName);
+    } catch (const std::exception& e) {
         QMessageBox::critical(
             this,
             tr("Add New Service"),
-            tr("The YAML file for this project was not found.")
+            tr("Unable to read the YAML file: %1")
+                .arg(QString::fromUtf8(e.what()))
             );
         return;
     }
 
-    // 6. Lire le contenu actuel.
-    QString content;
-    {
-        QFile file(yamlPath);
-        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            QMessageBox::critical(
-                this,
-                tr("Add New Service"),
-                tr("Unable to open the YAML file.")
-                );
-            return;
-        }
-        QTextStream in(&file);
-        in.setEncoding(QStringConverter::Utf8);
-        content = in.readAll();
-        file.close();
-    }
-
-    // 7. Inserer le nouveau bloc service.
+    // 6. Inserer le nouveau bloc service.
     //    Les YAML generes placent 'services:' en derniere section : le
     //    nouveau service est donc ajoute a la fin du fichier, dans la
     //    sequence 'services:'. Le reste du fichier reste inchange.
@@ -1864,26 +1832,22 @@ void MainWindow::on_actionAdd_New_Service_triggered()
     content += '\n';
     content += buildProductionServiceBlock(projectName, serviceName);
 
-    // 8. Reecrire le fichier.
-    {
-        QFile file(yamlPath);
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
-            QMessageBox::critical(
-                this,
-                tr("Add New Service"),
-                tr("Unable to save the YAML file.")
-                );
-            return;
-        }
-        QTextStream out(&file);
-        out.setEncoding(QStringConverter::Utf8);
-        out << content;
-        file.close();
+    // 7. Reecrire le fichier via le repository.
+    try {
+        _projectRepository->writeRawYaml(projectName, content);
+    } catch (const std::exception& e) {
+        QMessageBox::critical(
+            this,
+            tr("Add New Service"),
+            tr("Unable to save the YAML file: %1")
+                .arg(QString::fromUtf8(e.what()))
+            );
+        return;
     }
 
-    // Recharger la liste des projets : le QFileSystemWatcher ne detecte
-    // pas la modification d'un fichier existant (seulement les ajouts /
-    // suppressions dans le dossier), on rafraichit donc explicitement.
+    // 8. Recharger la liste des projets : le QFileSystemWatcher ne detecte
+    //    pas la modification d'un fichier existant (seulement les ajouts /
+    //    suppressions dans le dossier), on rafraichit donc explicitement.
     loadProjects();
 
     QMessageBox::information(
@@ -2034,32 +1998,18 @@ void MainWindow::on_actionAdd_New_Entity_triggered()
         }
     }
 
-    // 7. Localiser et lire le fichier YAML du projet.
-    const QString yamlPath = yamlPathForProject(projectName);
-    if (!QFileInfo::exists(yamlPath)) {
+    // 7. Lire le YAML actuel via le repository.
+    QString content;
+    try {
+        content = _projectRepository->readRawYaml(projectName);
+    } catch (const std::exception& e) {
         QMessageBox::critical(
             this,
             tr("Add New Entity"),
-            tr("The YAML file for this project was not found.")
+            tr("Unable to read the YAML file: %1")
+                .arg(QString::fromUtf8(e.what()))
             );
         return;
-    }
-
-    QString content;
-    {
-        QFile file(yamlPath);
-        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            QMessageBox::critical(
-                this,
-                tr("Add New Entity"),
-                tr("Unable to open the YAML file.")
-                );
-            return;
-        }
-        QTextStream in(&file);
-        in.setEncoding(QStringConverter::Utf8);
-        content = in.readAll();
-        file.close();
     }
 
     // 8. Inserer le bloc entite dans le service cible.
@@ -2076,21 +2026,17 @@ void MainWindow::on_actionAdd_New_Entity_triggered()
         return;
     }
 
-    // 9. Reecrire le fichier.
-    {
-        QFile file(yamlPath);
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
-            QMessageBox::critical(
-                this,
-                tr("Add New Entity"),
-                tr("Unable to save the YAML file.")
-                );
-            return;
-        }
-        QTextStream out(&file);
-        out.setEncoding(QStringConverter::Utf8);
-        out << content;
-        file.close();
+    // 9. Reecrire le fichier via le repository.
+    try {
+        _projectRepository->writeRawYaml(projectName, content);
+    } catch (const std::exception& e) {
+        QMessageBox::critical(
+            this,
+            tr("Add New Entity"),
+            tr("Unable to save the YAML file: %1")
+                .arg(QString::fromUtf8(e.what()))
+            );
+        return;
     }
 
     loadProjects();
@@ -2113,6 +2059,7 @@ void MainWindow::on_actionAdd_New_Entity_triggered()
             serviceName.toStdString()
             );
         if (service != nullptr) {
+            const QString yamlPath = yamlPathForProject(projectName);
             stopServiceProcess(projectName, serviceName,
                                static_cast<int>(service->port));
             startServiceProcess(projectName, serviceName,
@@ -2373,45 +2320,65 @@ void MainWindow::on_actionImport_Yaml_triggered()
         return; // Annule par l'utilisateur.
     }
 
-    // 2. Determiner la destination dans configs/.
-    const QString configDir = appConfigsDir();
-    QDir().mkpath(configDir);
-
-    const QFileInfo sourceInfo(sourcePath);
-    const QString destPath = configDir + "/" + sourceInfo.fileName();
-
-    // 3. Si un projet du meme nom existe, demander confirmation.
-    if (QFileInfo::exists(destPath)) {
-        const auto answer = QMessageBox::question(
-            this,
-            tr("Import Yaml"),
-            tr("A project with this name already exists.\n"
-               "Do you want to replace it?"),
-            QMessageBox::Yes | QMessageBox::No,
-            QMessageBox::No
-            );
-
-        if (answer != QMessageBox::Yes) {
-            return;
-        }
-
-        // QFile::copy echoue si la destination existe : la retirer d'abord.
-        if (!QFile::remove(destPath)) {
+    // 2. Lire le contenu du fichier source (filesystem local).
+    QString content;
+    {
+        QFile sourceFile(sourcePath);
+        if (!sourceFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
             QMessageBox::critical(
                 this,
                 tr("Import Yaml"),
-                tr("Unable to replace the existing project file.")
+                tr("Unable to open the source file.")
                 );
             return;
         }
+        QTextStream in(&sourceFile);
+        in.setEncoding(QStringConverter::Utf8);
+        content = in.readAll();
+        sourceFile.close();
     }
 
-    // 4. Copier le fichier dans configs/.
-    if (!QFile::copy(sourcePath, destPath)) {
+    // 3. Determiner le nom logique du projet a partir du fichier source.
+    const QFileInfo sourceInfo(sourcePath);
+    const QString projectName = sourceInfo.completeBaseName();
+
+    // 4. Si un projet du meme nom existe, demander confirmation.
+    try {
+        if (_projectRepository->projectExists(projectName)) {
+            const auto answer = QMessageBox::question(
+                this,
+                tr("Import Yaml"),
+                tr("A project with this name already exists.\n"
+                   "Do you want to replace it?"),
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No
+                );
+
+            if (answer != QMessageBox::Yes) {
+                return;
+            }
+        }
+    } catch (const std::exception& e) {
         QMessageBox::critical(
             this,
             tr("Import Yaml"),
-            tr("Unable to import the YAML file.")
+            tr("Failed to check project existence: %1")
+                .arg(QString::fromUtf8(e.what()))
+            );
+        return;
+    }
+
+    // 5. Ecrire le contenu via le repository.
+    //    writeRawYaml cree le fichier s'il n'existe pas, ou le remplace
+    //    s'il existe.
+    try {
+        _projectRepository->writeRawYaml(projectName, content);
+    } catch (const std::exception& e) {
+        QMessageBox::critical(
+            this,
+            tr("Import Yaml"),
+            tr("Unable to import the YAML file: %1")
+                .arg(QString::fromUtf8(e.what()))
             );
         return;
     }
@@ -2435,13 +2402,16 @@ void MainWindow::on_actionExport_Yaml_triggered()
         return;
     }
 
-    // 2. Localiser le fichier source dans configs/.
-    const QString sourcePath = yamlPathForProject(projectName);
-    if (!QFileInfo::exists(sourcePath)) {
+    // 2. Lire le contenu du YAML via le repository.
+    QString content;
+    try {
+        content = _projectRepository->readRawYaml(projectName);
+    } catch (const std::exception& e) {
         QMessageBox::critical(
             this,
             tr("Export Yaml"),
-            tr("The YAML file for this project was not found.")
+            tr("Unable to read the YAML file: %1")
+                .arg(QString::fromUtf8(e.what()))
             );
         return;
     }
@@ -2458,25 +2428,22 @@ void MainWindow::on_actionExport_Yaml_triggered()
         return; // Annule par l'utilisateur.
     }
 
-    // 4. QFile::copy echoue si la destination existe : la retirer d'abord.
-    //    (QFileDialog a deja demande confirmation d'ecrasement.)
-    if (QFileInfo::exists(destPath) && !QFile::remove(destPath)) {
+    // 4. Ecrire le contenu vers la destination locale (filesystem direct,
+    //    car la destination est choisie par l'utilisateur, hors du depot).
+    QFile destFile(destPath);
+    if (!destFile.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
         QMessageBox::critical(
             this,
             tr("Export Yaml"),
-            tr("Unable to overwrite the destination file.")
+            tr("Unable to write to the destination file.")
             );
         return;
     }
 
-    if (!QFile::copy(sourcePath, destPath)) {
-        QMessageBox::critical(
-            this,
-            tr("Export Yaml"),
-            tr("Unable to export the YAML file.")
-            );
-        return;
-    }
+    QTextStream out(&destFile);
+    out.setEncoding(QStringConverter::Utf8);
+    out << content;
+    destFile.close();
 
     QMessageBox::information(
         this,
@@ -2493,37 +2460,21 @@ void MainWindow::on_actionEdit_Yaml_triggered()
         return;
     }
 
-    // 2. Localiser le fichier YAML dans configs/.
-    const QString yamlPath = yamlPathForProject(projectName);
-    if (!QFileInfo::exists(yamlPath)) {
-        QMessageBox::critical(
-            this,
-            tr("Edit Yaml"),
-            tr("The YAML file for this project was not found.")
-            );
-        return;
-    }
-
-    // 3. Charger le contenu du fichier.
-    QFile file(yamlPath);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QMessageBox::critical(
-            this,
-            tr("Edit Yaml"),
-            tr("Unable to open the YAML file.")
-            );
-        return;
-    }
-
+    // 2. Charger le contenu du fichier via le repository.
     QString content;
-    {
-        QTextStream in(&file);
-        in.setEncoding(QStringConverter::Utf8);
-        content = in.readAll();
-        file.close();
+    try {
+        content = _projectRepository->readRawYaml(projectName);
+    } catch (const std::exception& e) {
+        QMessageBox::critical(
+            this,
+            tr("Edit Yaml"),
+            tr("Unable to read the YAML file: %1")
+                .arg(QString::fromUtf8(e.what()))
+            );
+        return;
     }
 
-    // 4. Construire la fenetre d'edition.
+    // 3. Construire la fenetre d'edition.
     auto* dialog = new QDialog(this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->setWindowTitle(tr("Edit Yaml - %1").arg(projectName));
@@ -2546,30 +2497,28 @@ void MainWindow::on_actionEdit_Yaml_triggered()
 
     connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
 
-    // 5. Enregistrement : reecrire le fichier puis fermer.
-    connect(buttons, &QDialogButtonBox::accepted, dialog, [this, dialog, editor, yamlPath]() {
-        QFile out(yamlPath);
-        if (!out.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
-            QMessageBox::critical(
-                dialog,
-                tr("Edit Yaml"),
-                tr("Unable to save the YAML file.")
-                );
-            return;
-        }
+    // 4. Enregistrement : reecrire via le repository puis fermer.
+    connect(buttons, &QDialogButtonBox::accepted, dialog,
+            [this, dialog, editor, projectName]() {
+                try {
+                    _projectRepository->writeRawYaml(projectName, editor->toPlainText());
+                } catch (const std::exception& e) {
+                    QMessageBox::critical(
+                        dialog,
+                        tr("Edit Yaml"),
+                        tr("Unable to save the YAML file: %1")
+                            .arg(QString::fromUtf8(e.what()))
+                        );
+                    return;
+                }
 
-        QTextStream stream(&out);
-        stream.setEncoding(QStringConverter::Utf8);
-        stream << editor->toPlainText();
-        out.close();
+                // Recharger explicitement : le QFileSystemWatcher ne detecte pas
+                // la modification d'un fichier existant, seulement les ajouts /
+                // suppressions dans le dossier.
+                loadProjects();
 
-        // Recharger explicitement : le QFileSystemWatcher ne detecte pas
-        // la modification d'un fichier existant, seulement les ajouts /
-        // suppressions dans le dossier.
-        loadProjects();
-
-        dialog->accept();
-    });
+                dialog->accept();
+            });
 
     dialog->show();
 }
@@ -2733,32 +2682,18 @@ void MainWindow::on_actionEdit_Service_triggered()
         return; // Annule ou inchange.
     }
 
-    // 6. Lire le fichier YAML.
-    const QString yamlPath = yamlPathForProject(projectName);
-    if (!QFileInfo::exists(yamlPath)) {
+    // 6. Lire le YAML via le repository.
+    QString content;
+    try {
+        content = _projectRepository->readRawYaml(projectName);
+    } catch (const std::exception& e) {
         QMessageBox::critical(
             this,
             tr("Edit Service"),
-            tr("The YAML file for this project was not found.")
+            tr("Unable to read the YAML file: %1")
+                .arg(QString::fromUtf8(e.what()))
             );
         return;
-    }
-
-    QString content;
-    {
-        QFile file(yamlPath);
-        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            QMessageBox::critical(
-                this,
-                tr("Edit Service"),
-                tr("Unable to open the YAML file.")
-                );
-            return;
-        }
-        QTextStream in(&file);
-        in.setEncoding(QStringConverter::Utf8);
-        content = in.readAll();
-        file.close();
     }
 
     // 7. Remplacer le port dans le bloc du service.
@@ -2771,21 +2706,17 @@ void MainWindow::on_actionEdit_Service_triggered()
         return;
     }
 
-    // 8. Reecrire le fichier.
-    {
-        QFile file(yamlPath);
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
-            QMessageBox::critical(
-                this,
-                tr("Edit Service"),
-                tr("Unable to save the YAML file.")
-                );
-            return;
-        }
-        QTextStream out(&file);
-        out.setEncoding(QStringConverter::Utf8);
-        out << content;
-        file.close();
+    // 8. Reecrire le fichier via le repository.
+    try {
+        _projectRepository->writeRawYaml(projectName, content);
+    } catch (const std::exception& e) {
+        QMessageBox::critical(
+            this,
+            tr("Edit Service"),
+            tr("Unable to save the YAML file: %1")
+                .arg(QString::fromUtf8(e.what()))
+            );
+        return;
     }
 
     loadProjects();
@@ -2838,23 +2769,29 @@ void MainWindow::on_actionEdit_Project_triggered()
     }
 
     // 3. Refuser si un projet du nouveau nom existe deja.
-    const QString oldPath = yamlPathForProject(oldName);
-    const QString newPath = yamlPathForProject(newName);
-
-    if (QFileInfo::exists(newPath)) {
-        QMessageBox::warning(
-            this,
-            tr("Edit Project"),
-            tr("A project with this name already exists.")
-            );
-        return;
-    }
-
-    if (!QFileInfo::exists(oldPath)) {
+    try {
+        if (_projectRepository->projectExists(newName)) {
+            QMessageBox::warning(
+                this,
+                tr("Edit Project"),
+                tr("A project with this name already exists.")
+                );
+            return;
+        }
+        if (!_projectRepository->projectExists(oldName)) {
+            QMessageBox::critical(
+                this,
+                tr("Edit Project"),
+                tr("The YAML file for this project was not found.")
+                );
+            return;
+        }
+    } catch (const std::exception& e) {
         QMessageBox::critical(
             this,
             tr("Edit Project"),
-            tr("The YAML file for this project was not found.")
+            tr("Failed to check project existence: %1")
+                .arg(QString::fromUtf8(e.what()))
             );
         return;
     }
@@ -2873,22 +2810,18 @@ void MainWindow::on_actionEdit_Project_triggered()
         return;
     }
 
-    // 5. Lire le fichier, remplacer la cle 'name:'.
+    // 5. Lire le YAML actuel et remplacer la cle 'name:'.
     QString content;
-    {
-        QFile file(oldPath);
-        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            QMessageBox::critical(
-                this,
-                tr("Edit Project"),
-                tr("Unable to open the YAML file.")
-                );
-            return;
-        }
-        QTextStream in(&file);
-        in.setEncoding(QStringConverter::Utf8);
-        content = in.readAll();
-        file.close();
+    try {
+        content = _projectRepository->readRawYaml(oldName);
+    } catch (const std::exception& e) {
+        QMessageBox::critical(
+            this,
+            tr("Edit Project"),
+            tr("Unable to read the YAML file: %1")
+                .arg(QString::fromUtf8(e.what()))
+            );
+        return;
     }
 
     if (!replaceProjectName(content, newName)) {
@@ -2900,32 +2833,34 @@ void MainWindow::on_actionEdit_Project_triggered()
         return;
     }
 
-    // 6. Reecrire le contenu dans l'ancien fichier.
-    {
-        QFile file(oldPath);
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
-            QMessageBox::critical(
-                this,
-                tr("Edit Project"),
-                tr("Unable to save the YAML file.")
-                );
-            return;
-        }
-        QTextStream out(&file);
-        out.setEncoding(QStringConverter::Utf8);
-        out << content;
-        file.close();
-    }
-
-    // 7. Renommer le fichier .yaml.
-    if (!QFile::rename(oldPath, newPath)) {
+    // 6. Ecrire le contenu sous le nouveau nom.
+    //    Note : on cree d'abord le nouveau fichier, puis on supprime
+    //    l'ancien. Si la suppression echoue, on signale mais on garde
+    //    le nouveau fichier (perte = duplication, jamais perte de donnees).
+    try {
+        _projectRepository->writeRawYaml(newName, content);
+    } catch (const std::exception& e) {
         QMessageBox::critical(
             this,
             tr("Edit Project"),
-            tr("The project name was updated but the file could not be "
-               "renamed.")
+            tr("Unable to save the YAML file: %1")
+                .arg(QString::fromUtf8(e.what()))
             );
         return;
+    }
+
+    // 7. Supprimer l'ancien fichier.
+    try {
+        _projectRepository->removeProject(oldName);
+    } catch (const std::exception& e) {
+        QMessageBox::warning(
+            this,
+            tr("Edit Project"),
+            tr("The new project was created but the old file could not be "
+               "removed: %1")
+                .arg(QString::fromUtf8(e.what()))
+            );
+        // On continue malgre l'erreur : le nouveau projet existe.
     }
 
     loadProjects();
@@ -3038,32 +2973,18 @@ void MainWindow::on_actionEdit_Entity_triggered()
         softDelete = softDeleteCheck->isChecked();
     }
 
-    // 6. Lire le fichier YAML.
-    const QString yamlPath = yamlPathForProject(projectName);
-    if (!QFileInfo::exists(yamlPath)) {
+    // 6. Lire le YAML via le repository.
+    QString content;
+    try {
+        content = _projectRepository->readRawYaml(projectName);
+    } catch (const std::exception& e) {
         QMessageBox::critical(
             this,
             tr("Edit Entity"),
-            tr("The YAML file for this project was not found.")
+            tr("Unable to read the YAML file: %1")
+                .arg(QString::fromUtf8(e.what()))
             );
         return;
-    }
-
-    QString content;
-    {
-        QFile file(yamlPath);
-        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            QMessageBox::critical(
-                this,
-                tr("Edit Entity"),
-                tr("Unable to open the YAML file.")
-                );
-            return;
-        }
-        QTextStream in(&file);
-        in.setEncoding(QStringConverter::Utf8);
-        content = in.readAll();
-        file.close();
     }
 
     // 7. Remplacer les options de l'entite.
@@ -3077,21 +2998,17 @@ void MainWindow::on_actionEdit_Entity_triggered()
         return;
     }
 
-    // 8. Reecrire le fichier.
-    {
-        QFile file(yamlPath);
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
-            QMessageBox::critical(
-                this,
-                tr("Edit Entity"),
-                tr("Unable to save the YAML file.")
-                );
-            return;
-        }
-        QTextStream out(&file);
-        out.setEncoding(QStringConverter::Utf8);
-        out << content;
-        file.close();
+    // 8. Reecrire le fichier via le repository.
+    try {
+        _projectRepository->writeRawYaml(projectName, content);
+    } catch (const std::exception& e) {
+        QMessageBox::critical(
+            this,
+            tr("Edit Entity"),
+            tr("Unable to save the YAML file: %1")
+                .arg(QString::fromUtf8(e.what()))
+            );
+        return;
     }
 
     loadProjects();
@@ -3108,6 +3025,7 @@ void MainWindow::on_actionEdit_Entity_triggered()
         );
 
     if (applyAnswer == QMessageBox::Yes) {
+        const QString yamlPath = yamlPathForProject(projectName);
         stopServiceProcess(projectName, serviceName,
                            static_cast<int>(service->port));
         startServiceProcess(projectName, serviceName,

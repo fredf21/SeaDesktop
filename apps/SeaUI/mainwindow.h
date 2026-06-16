@@ -2,6 +2,7 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include "IProjectRepository.h"
 #include "entitylistmodel.h"
 #include "servicelistmodel.h"
 #include "projectlistmodel.h"
@@ -468,5 +469,7 @@ private:
      * @param code Code de la langue desormais active ("en_US", "fr_FR").
      */
     void syncLanguageMenu(const QString& code);
+
+    std::unique_ptr<IProjectRepository> _projectRepository;
 };
 #endif // MAINWINDOW_H
