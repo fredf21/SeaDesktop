@@ -67,7 +67,14 @@ add_subdirectory(libs/errors)
 add_subdirectory(libs/application)
 add_subdirectory(libs/infrastructure)
 add_subdirectory(apps/Backend_Seastar)
-add_subdirectory(apps/SeaUI)
+# Option pour activer/desactiver la compilation de SeaUI.
+# - Par defaut ON : build local complet (backend + SeaUI).
+# - OFF : utile pour le Docker du backend (pas besoin de Qt6 dans
+#   l'image runtime).
+option(BUILD_SEAUI "Build the SeaUI desktop application" ON)
+if(BUILD_SEAUI)
+    add_subdirectory(apps/SeaUI)
+endif()
 if (BUILD_QT_TESTS)
     add_subdirectory(tests)
 endif()

@@ -1,0 +1,51 @@
+# Empeche d'envoyer les artefacts locaux au build context Docker,
+# ce qui accelere les builds (parfois drastiquement) et evite les
+# fuites de fichiers sensibles.
+
+# Build outputs
+build/
+build-*/
+cmake-build-*/
+*.o
+*.so
+*.a
+
+# IDE
+.vscode/
+.idea/
+.qtcreator/
+*.user
+*.user.*
+CMakeLists.txt.user*
+
+# Version control
+.git/
+.gitignore
+
+# Logs et caches locaux
+logs/
+*.log
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Tests d'execution / artefacts
+tests/e2e/.venv/
+tests/itest-init/
+tests/load/__pycache__/
+.phase1_backup/
+
+# Documentation construite (gardee dans le repo mais inutile au build)
+docs/_build/
+
+# Secrets / config locale
+.env
+.env.local
+*.pem
+*.key
+
+# OS junk
+.DS_Store
+Thumbs.db

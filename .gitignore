@@ -1,0 +1,99 @@
+# ─────────────────────────────────────────────────────────────────
+# .gitignore SeaDesktop
+# ─────────────────────────────────────────────────────────────────
+
+# ── Secrets et configuration locale ──────────────────────────────
+# CRITIQUE : .env contient les JWT secrets et mots de passe MySQL.
+# Le template (.env.example) reste commite.
+.env
+.env.local
+.env.*.local
+
+# Docker secrets en plain text (mode dev avec docker-compose.prod.yml)
+secrets/
+
+# Cles privees / certificats
+*.pem
+*.key
+*.p12
+
+# ── Builds C++ ───────────────────────────────────────────────────
+build/
+build-*/
+cmake-build-*/
+out/
+
+# Artefacts de compilation
+*.o
+*.obj
+*.so
+*.so.*
+*.dylib
+*.dll
+*.a
+*.lib
+*.exe
+
+# ── Qt / Qt Creator ──────────────────────────────────────────────
+.qtcreator/
+*.user
+*.user.*
+CMakeLists.txt.user*
+moc_*.cpp
+moc_*.h
+ui_*.h
+qrc_*.cpp
+*.pro.user
+*.pro.user.*
+*.qm
+
+# ── IDE / editeurs ───────────────────────────────────────────────
+.vscode/
+.idea/
+*.sublime-*
+.fleet/
+
+# ── OS junk ──────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Logs runtime ─────────────────────────────────────────────────
+logs/
+*.log
+
+# ── Python (tests e2e) ───────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+tests/e2e/.venv/
+tests/e2e/__pycache__/
+tests/load/__pycache__/
+
+# ── Tests d'integration (donnees ephemeres) ──────────────────────
+tests/itest-init/
+tests/docker-compose.test.yml
+
+# ── Scripts locaux non commites ──────────────────────────────────
+scripts/
+
+# ── Sauvegardes / archives locales ───────────────────────────────
+.phase1_backup/
+autres/
+*.bak
+*.tmp
+*.swp
+*.swo
+*~
+
+# ── Documents de travail non commites ────────────────────────────
+INTEGRATION_TESTS_DOC*.md
+
+# ── Configs runtime locales ──────────────────────────────────────
+# Les YAML de configs/ sont des donnees de l'utilisateur, pas du code.
+# Si tu veux versionner certains YAML d'exemple, force-add les un par
+# un (git add -f configs/exemple.yaml).
+configs/

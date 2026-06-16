@@ -1,0 +1,95 @@
+# ─────────────────────────────────────────────────────────────────
+# docker-compose.prod.yml — Override pour la production
+# ─────────────────────────────────────────────────────────────────
+#
+# Remplace les variables d'environnement .env par des Docker secrets
+# pour la production. Les secrets sont stockes chiffres par Docker
+# Swarm (ou plain text sur disque pour docker compose simple) et
+# montes en read-only dans les containers a /run/secrets/<name>.
+#
+# Usage :
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Pre-requis : creer les fichiers de secrets a cote du compose :
+#   echo "ma_valeur_jwt_secrete" > secrets/jwt_secret.txt
+#   echo "mon_password_mysql"   > secrets/mysql_password.txt
+#   chmod 600 secrets/*.txt
+#
+# Les services backend doivent lire le secret depuis le filesystem
+# au demarrage. Comme le code actuel utilise les env vars, on lit le
+# fichier et on l'expose en env var via un wrapper bash. Pour une
+# version plus propre, le code C++ pourrait lire /run/secrets/...
+# directement (chantier v2.0).
+# ─────────────────────────────────────────────────────────────────
+
+services:
+
+  mysql:
+    environment:
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_password
+      # En production, retirer le mapping de port 3306:3306 pour
+      # empecher l'acces externe a MySQL. Les services backend
+      # accedent a MySQL via le reseau Docker interne.
+    ports: !reset []
+    secrets:
+      - mysql_password
+
+  service_a:
+    environment:
+      # Wrapper qui lit les secrets et exporte en env var, puis lance
+      # backend_seastar. Ecrase command: du compose principal.
+      SEA_DESKTOP_JWT_SECRET: ""
+      MYSQL_PASSWORD: ""
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        export SEA_DESKTOP_JWT_SECRET=$$(cat /run/secrets/jwt_secret) && \
+        export MYSQL_PASSWORD=$$(cat /run/secrets/mysql_password) && \
+        exec /app/backend_seastar \
+             --config /app/configs/TestDemo.yaml \
+             --service_name TestServiceA
+    secrets:
+      - jwt_secret
+      - mysql_password
+
+  service_b:
+    environment:
+      SEA_DESKTOP_JWT_SECRET: ""
+      MYSQL_PASSWORD: ""
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        export SEA_DESKTOP_JWT_SECRET=$$(cat /run/secrets/jwt_secret) && \
+        export MYSQL_PASSWORD=$$(cat /run/secrets/mysql_password) && \
+        exec /app/backend_seastar \
+             --config /app/configs/BlogDemo.yaml \
+             --service_name BlogService
+    secrets:
+      - jwt_secret
+      - mysql_password
+
+  service_c:
+    environment:
+      SEA_DESKTOP_JWT_SECRET: ""
+      MYSQL_PASSWORD: ""
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        export SEA_DESKTOP_JWT_SECRET=$$(cat /run/secrets/jwt_secret) && \
+        export MYSQL_PASSWORD=$$(cat /run/secrets/mysql_password) && \
+        exec /app/backend_seastar \
+             --config /app/configs/FileTest.yaml \
+             --service_name FileTestService
+    secrets:
+      - jwt_secret
+      - mysql_password
+
+
+# ─────────────────────────────────────────────────────────────────
+# Declarations des secrets
+# ─────────────────────────────────────────────────────────────────
+secrets:
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
+  mysql_password:
+    file: ./secrets/mysql_password.txt

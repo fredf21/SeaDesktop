@@ -1,0 +1,181 @@
+# ─────────────────────────────────────────────────────────────────
+# docker-compose.yml — Template SeaDesktop multi-services
+# ─────────────────────────────────────────────────────────────────
+#
+# Ce fichier orchestre :
+#   - mysql           : base de donnees partagee par les services
+#   - service_a       : exemple de service backend (port 8080)
+#   - service_b       : exemple de service backend (port 8081)
+#   - service_c       : exemple de service backend (port 8082)
+#
+# Les 3 containers backend partagent le meme volume configs/ :
+# n'importe lequel d'entre eux peut administrer tous les YAML via
+# les endpoints /admin/projects/*. SeaUI distant peut donc se
+# connecter a n'importe quel service pour gerer les projets.
+#
+# Pour ajouter un nouveau service, dupliquer un bloc service_X en
+# adaptant :
+#   - le nom du service docker-compose
+#   - la variable --service_name (matche un services[].name dans le YAML)
+#   - le port expose (cote hote)
+#   - le port interne si necessaire (souvent identique)
+#
+# Variables sensibles (SEA_DESKTOP_JWT_SECRET, MYSQL_ROOT_PASSWORD,
+# etc.) sont lues depuis le fichier .env a cote de ce compose. Voir
+# .env.example pour le template.
+#
+# Pour la production, utiliser docker-compose.prod.yml en complement :
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+# Cet override remplace les .env par des Docker secrets.
+# ─────────────────────────────────────────────────────────────────
+
+services:
+
+  # ─────────────────────────────────────────────────────────────
+  # MySQL : base de donnees partagee
+  # ─────────────────────────────────────────────────────────────
+  mysql:
+    image: mysql:8.4
+    container_name: seadesktop_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      # Pas de MYSQL_DATABASE : chaque service cree sa propre base
+      # selon son YAML (database_name).
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - seadesktop_net
+    # Expose le port pour faciliter le debug local. A retirer en
+    # production si MySQL n'a pas besoin d'etre accessible de
+    # l'exterieur du reseau Docker.
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost",
+             "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ─────────────────────────────────────────────────────────────
+  # Service A : exemple sur le port 8080
+  # ─────────────────────────────────────────────────────────────
+  service_a:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: seadesktop/backend:latest
+    container_name: seadesktop_service_a
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      SEA_DESKTOP_JWT_SECRET: ${SEA_DESKTOP_JWT_SECRET}
+      MYSQL_HOST: mysql
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      SEA_DESKTOP_CONFIGS_DIR: /app/configs
+      # Le client mariadb-connector-cpp a un chemin de plugins compile
+      # en dur au build local (third_party/.../install/lib/mariadb/plugin).
+      # Cette variable d'env force le client a chercher les plugins
+      # au bon endroit dans le container.
+      MARIADB_PLUGIN_DIR: /usr/local/lib/mariadb/plugin
+    command: >
+      --config /app/configs/TestDemo.yaml
+      --service_name TestService
+    volumes:
+      # configs/ partage entre tous les services backend.
+      - ${SEA_DESKTOP_CONFIGS_HOST_DIR:-./configs}:/app/configs
+      # logs/ propre a chaque container.
+      - ./logs/service_a:/app/logs
+    networks:
+      - seadesktop_net
+    ports:
+      - "8080:8080"
+
+  # ─────────────────────────────────────────────────────────────
+  # Service B : exemple sur le port 8081
+  # ─────────────────────────────────────────────────────────────
+  service_b:
+    image: seadesktop/backend:latest
+    container_name: seadesktop_service_b
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      service_a:
+        # Garantit que l'image est buildee une seule fois (par service_a).
+        condition: service_started
+    environment:
+      SEA_DESKTOP_JWT_SECRET: ${SEA_DESKTOP_JWT_SECRET}
+      MYSQL_HOST: mysql
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      SEA_DESKTOP_CONFIGS_DIR: /app/configs
+      # Le client mariadb-connector-cpp a un chemin de plugins compile
+      # en dur au build local (third_party/.../install/lib/mariadb/plugin).
+      # Cette variable d'env force le client a chercher les plugins
+      # au bon endroit dans le container.
+      MARIADB_PLUGIN_DIR: /usr/local/lib/mariadb/plugin
+    command: >
+      --config /app/configs/BlogDemo.yaml
+      --service_name BlogService
+    volumes:
+      - ${SEA_DESKTOP_CONFIGS_HOST_DIR:-./configs}:/app/configs
+      - ./logs/service_b:/app/logs
+    networks:
+      - seadesktop_net
+    ports:
+      - "8081:8080"
+
+  # ─────────────────────────────────────────────────────────────
+  # Service C : exemple sur le port 8082
+  # ─────────────────────────────────────────────────────────────
+  service_c:
+    image: seadesktop/backend:latest
+    container_name: seadesktop_service_c
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      service_a:
+        condition: service_started
+    environment:
+      SEA_DESKTOP_JWT_SECRET: ${SEA_DESKTOP_JWT_SECRET}
+      MYSQL_HOST: mysql
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      SEA_DESKTOP_CONFIGS_DIR: /app/configs
+      # Le client mariadb-connector-cpp a un chemin de plugins compile
+      # en dur au build local (third_party/.../install/lib/mariadb/plugin).
+      # Cette variable d'env force le client a chercher les plugins
+      # au bon endroit dans le container.
+      MARIADB_PLUGIN_DIR: /usr/local/lib/mariadb/plugin
+    command: >
+      --config /app/configs/FileTest.yaml
+      --service_name FileTestService
+    volumes:
+      - ${SEA_DESKTOP_CONFIGS_HOST_DIR:-./configs}:/app/configs
+      - ./logs/service_c:/app/logs
+    networks:
+      - seadesktop_net
+    ports:
+      - "8082:8080"
+
+
+# ─────────────────────────────────────────────────────────────────
+# Volumes & networks
+# ─────────────────────────────────────────────────────────────────
+volumes:
+  # Volume Docker nomme pour la persistance MySQL. Survit aux down/up.
+  # Pour reset complet (perte de donnees) : docker compose down -v.
+  mysql_data:
+
+networks:
+  # Reseau interne dedie. Les containers se voient par leur nom
+  # (mysql, service_a, etc.) via le DNS Docker interne.
+  seadesktop_net:
+    driver: bridge
