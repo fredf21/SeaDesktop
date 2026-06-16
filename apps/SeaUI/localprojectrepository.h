@@ -2,6 +2,7 @@
 
 #include "IProjectRepository.h"
 
+#include <QFuture>
 #include <QString>
 
 /**
@@ -12,11 +13,14 @@
  * que SeaUI tourne sur la meme machine que le backend, et que les
  * deux partagent le meme dossier configs/.
  *
- * Le dossier configs/ est resolu via appConfigsDir() (defini dans
- * mainwindow.cpp), qui suit la priorite :
- *   1. Variable d'environnement SEA_DESKTOP_CONFIGS_DIR
- *   2. Dossier 'configs' a cote du repo source (mode dev)
- *   3. AppDataLocation/configs (mode release / install systeme)
+ * Bien que l'interface soit asynchrone (QFuture), les operations sont
+ * executees de maniere synchrone en interne -- le filesystem local
+ * est suffisamment rapide pour qu'aucun travail en arriere-plan ne
+ * soit utile. Le QFuture retourne est deja resolu au moment ou
+ * l'appelant en prend possession (via QtFuture::makeReadyFuture).
+ *
+ * En cas d'erreur, le QFuture porte une exception std::runtime_error
+ * qui peut etre capturee par .onFailed() cote appelant.
  *
  * Le parsing des YAML utilise YamlSchemaParser de la lib
  * sea_infrastructure, embarquee statiquement dans le binaire SeaUI.
@@ -30,12 +34,12 @@ public:
      */
     explicit LocalProjectRepository(QString configsDir);
 
-    ListResult listProjects() override;
-    QString    readRawYaml(const QString& projectName) override;
-    void       writeRawYaml(const QString& projectName,
-                      const QString& content) override;
-    bool       projectExists(const QString& projectName) override;
-    void       removeProject(const QString& projectName) override;
+    QFuture<ListResult> listProjects() override;
+    QFuture<QString>    readRawYaml(const QString& projectName) override;
+    QFuture<bool>       writeRawYaml(const QString& projectName,
+                               const QString& content) override;
+    QFuture<bool>       projectExists(const QString& projectName) override;
+    QFuture<bool>       removeProject(const QString& projectName) override;
 
 private:
     /**
