@@ -24,6 +24,7 @@ qt_add_executable(SeaUI
     translation_manager.h translation_manager.cpp
     IProjectRepository.h
     localprojectrepository.h localprojectrepository.cpp
+    httpprojectrepository.h httpprojectrepository.cpp
 
 )
 
