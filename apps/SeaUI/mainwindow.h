@@ -28,7 +28,7 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    explicit MainWindow(TranslationManager* translationManager,
+    explicit MainWindow(TranslationManager* translationManager, std::unique_ptr<IProjectRepository> repository,
                         QWidget* parent = nullptr);
     ~MainWindow() override;
     void loadProjects();
@@ -150,6 +150,11 @@ private slots:
      * @brief Bascule l'application en francais.
      */
     void on_actionFrancais_triggered();
+
+    /**
+     * @brief Bascule vers un autre profil.
+     */
+    void on_actionSwitch_Connection_triggered();
 
 private:
     Ui::MainWindow *ui;

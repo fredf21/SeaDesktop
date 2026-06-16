@@ -1,4 +1,6 @@
 #include "mainwindow.h"
+#include "connectiondialog.h"
+#include "httpprojectrepository.h"
 #include "routelistitemdelegate.h"
 #include "ui_mainwindow.h"
 
@@ -194,7 +196,7 @@ bool routeMatchesEntity(const sea::application::RouteDefinition& route, const QS
  *
  * @param parent Parent Qt.
  */
-MainWindow::MainWindow(TranslationManager* translationManager, QWidget *parent)
+MainWindow::MainWindow(TranslationManager* translationManager, std::unique_ptr<IProjectRepository> repository, QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
     , _projectModel(new ProjectListModel(this))
@@ -3129,4 +3131,42 @@ void MainWindow::on_actionReload_All_Services_triggered()
         tr("Services Actions"),
         tr("All services have been reloaded from their YAML configuration.")
         );
+}
+void MainWindow::on_actionSwitch_Connection_triggered()
+{
+    // 1. Ouvrir le dialog de connexion.
+    ConnectionDialog dlg(this);
+    if (dlg.exec() != QDialog::Accepted) {
+        return;  // L'utilisateur a annule, on garde la connexion actuelle.
+    }
+
+    // 2. Construire le nouveau repository selon le profil choisi.
+    std::unique_ptr<IProjectRepository> newRepo;
+    const Profile& profile = dlg.activeProfile();
+    if (profile.type == Profile::Type::Local) {
+        newRepo = std::make_unique<LocalProjectRepository>(appConfigsDir());
+    } else {
+        newRepo = std::make_unique<HttpProjectRepository>(
+            profile.baseUrl, dlg.token());
+    }
+
+    // 3. Remplacer le repository actif.
+    _projectRepository = std::move(newRepo);
+
+    // 4. Reinitialiser les selections : les projets ne sont plus les
+    //    memes, les indices courants ne sont plus valides.
+    _currentProjectRow = -1;
+    _currentServiceRow = -1;
+    _currentEntityRow  = -1;
+
+    // 5. Vider les modeles pour eviter d'afficher des donnees du
+    //    profil precedent pendant que la nouvelle liste se charge.
+    _projectModel->setProjects({});
+    _serviceModel->setServices({});
+    _entityModel->setEntities({});
+    _fieldModel->setFields({});
+    _routeModel->setRoutes({});
+
+    // 6. Recharger la liste des projets via le nouveau repository.
+    loadProjects();
 }

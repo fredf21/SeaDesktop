@@ -258,6 +258,7 @@
     <addaction name="actionAdd_New_Entity"/>
     <addaction name="actionImport_Yaml"/>
     <addaction name="actionExport_Yaml"/>
+    <addaction name="actionSwitch_Connection"/>
    </widget>
    <widget class="QMenu" name="menuAudits">
     <property name="title">
@@ -387,6 +388,11 @@
   <action name="actionFrancais">
    <property name="text">
     <string>Francais</string>
+   </property>
+  </action>
+  <action name="actionSwitch_Connection">
+   <property name="text">
+    <string>Switch Connection</string>
    </property>
   </action>
  </widget>

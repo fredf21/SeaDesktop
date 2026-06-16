@@ -25,6 +25,10 @@ qt_add_executable(SeaUI
     IProjectRepository.h
     localprojectrepository.h localprojectrepository.cpp
     httpprojectrepository.h httpprojectrepository.cpp
+    profile.h profile.cpp
+    auth_client.h auth_client.cpp
+    profilemanagerdialog.h profilemanagerdialog.cpp
+    connectiondialog.h connectiondialog.cpp
 
 )
 
