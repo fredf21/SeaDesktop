@@ -98,9 +98,21 @@ services:
 
 ### 2. Lancer le serveur
 
+**Option A — En local (développement)** :
+
 ```bash
-./Backend_Seastar
+./Backend_Seastar --config configs/SeaDesktopDemo.yaml --service_name Office
 ```
+
+**Option B — Docker (recommandé pour tester la stack complète)** :
+
+```bash
+cp .env.example .env
+# Éditer .env pour définir SEA_DESKTOP_JWT_SECRET et MYSQL_ROOT_PASSWORD
+docker compose up -d
+```
+
+La stack Docker inclut MySQL et un service backend d'exemple exposé sur le port 8080. Voir [`docs_french/docker_deployment_fr.md`](./docs_french/docker_deployment_fr.md) pour le déploiement de production, la configuration multi-services et la résolution de problèmes.
 
 ### 3. C'est prêt 🎉
 
@@ -128,7 +140,29 @@ GET  /health                                            Healthcheck
 
 ---
 
-## 🆕 Nouveautés v0.2.0
+## 🆕 Nouveautés v1.0.0
+
+### 🌐 Administration à distance (remote-first)
+
+Les services SeaDesktop peuvent désormais être administrés à distance par HTTP. SeaUI en mode Remote se connecte à un backend déployé (typiquement dans Docker) et gère les projets sans accès au système de fichiers :
+
+- **Endpoints `/admin/projects/*`** — CRUD complet sur les fichiers YAML (lister, lire, créer, modifier, supprimer) via REST
+- **Endpoint `/admin/restart`** — redémarrage propre du service, relancé automatiquement par l'orchestrateur de conteneurs
+- **Endpoint `/admin/logs`** — buffer mémoire de logs accessible depuis le visualiseur de journaux distants de SeaUI
+- **Profils SeaUI** — bascule entre mode Local (filesystem direct) et mode Remote (HTTP) par profil, avec un gestionnaire de profils intégré
+
+Voir [`docs_french/admin_fr.md`](./docs_french/admin_fr.md) pour la référence des endpoints et [`docs_french/SEAUI_GUIDE_fr.md`](./docs_french/SEAUI_GUIDE_fr.md) pour le guide utilisateur SeaUI.
+
+### 🐳 Déploiement Docker
+
+SeaDesktop est maintenant livré avec un déploiement Docker complet :
+
+- **Dockerfile multi-stage** qui compile Seastar depuis les sources (commit épinglé) et le backend en couches optimisées
+- **docker-compose.yml** orchestrant MySQL + N services backend avec un volume `configs/` partagé
+- **docker-compose.prod.yml** en override pour les secrets Docker en production
+- **Architecture multi-services** — chaque conteneur sert un projet ; tous les conteneurs voient les mêmes fichiers YAML via un volume partagé
+
+Voir [`docs_french/docker_deployment_fr.md`](./docs_french/docker_deployment_fr.md) pour le guide complet.
 
 ### 🔐 Authentification JWT renforcée
 
@@ -425,34 +459,40 @@ export SEA_DESKTOP_JWT_SECRET="votre-secret-jwt-32-caracteres-minimum"
 - API CRUD auto-générée + routes relationnelles
 - Filtre ABAC silencieux + 403 cross-scope
 
-### ✅ v0.2.0 - JWT Cookies, Token Tracking & Logging (Actuel)
+### ✅ v0.2.0 - JWT Cookies, Token Tracking & Logging
 - Cookies HttpOnly avec configuration complète (domain, path, same_site)
 - Token tracking : allowlist refresh + denylist access + rotation + cache
 - Auto-cleanup périodique des tokens expirés
 - Logging structuré spdlog (7 modules nommés)
 - Sinks multiples (console + file) avec rotation taille/temps
-- Formats text et JSON (line-delimited)
 - Endpoint REST `/admin/logs` avec polling incrémental
 - Hook Seastar → spdlog pour capture des logs internes
 - Documentation utilisateur complète
-- Refactorisation appels `std::cerr` → spdlog
 
-### 🌟 v1.0.0 (Vision)
-- Production-ready
-- Documentation complète
-- Hosting Cloud
-- Importer et exporter les yaml a partir de interface graphique
-- Preference de Langue
-- Edition et logs a partir de la barre de menu
+### ✅ v1.0.0 - Administration à distance et Docker (actuel)
+- Endpoints `/admin/projects/*` pour le CRUD YAML complet en HTTP
+- Endpoint `/admin/restart` pour le redémarrage propre du service
+- Profils SeaUI : modes Local et Remote, UI de gestion de profils
+- HttpProjectRepository : SeaUI lit/écrit le backend par HTTP
+- RemoteLogsViewer : visualiseur intégré pour les logs distants
+- Dockerfile multi-stage (Seastar depuis les sources, image runtime ~150 Mo)
+- Orchestration docker-compose pour multi-services + MySQL
+- docker-compose.prod.yml avec support des secrets Docker
+- Durcissement production des endpoints `/admin/*` (JWT + rôle admin)
+- Documentation bilingue complète (EN + FR) de chaque fonctionnalité
+- Procédure de bootstrap admin documentée
 
 ### 🌟 v1.1.0
-- WebSocket pour notifications real-time
+- WebSocket pour notifications temps réel
 - OAuth2 providers (Google, GitHub)
 - Support PostgreSQL
-- Support MONGO
+- Support MongoDB
 - Migrations versionnées (avec rollback)
 - Streaming pour gros fichiers
 - Stockage de fichiers étendu (multi-backend filesystem/S3)
+- Daemon orchestrateur pour auto-déployer les nouveaux projets en conteneurs
+- Durcissement : restreindre `role: admin` dans `/auth/register` aux admins existants
+- RemoteLogsViewer : polling temps réel, filtres par niveau/logger, recherche
 ---
 
 ## 🎓 Pour qui ?
@@ -466,14 +506,37 @@ export SEA_DESKTOP_JWT_SECRET="votre-secret-jwt-32-caracteres-minimum"
 
 ## 📚 Documentation
 
+### Français
+
 | Document | Contenu |
 |---|---|
-| [`Release_Notes.md`](./Release_Notes.md) | Changelog détaillé par version |
-| [`docs/seadesktop_user_guide.md`](./docs/seadesktop_user_guide.md) | Guide utilisateur complet (référence YAML) |
-| [`docs/auth.md`](./docs/auth.md) | Authentification : JWT, cookies, token tracking |
-| [`docs/pagination.md`](./docs/pagination.md) | Pagination : page, offset, cursor |
-| [`docs/logging.md`](./docs/logging.md) | Logging : modules, sinks, rotation, `/admin/logs` |
-| [`docs/FILE_FEATURE_USER_GUIDE.md`](./docs/FILE_FEATURE_USER_GUIDE.md) | Stockage de fichiers |
+| [`Release_Notes_french.md`](./Release_Notes_french.md) | Journal détaillé des versions |
+| [`docs_french/seadesktop_user_guide_fr.md`](./docs_french/seadesktop_user_guide_fr.md) | Guide utilisateur complet (référence YAML) |
+| [`docs_french/admin_fr.md`](./docs_french/admin_fr.md) | Endpoints d'administration |
+| [`docs_french/auth_fr.md`](./docs_french/auth_fr.md) | Authentification : JWT, cookies, suivi de tokens |
+| [`docs_french/docker_deployment_fr.md`](./docs_french/docker_deployment_fr.md) | Déploiement Docker, multi-services, production |
+| [`docs_french/errors_fr.md`](./docs_french/errors_fr.md) | Format et codes des réponses d'erreur |
+| [`docs_french/FILE_FEATURE_USER_GUIDE_fr.md`](./docs_french/FILE_FEATURE_USER_GUIDE_fr.md) | Stockage de fichiers |
+| [`docs_french/healthcheck_fr.md`](./docs_french/healthcheck_fr.md) | Endpoints `/health` et `/health/ready` |
+| [`docs_french/logging_fr.md`](./docs_french/logging_fr.md) | Journalisation : modules, sinks, rotation, `/admin/logs` |
+| [`docs_french/pagination_fr.md`](./docs_french/pagination_fr.md) | Pagination : page, offset, cursor |
+| [`docs_french/SEAUI_GUIDE_fr.md`](./docs_french/SEAUI_GUIDE_fr.md) | Application desktop SeaUI (modes Local et Remote) |
+
+### English
+
+| Document | Contents |
+|---|---|
+| [`Release_Notes.md`](./Release_Notes.md) | Detailed changelog by version |
+| [`docs/seadesktop_user_guide.md`](./docs/seadesktop_user_guide.md) | Complete user guide (YAML reference) |
+| [`docs/admin.md`](./docs/admin.md) | Administration endpoints |
+| [`docs/auth.md`](./docs/auth.md) | Authentication: JWT, cookies, token tracking |
+| [`docs/docker_deployment.md`](./docs/docker_deployment.md) | Docker deployment, multi-services, production |
+| [`docs/errors.md`](./docs/errors.md) | Error response format and codes |
+| [`docs/FILE_FEATURE_USER_GUIDE.md`](./docs/FILE_FEATURE_USER_GUIDE.md) | File storage |
+| [`docs/healthcheck.md`](./docs/healthcheck.md) | `/health` and `/health/ready` endpoints |
+| [`docs/logging.md`](./docs/logging.md) | Logging: modules, sinks, rotation, `/admin/logs` |
+| [`docs/pagination.md`](./docs/pagination.md) | Pagination: page, offset, cursor |
+| [`docs/SEAUI_GUIDE.md`](./docs/SEAUI_GUIDE.md) | SeaUI desktop application (Local and Remote modes) |
 
 ---
 

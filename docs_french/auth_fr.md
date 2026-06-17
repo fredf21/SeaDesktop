@@ -163,10 +163,13 @@ Une entité du service doit être désignée comme source d'authentification via
 
 Une et une seule entité peut porter `is_auth_source: true`. Si plusieurs entités le déclarent, le démarrage du service échoue.
 
+Si aucune entité ne la déclare, le service démarre quand même et la vérification JWT continue de fonctionner pour les endpoints protégés, mais les routes `/auth/*` ne sont pas enregistrées. Tout appel à `/auth/login` ou `/auth/register` retourne 404 dans ce cas.
+
 ### Champs requis
 
 L'entité source doit comporter au minimum :
 
+- Un champ `id` (UUID ou entier auto-incrémenté). L'`id` est généré automatiquement par `RegisterHandler` et est obligatoire : sans lui, l'inscription réussit au niveau base de données mais retourne 400 avec « Missing ID on created entity ».
 - Un champ identifiant unique (généralement `email`).
 - Un champ de type `password` contenant le mot de passe hashé.
 - Un champ utilisé comme rôle (généralement `role`).
@@ -265,6 +268,15 @@ Le champ de mot de passe n'apparaît jamais dans la réponse (exclusion automati
 | 400 | Validation échouée : email invalide, mot de passe absent, etc. |
 | 409 | Contrainte d'unicité violée (par exemple, email déjà utilisé). |
 
+### Avertissement de sécurité — inscription ouverte
+
+En v1.0, `POST /auth/register` accepte le champ `role` tel quel. Quiconque ayant accès réseau à l'endpoint peut donc créer un compte administrateur en envoyant `"role": "admin"`. C'est acceptable pour amorcer le premier administrateur d'un déploiement neuf, mais pour un déploiement public, vous devriez soit :
+
+- désactiver l'inscription ouverte une fois le premier admin créé (retirer la route au niveau du proxy, ou filtrer au niveau applicatif) ;
+- soit retirer le champ `role` des requêtes entrantes et le forcer à `user` par défaut au niveau du proxy.
+
+Un durcissement natif est prévu pour la v1.1 qui restreindra optionnellement le champ `role` aux seuls administrateurs existants.
+
 ---
 
 ## 7. Connexion (`/auth/login`)
@@ -307,6 +319,8 @@ Set-Cookie: sea_refresh=eyJhbGciOiJIUzI1NiIs...; HttpOnly; Secure; SameSite=Lax;
 ```
 
 **Mode `both` :** les tokens apparaissent à la fois dans le corps JSON et dans les cookies.
+
+> **Mode Remote de SeaUI.** SeaUI en mode Remote lit `access_token` depuis le corps JSON de la réponse de connexion. Un backend configuré avec `token_delivery: cookie` provoquera l'échec du login SeaUI avec le message « Login response missing access_token ». Utilisez `body` (défaut) ou `both` pour les backends administrés à distance par SeaUI.
 
 ### Comportement attendu
 

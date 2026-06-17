@@ -1269,13 +1269,21 @@ This section configures authentication.
 security:
   authentication:
     type: jwt
-    access_token_ttl: 15m
-    refresh_token_ttl: 7d
+    algorithm: HS256
+    secret: "${SEA_DESKTOP_JWT_SECRET}"
     issuer: SeaDesktop
     audience: SeaDesktopUsers
+    access_token_ttl: 15m
+    refresh_token_ttl: 7d
+    token_delivery: both
     password_field: password
     identifier_field: email
     role_field: role
+    cookies:
+      enabled: true
+      http_only: true
+      secure: true
+      same_site: Lax
 ```
 
 ### Accepted keys
@@ -1283,33 +1291,48 @@ security:
 | Key | Description |
 |---|---|
 | `type` | Authentication type. Values include `none` and `jwt`. |
-| `access_token_ttl` | Access token lifetime. |
-| `refresh_token_ttl` | Refresh token lifetime. |
+| `algorithm` | Signing algorithm. Default `HS256`. Other supported HMAC variants: `HS384`, `HS512`. |
+| `secret` | JWT signing key. Must be at least 32 characters. Use an environment variable reference (e.g. `${SEA_DESKTOP_JWT_SECRET}`) instead of a literal value. **Required** when `type: jwt`. |
 | `issuer` | JWT issuer. |
 | `audience` | JWT audience. |
+| `access_token_ttl` | Access token lifetime. |
+| `refresh_token_ttl` | Refresh token lifetime. |
+| `token_delivery` | How tokens are returned to the client: `body`, `cookie`, or `both`. See section 17. Default `body`. |
 | `password_field` | Field containing the password. |
 | `identifier_field` | Field used as login identifier. |
 | `role_field` | Field containing the role. |
+| `cookies` | Sub-block configuring cookie attributes when `token_delivery` is `cookie` or `both`. See section 17. |
 
 ### Authentication source entity
 
-An entity must be marked with `is_auth_source: true` to act as the authentication source. It must provide the fields needed by the authentication configuration, typically `email`, `password`, and `role`.
+An entity must be marked with `is_auth_source: true` for the `/auth/*` routes to be registered. Without such an entity, the JWT verification middleware still works for protected endpoints, but the server exposes no way to issue tokens.
+
+The entity must declare the fields referenced by `password_field`, `identifier_field`, and `role_field` (defaults: `password`, `email`, `role`), plus an `id` field. The `id` is required because `RegisterHandler` generates a value for it (UUID v4 or auto-incrementing integer depending on the type).
 
 ```yaml
 - name: User
   options:
+    enable_crud: true
     is_auth_source: true
+    timestamps: true
   fields:
     - name: id
       type: uuid
+      required: true
+      unique: true
     - name: email
       type: email
+      required: true
       unique: true
     - name: password
       type: password
+      required: true
     - name: role
       type: string
+      required: true
 ```
+
+> **Security warning — bootstrap.** In v1.0, `POST /auth/register` accepts the `role` field as-is. Anyone with network access to the endpoint can therefore create an administrator account by posting `"role": "admin"`. This is acceptable to bootstrap the first administrator on a fresh deployment, but for a public deployment, disable open registration once the first admin is created (a hardening pass is planned for v1.1).
 
 ### Automatically generated routes
 
@@ -1355,6 +1378,20 @@ Authorization: Bearer <access_token>
 ---
 
 ## 17. Cookies and token delivery
+
+### The `token_delivery` key
+
+The `token_delivery` key in `security.authentication` controls how access and refresh tokens are returned to the client at login and refresh. Three values are accepted:
+
+| Value | Behavior |
+|---|---|
+| `body` | Tokens are returned in the JSON response body (`access_token`, `refresh_token`). No `Set-Cookie` header. **Default.** |
+| `cookie` | Tokens are set as HTTP cookies (`Set-Cookie` headers). The response body does not contain the tokens. |
+| `both` | Tokens are returned in both the JSON body and as cookies. Useful when serving both API clients (read from body) and browsers (use cookies automatically). |
+
+When `cookie` or `both` is used, the `cookies` sub-block configures the cookie attributes (see below).
+
+> **SeaUI Remote mode.** SeaUI in Remote mode reads `access_token` from the JSON response body. A backend configured with `token_delivery: cookie` will cause SeaUI's login to fail with "Login response missing access_token". Use `body` or `both` for backends administered by SeaUI.
 
 ### Delivery modes
 
@@ -1978,18 +2015,27 @@ Logging behavior may be documented in a dedicated logging reference if present i
 
 ## 27. Generated system endpoints
 
-Depending on the enabled features, SeaDesktop can generate system endpoints such as:
+Depending on the enabled features, SeaDesktop generates the following system endpoints. The `/admin/*` endpoints are detailed in `admin.md`. The `/auth/*` endpoints are described in section 16 and in `auth.md`. The `/admin/logs` endpoint is documented in `logging.md`.
 
-| Endpoint | Description |
-|---|---|
-| `/docs` | Interactive API documentation. |
-| `/openapi.json` | OpenAPI schema. |
-| `/auth/register` | User registration when authentication is enabled. |
-| `/auth/login` | User login. |
-| `/auth/refresh` | Token refresh. |
-| `/auth/logout` | Logout. |
-| `/auth/me` | Current authenticated user information. |
-| `/logs` | Log visualization when enabled. |
+| Endpoint | Method | Description | Conditional on |
+|---|---|---|---|
+| `/health` | GET | Liveness probe, returns `{"status":"RUNNING"}`. | Always. |
+| `/health/ready` | GET | Readiness probe, verifies database and storage. | Always. |
+| `/docs` | GET | Interactive Swagger UI. | Always. |
+| `/openapi.json` | GET | OpenAPI schema. | Always. |
+| `/auth/register` | POST | User registration. | Entity with `is_auth_source: true`. |
+| `/auth/login` | POST | User login, returns tokens. | Idem. |
+| `/auth/refresh` | POST | Refreshes an access token. | Idem. |
+| `/auth/logout` | POST | Logs out the current user. | Idem. |
+| `/auth/me` | GET | Returns the authenticated user. | Idem. |
+| `/admin/projects` | GET | Lists available YAML projects. | Always, admin role required. |
+| `/admin/projects/{file}` | GET | Reads the raw YAML of a project. | Idem. |
+| `/admin/projects/{file}` | POST | Creates a new YAML project. | Idem. |
+| `/admin/projects/{file}` | PUT | Replaces an existing YAML project. | Idem. |
+| `/admin/projects/{file}` | DELETE | Deletes a YAML project. | Idem. |
+| `/admin/restart` | POST | Requests a graceful restart. | Idem. |
+| `/admin/logs` | GET | Returns the in-memory log buffer. | Logging enabled, admin role required. |
+| `/admin/logs/loggers` | GET | Returns the list of loggers and their levels. | Idem. |
 
 ---
 
@@ -2042,8 +2088,15 @@ The following complementary documents provide more detail on specific topics:
 
 - `README.md`: project overview and quick start
 - `Release_Notes.md`: version changelog
-- `pagination.md`: detailed pagination documentation
+- `admin.md`: administration endpoints (`/admin/projects/*`, `/admin/restart`)
+- `auth.md`: detailed authentication and authorization
+- `docker_deployment.md`: Docker-based deployment, multi-services, production
+- `errors.md`: error response format and codes
 - `FILE_FEATURE_USER_GUIDE.md`: detailed documentation for `file` fields
+- `healthcheck.md`: `/health` and `/health/ready` endpoints
+- `logging.md`: logging configuration and log inspection endpoints
+- `pagination.md`: detailed pagination documentation
+- `SEAUI_GUIDE.md`: SeaUI desktop application (Local and Remote modes)
 - `COMMERCIAL-LICENSE.MD`: commercial license information
 
 ---

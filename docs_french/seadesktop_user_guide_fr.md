@@ -1447,9 +1447,9 @@ security:
   authentication:
     type: jwt
     algorithm: HS256
-    jwt_secret: ""
-    jwt_issuer: ""
-    jwt_audience: ""
+    secret: "${SEA_DESKTOP_JWT_SECRET}"
+    issuer: SeaDesktop
+    audience: SeaDesktopUsers
     access_token_ttl: 900
     refresh_token_ttl: 1209600
     token_delivery: body
@@ -1463,11 +1463,11 @@ security:
 |---|---|---|---|
 | `type` | enum | `none` | Type d'authentification. Valeurs : `none`, `jwt`, `api_key`, `basic`, `oauth2`. Seul `jwt` est pleinement supporté. |
 | `algorithm` | enum | `HS256` | Algorithme de signature. Valeurs : `HS256`, `HS384`, `HS512`, `RS256`, `RS384`, `RS512`, `ES256`, `ES384`, `ES512`. |
-| `jwt_secret` | chaîne | `""` | Clé secrète pour les algorithmes HS*. Si vide, génération et persistance automatique. Doit faire au moins 32 caractères si fournie. |
+| `secret` | chaîne | `""` | Clé secrète pour les algorithmes HS*. Si vide, génération et persistance automatique. Doit faire au moins 32 caractères si fournie. Utilisez une référence de variable d'environnement (ex. `${SEA_DESKTOP_JWT_SECRET}`) plutôt qu'une valeur littérale. |
 | `jwt_public_key_path` | chaîne | `""` | Chemin vers la clé publique pour les algorithmes RS*/ES*. |
 | `jwt_private_key_path` | chaîne | `""` | Chemin vers la clé privée pour les algorithmes RS*/ES*. |
-| `jwt_issuer` | chaîne | `""` | Valeur du claim `iss` dans les tokens émis. |
-| `jwt_audience` | chaîne | `""` | Valeur du claim `aud` dans les tokens émis. |
+| `issuer` | chaîne | `""` | Valeur du claim `iss` dans les tokens émis. |
+| `audience` | chaîne | `""` | Valeur du claim `aud` dans les tokens émis. |
 | `access_token_ttl` | entier (secondes) | `900` | Durée de vie de l'access token. La valeur par défaut correspond à 15 minutes. |
 | `refresh_token_ttl` | entier (secondes) | `1209600` | Durée de vie du refresh token. La valeur par défaut correspond à 14 jours. |
 | `token_delivery` | enum | `body` | Mode de livraison. Valeurs : `body`, `cookie`, `both`. Voir [section 17](#17-cookies-et-livraison-des-tokens). |
@@ -1476,30 +1476,34 @@ security:
 
 ### Entité source d'authentification
 
-L'authentification nécessite qu'une entité soit désignée comme source via `is_auth_source: true`. Cette entité doit comporter :
+Une entité doit être marquée `is_auth_source: true` pour que les routes `/auth/*` soient enregistrées. Sans une telle entité, le middleware de vérification JWT fonctionne toujours pour les endpoints protégés, mais le serveur n'expose aucun moyen d'émettre des tokens.
 
-- Un champ identifiant unique (typiquement `email`)
-- Un champ de type `password`
-- Un champ utilisé comme rôle (typiquement `role`)
+L'entité doit déclarer les champs référencés par la configuration d'authentification (typiquement `email`, `password`, `role`), plus un champ `id`. Le champ `id` est obligatoire car `RegisterHandler` génère une valeur pour ce champ (UUID v4 ou entier auto-incrémenté selon le type).
 
 ```yaml
 - name: User
   options:
+    enable_crud: true
     is_auth_source: true
+    timestamps: true
   fields:
     - name: id
       type: uuid
+      required: true
+      unique: true
     - name: email
       type: email
       required: true
       unique: true
-    - name: mot_de_passe
+    - name: password
       type: password
       required: true
     - name: role
       type: string
-      default: "user"
+      required: true
 ```
+
+> **Avertissement de sécurité — bootstrap.** En v1.0, `POST /auth/register` accepte le champ `role` tel quel. Quiconque ayant accès réseau à l'endpoint peut donc créer un compte administrateur en envoyant `"role": "admin"`. C'est acceptable pour amorcer le premier administrateur d'un déploiement neuf, mais pour un déploiement public, désactivez l'inscription ouverte une fois le premier admin créé (un durcissement est prévu pour la v1.1).
 
 ### Routes générées automatiquement
 
@@ -1570,6 +1574,8 @@ Le mode `token_delivery` détermine comment les tokens JWT sont transmis entre l
 | `body` (défaut) | Les tokens sont retournés dans le JSON de réponse uniquement. | API mobile, CLI, applications desktop. |
 | `cookie` | Les tokens sont placés dans des cookies HttpOnly inaccessibles depuis JavaScript. | Applications web (protection XSS). |
 | `both` | Les tokens sont transmis simultanément dans le JSON et dans les cookies. | Phases de migration, services accédés par plusieurs types de clients. |
+
+> **Mode Remote de SeaUI.** SeaUI en mode Remote lit `access_token` depuis le corps de la réponse JSON. Un backend configuré avec `token_delivery: cookie` provoquera l'échec du login SeaUI avec le message « Login response missing access_token ». Utilisez `body` ou `both` pour les backends administrés par SeaUI.
 
 ### Bloc `cookies`
 
@@ -2441,15 +2447,22 @@ En plus des routes générées pour chaque entité, le système expose plusieurs
 | Méthode | Route | Authentification | Description |
 |---|---|---|---|
 | `GET` | `/health` | Aucune | Vérification que le service est opérationnel. |
+| `GET` | `/health/ready` | Aucune | Vérifie les dépendances (base de données, stockage). |
 | `GET` | `/openapi.json` | Aucune | Spécification OpenAPI 3.0 complète. |
 | `GET` | `/docs` | Aucune | Interface Swagger UI. |
-| `GET` | `/admin/logs` | Admin uniquement | Lecture des logs récents. |
-| `GET` | `/admin/logs/loggers` | Admin uniquement | Liste des loggers. |
 | `POST` | `/auth/register` | Aucune | Inscription d'un nouveau compte (si authentification activée). |
 | `POST` | `/auth/login` | Aucune | Connexion (si authentification activée). |
 | `POST` | `/auth/refresh` | Aucune | Renouvellement d'access token. |
 | `POST` | `/auth/logout` | Authentification requise | Déconnexion. |
 | `GET` | `/auth/me` | Authentification requise | Informations du compte connecté. |
+| `GET` | `/admin/projects` | Admin uniquement | Liste les projets YAML disponibles. |
+| `GET` | `/admin/projects/{file}` | Admin uniquement | Lit le YAML brut d'un projet. |
+| `POST` | `/admin/projects/{file}` | Admin uniquement | Crée un nouveau projet YAML. |
+| `PUT` | `/admin/projects/{file}` | Admin uniquement | Remplace le contenu d'un projet YAML existant. |
+| `DELETE` | `/admin/projects/{file}` | Admin uniquement | Supprime un projet YAML. |
+| `POST` | `/admin/restart` | Admin uniquement | Demande un redémarrage propre du service. |
+| `GET` | `/admin/logs` | Admin uniquement | Lecture des logs récents. |
+| `GET` | `/admin/logs/loggers` | Admin uniquement | Liste des loggers. |
 
 ---
 
@@ -2503,10 +2516,18 @@ Plusieurs documents complémentaires détaillent des fonctionnalités spécifiqu
 
 | Document | Sujet |
 |---|---|
+| `README.md` | Présentation du projet et démarrage rapide. |
+| `Release_Notes.md` | Journal des versions. |
+| `admin.md` | Endpoints d'administration (`/admin/projects/*`, `/admin/restart`). |
 | `auth.md` | Authentification complète : JWT, cookies, token tracking, rotation, sécurité. |
-| `pagination.md` | Pagination : trois modes, syntaxe complète, exemples par cas d'usage. |
-| `logging.md` | Logging : architecture spdlog, sinks, formats, endpoint `/admin/logs`. |
+| `docker_deployment.md` | Déploiement Docker, multi-services, production. |
+| `errors.md` | Format et codes des réponses d'erreur. |
 | `FILE_FEATURE_USER_GUIDE.md` | Stockage de fichiers : déclaration, upload, download, partage entre entités, suppression. |
+| `healthcheck.md` | Endpoints `/health` et `/health/ready`. |
+| `logging.md` | Logging : architecture spdlog, sinks, formats, endpoint `/admin/logs`. |
+| `pagination.md` | Pagination : trois modes, syntaxe complète, exemples par cas d'usage. |
+| `SEAUI_GUIDE.md` | Application desktop SeaUI (modes Local et Remote). |
+| `COMMERCIAL-LICENSE.MD` | Informations sur la licence commerciale. |
 
 Ces documents approfondissent les sections correspondantes de ce guide.
 

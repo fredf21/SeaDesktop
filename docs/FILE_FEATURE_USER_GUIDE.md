@@ -594,6 +594,34 @@ Three distinct download routes are generated:
 
 ---
 
+## 12. Deploying With Docker
+
+When SeaDesktop runs in a Docker container, the `uploads/` directory (or whatever `storage.root_path` points to) is inside the container's filesystem. Without a volume, all uploaded files are lost when the container is restarted or replaced.
+
+For persistent storage, mount the uploads directory as a Docker volume. In `docker-compose.yml`:
+
+```yaml
+services:
+  service_a:
+    image: seadesktop/backend:latest
+    volumes:
+      - ${SEA_DESKTOP_CONFIGS_HOST_DIR:-./configs}:/app/configs
+      - ./uploads/service_a:/app/uploads
+```
+
+The same `uploads/` volume can be shared between several backend containers if your deployment requires it, but be aware that file deletions are no longer detected as duplicates across services since each service writes to its own `sea_files` table. For a simple deployment, one uploads volume per service is the safe default.
+
+Make sure the host directory has the correct permissions for the UID running the container (1000 by default):
+
+```bash
+mkdir -p uploads/service_a
+chown 1000:1000 uploads/service_a
+```
+
+See `docker_deployment.md` for the full Docker deployment guide.
+
+---
+
 ## Summary
 
 Implementing a `file` field requires the following steps:

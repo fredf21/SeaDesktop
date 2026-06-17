@@ -163,10 +163,13 @@ One service entity must be designated as the authentication source using the `is
 
 Exactly one entity can declare `is_auth_source: true`. If multiple entities declare it, service startup fails.
 
+If no entity declares it, the service still starts and JWT verification still works for protected endpoints, but the `/auth/*` routes are not registered. Any call to `/auth/login` or `/auth/register` returns 404 in that case.
+
 ### Required fields
 
 The source entity must contain at least:
 
+- An `id` field (UUID or auto-incremented integer). The `id` is generated automatically by `RegisterHandler` and is required: without it, registration succeeds at the database level but returns 400 with "Missing ID on created entity".
 - A unique identifier field, usually `email`.
 - A `password` field containing the hashed password.
 - A field used as the role, usually `role`.
@@ -265,6 +268,15 @@ The password field never appears in the response (automatic exclusion via the `p
 | 400 | Validation failed: invalid email, missing password, etc. |
 | 409 | Uniqueness constraint violated, for example email already in use. |
 
+### Security warning — open registration
+
+In v1.0, `POST /auth/register` accepts the `role` field as-is. Anyone with network access to the endpoint can therefore create an administrator account by posting `"role": "admin"`. This is acceptable to bootstrap the first administrator on a fresh deployment, but for a public deployment, you should either:
+
+- disable open registration once the first admin is created (remove the route at the proxy level, or filter at the application level);
+- or strip the `role` field from incoming requests and force it to `user` by default at the proxy.
+
+A built-in hardening pass is planned for v1.1 that will optionally restrict the `role` field to existing administrators only.
+
 ---
 
 ## 7. Login (`/auth/login`)
@@ -307,6 +319,8 @@ Set-Cookie: sea_refresh=eyJhbGciOiJIUzI1NiIs...; HttpOnly; Secure; SameSite=Lax;
 ```
 
 **`both` mode:** tokens appear both in the JSON body and in cookies.
+
+> **SeaUI Remote mode.** SeaUI in Remote mode reads `access_token` from the JSON body of the login response. A backend configured with `token_delivery: cookie` will cause SeaUI's login to fail with "Login response missing access_token". Use `body` (default) or `both` for backends administered remotely by SeaUI.
 
 ### Expected behavior
 
