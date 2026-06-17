@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "connectiondialog.h"
 #include "httpprojectrepository.h"
+#include "remotelogsviewer.h"
 #include "routelistitemdelegate.h"
 #include "ui_mainwindow.h"
 
@@ -196,7 +197,8 @@ bool routeMatchesEntity(const sea::application::RouteDefinition& route, const QS
  *
  * @param parent Parent Qt.
  */
-MainWindow::MainWindow(TranslationManager* translationManager, std::unique_ptr<IProjectRepository> repository, QWidget *parent)
+MainWindow::MainWindow(TranslationManager* translationManager, std::unique_ptr<IProjectRepository> repository,
+                        Profile activeProfile, QString token, QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
     , _projectModel(new ProjectListModel(this))
@@ -210,6 +212,12 @@ MainWindow::MainWindow(TranslationManager* translationManager, std::unique_ptr<I
     ui->setupUi(this);
     showMaximized();
     setWindowTitle(tr("SeaDesktop"));
+    _projectRepository = std::move(repository);
+    _activeProfile = std::move(activeProfile);
+    _token = std::move(token);
+    _isRemoteMode = (_activeProfile.type == Profile::Type::Remote);
+    updateServicesActionsMenuState();
+    updateAuditsMenuState();
     _projectRepository = std::make_unique<LocalProjectRepository>(appConfigsDir());
     ui->projectListView->setModel(_projectModel);
     ui->serviceListView->setModel(_serviceModel);
@@ -276,8 +284,12 @@ MainWindow::MainWindow(TranslationManager* translationManager, std::unique_ptr<I
     connect(_statusCheck, &ServiceStatusCheck::statusUpdated, this,
             [this](const QString&, const QString& status, int) {
                 const bool running = (status == "RUNNING");
-                ui->startServiceButton->setEnabled(!running);
-                ui->stopServiceButton->setEnabled(running);
+                // En mode Remote, Start et Stop sont desactives : le
+                // backend tourne sur un Docker distant, SeaUI ne peut
+                // pas lancer/arreter le process. Seul Restart est
+                // adapte pour le remote (via POST /admin/restart).
+                ui->startServiceButton->setEnabled(!running && !_isRemoteMode);
+                ui->stopServiceButton->setEnabled(running && !_isRemoteMode);
                 ui->restartServiceButton->setEnabled(running);
                 ui->swaggerServiceButton->setEnabled(running);
                 ui->serviceStatusLabel->setStyleSheet(
@@ -289,7 +301,8 @@ MainWindow::MainWindow(TranslationManager* translationManager, std::unique_ptr<I
 
     connect(_statusCheck, &ServiceStatusCheck::serviceUnreachable, this,
             [this](const QString&) {
-                ui->startServiceButton->setEnabled(true);
+                // Start desactive en mode Remote (idem patch precedent).
+                ui->startServiceButton->setEnabled(!_isRemoteMode);
                 ui->stopServiceButton->setEnabled(false);
                 ui->restartServiceButton->setEnabled(false);
                 ui->swaggerServiceButton->setEnabled(false);
@@ -337,6 +350,19 @@ MainWindow::MainWindow(TranslationManager* translationManager, std::unique_ptr<I
             return;
         }
 
+        // Mode Remote : ouvre le RemoteLogsViewer qui appelle
+        // GET /admin/logs sur le backend distant.
+        if (_isRemoteMode) {
+            auto* viewer = new RemoteLogsViewer(_activeProfile.baseUrl,
+                                                _token,
+                                                this);
+            viewer->setAttribute(Qt::WA_DeleteOnClose);
+            viewer->show();
+            return;
+        }
+
+        // Mode Local : ouvre le fichier log local dans l'editeur
+        // par defaut (comportement historique).
         const auto& project = _projectModel->projectAt(_currentProjectRow);
         const auto& service = _serviceModel->serviceAt(_currentServiceRow);
 
@@ -642,6 +668,105 @@ void MainWindow::stopService(const QString &serviceName)
  */
 void MainWindow::restartService(const QString& serviceName, const QString& yamlPath)
 {
+    // Mode Remote : on ne peut pas arreter le QProcess local (il n'existe
+    // pas), on appelle l'endpoint POST /admin/restart du backend distant.
+    // Le backend va se terminer apres 500ms, Docker va le relancer, et
+    // le ServiceStatusCheck mettra a jour le statut automatiquement
+    // (RUNNING -> [erreur transient] -> RUNNING).
+    if (_isRemoteMode) {
+        // Dialog modal non-bloquant pour l'utilisateur. On le ferme
+        // quand le statut redevient RUNNING via ServiceStatusCheck.
+        auto* progressDialog = new QMessageBox(this);
+        progressDialog->setWindowTitle(tr("Restarting"));
+        progressDialog->setText(
+            tr("Service is restarting, please wait..."));
+        progressDialog->setStandardButtons(QMessageBox::NoButton);
+        progressDialog->setIcon(QMessageBox::Information);
+        progressDialog->setWindowModality(Qt::WindowModal);
+
+        auto* nam = new QNetworkAccessManager(this);
+
+        // URL de restart sur le backend du profil actif.
+        QString baseUrl = _activeProfile.baseUrl;
+        while (baseUrl.endsWith('/')) {
+            baseUrl.chop(1);
+        }
+        QNetworkRequest request(QUrl(baseUrl + "/admin/restart"));
+        request.setRawHeader("Authorization",
+                             QByteArray("Bearer ") + _token.toUtf8());
+        request.setHeader(QNetworkRequest::ContentTypeHeader,
+                          QStringLiteral("application/json"));
+
+        QNetworkReply* reply = nam->post(request, QByteArray());
+
+        connect(reply, &QNetworkReply::finished, this,
+                [this, reply, nam, progressDialog, serviceName]() {
+                    const int status = reply->attribute(
+                                                QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+                    if (status == 202) {
+                        qDebug() << "Remote restart requested for" << serviceName;
+
+                        // Le backend va se terminer dans 500ms. On attend que
+                        // ServiceStatusCheck constate le retour a RUNNING pour
+                        // fermer le dialog. Polling toutes les 500ms via QTimer.
+                        auto* timer = new QTimer(this);
+                        timer->setInterval(500);
+                        connect(timer, &QTimer::timeout, this,
+                                [this, timer, progressDialog]() {
+                                    if (ui->serviceStatusLabel->text() == "RUNNING") {
+                                        progressDialog->done(QMessageBox::Ok);
+                                        progressDialog->deleteLater();
+                                        timer->stop();
+                                        timer->deleteLater();
+                                    }
+                                });
+
+                        // Securite : timeout apres 30s pour ne pas bloquer
+                        // si le service ne revient jamais.
+                        QTimer::singleShot(30000, this,
+                                           [progressDialog, timer]() {
+                                               if (progressDialog->isVisible()) {
+                                                   progressDialog->done(QMessageBox::Cancel);
+                                                   progressDialog->deleteLater();
+                                                   timer->stop();
+                                                   timer->deleteLater();
+                                               }
+                                           });
+
+                        // Attendre un peu avant de commencer le polling, le
+                        // temps que le backend ait vraiment redemarre.
+                        QTimer::singleShot(1000, this, [timer]() { timer->start(); });
+
+                    } else {
+                        progressDialog->done(QMessageBox::Cancel);
+                        progressDialog->deleteLater();
+
+                        if (status == 401) {
+                            QMessageBox::warning(this, tr("Restart"),
+                                                 tr("Authentication failed. Please log in again."));
+                        } else if (status == 403) {
+                            QMessageBox::warning(this, tr("Restart"),
+                                                 tr("Admin role required."));
+                        } else if (status == 0) {
+                            QMessageBox::warning(this, tr("Restart"),
+                                                 tr("Network error: %1").arg(reply->errorString()));
+                        } else {
+                            QMessageBox::warning(this, tr("Restart"),
+                                                 tr("Restart failed: HTTP %1").arg(status));
+                        }
+                    }
+
+                    reply->deleteLater();
+                    nam->deleteLater();
+                });
+
+        // Affichage du dialog (modal, attend la fermeture).
+        progressDialog->exec();
+        return;
+    }
+
+    // Mode Local : comportement historique (stop + start du QProcess).
     stopService(serviceName);
     startService(serviceName, yamlPath);
 }
@@ -2959,6 +3084,13 @@ void MainWindow::on_actionEdit_Entity_triggered()
 
 void MainWindow::on_actionShow_All_Services_Logs_triggered()
 {
+    // En mode Remote, cet item est desactive via le mecanisme du
+    // menu (cf. updateAuditsMenuState). Ce code n'est donc execute
+    // qu'en mode Local. Garde-fou en cas d'oubli.
+    if (_isRemoteMode) {
+        return;
+    }
+
     const QVector<ServiceLogInfo> entries = collectAllServiceLogs();
 
     if (entries.isEmpty()) {
@@ -2975,6 +3107,16 @@ void MainWindow::on_actionShow_All_Services_Logs_triggered()
 
 void MainWindow::on_actionChoose_a_service_to_show_Logs_triggered()
 {
+    // Mode Remote : ouvre directement le RemoteLogsViewer pour le
+    // seul service auquel SeaUI est connecte (le profil actif).
+    if (_isRemoteMode) {
+        auto* viewer = new RemoteLogsViewer(_activeProfile.baseUrl,
+                                            _token,
+                                            this);
+        viewer->setAttribute(Qt::WA_DeleteOnClose);
+        viewer->show();
+        return;
+    }
     const QVector<ServiceLogInfo> entries = collectAllServiceLogs();
 
     if (entries.isEmpty()) {
@@ -3150,8 +3292,15 @@ void MainWindow::on_actionSwitch_Connection_triggered()
             profile.baseUrl, dlg.token());
     }
 
-    // 3. Remplacer le repository actif.
+    // 3. Remplacer le repository actif et mettre a jour les membres
+    //    de profil pour que tous les helpers (Start/Stop, Restart,
+    //    Logs) connaissent le nouveau mode.
     _projectRepository = std::move(newRepo);
+    _activeProfile = profile;
+    _token = dlg.token();
+    _isRemoteMode = (profile.type == Profile::Type::Remote);
+    updateServicesActionsMenuState();
+    updateAuditsMenuState();
 
     // 4. Reinitialiser les selections : les projets ne sont plus les
     //    memes, les indices courants ne sont plus valides.
@@ -3169,4 +3318,34 @@ void MainWindow::on_actionSwitch_Connection_triggered()
 
     // 6. Recharger la liste des projets via le nouveau repository.
     loadProjects();
+}
+/**
+ * @brief Met a jour l'etat (enabled/disabled) du menu Services Actions
+ *        en fonction du mode courant (Local ou Remote).
+ *
+ * En mode Remote, le menu entier est desactive : les actions
+ * "Start/Stop/Restart/Reload All Services" agissent sur tous les
+ * services LOCAUX via QProcess, ce qui n'a aucun sens quand SeaUI
+ * est connecte a un backend distant (qui ne gere qu'un seul service
+ * par profil v1.0).
+ *
+ * Appelee au constructeur et apres chaque Switch Connection.
+ */
+void MainWindow::updateServicesActionsMenuState()
+{
+    ui->menuServcies_Actions->setEnabled(!_isRemoteMode);
+}
+/**
+ * @brief Met a jour l'etat (enabled/disabled) du menu Audits selon
+ *        le mode courant (Local ou Remote).
+ *
+ * En mode Remote, "Show All Services Logs" est desactive (SeaUI
+ * n'est connecte qu'a un seul service via le profil actif).
+ * "Choose a service to show Logs" reste actif et ouvre directement
+ * le RemoteLogsViewer.
+ */
+void MainWindow::updateAuditsMenuState()
+{
+    ui->actionShow_All_Services_Logs->setEnabled(!_isRemoteMode);
+    // Choose a service reste actif en remote.
 }

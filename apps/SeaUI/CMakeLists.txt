@@ -29,6 +29,7 @@ qt_add_executable(SeaUI
     auth_client.h auth_client.cpp
     profilemanagerdialog.h profilemanagerdialog.cpp
     connectiondialog.h connectiondialog.cpp
+    remotelogsviewer.h remotelogsviewer.cpp
 
 )
 

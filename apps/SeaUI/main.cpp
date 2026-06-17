@@ -83,7 +83,10 @@ int main(int argc, char *argv[])
     // Construction du repository selon le profil choisi.
     auto repository = buildRepository(connDialog.activeProfile(),
                                       connDialog.token());
-    MainWindow w(&translationManager, std::move(repository));
+    MainWindow w(&translationManager,
+                 std::move(repository),
+                 connDialog.activeProfile(),
+                 connDialog.token());
     w.show();
 
     return a.exec();

@@ -4,6 +4,7 @@
 #include <QMainWindow>
 #include "IProjectRepository.h"
 #include "entitylistmodel.h"
+#include "profile.h"
 #include "servicelistmodel.h"
 #include "projectlistmodel.h"
 #include "fieldlistmodel.h"
@@ -29,6 +30,7 @@ class MainWindow : public QMainWindow
 
 public:
     explicit MainWindow(TranslationManager* translationManager, std::unique_ptr<IProjectRepository> repository,
+                        Profile activeProfile, QString token,
                         QWidget* parent = nullptr);
     ~MainWindow() override;
     void loadProjects();
@@ -182,7 +184,8 @@ private:
     QString _refreshToken;
     void promptLogin();
     void loginUser(const QString& email, const QString& password);
-
+    void updateServicesActionsMenuState();
+    void updateAuditsMenuState();
     /**
      * @brief Affiche un modal demandant le nom du projet et du service.
      *
@@ -476,5 +479,8 @@ private:
     void syncLanguageMenu(const QString& code);
 
     std::unique_ptr<IProjectRepository> _projectRepository;
+    Profile _activeProfile;
+    QString _token;
+    bool    _isRemoteMode = false;
 };
 #endif // MAINWINDOW_H
