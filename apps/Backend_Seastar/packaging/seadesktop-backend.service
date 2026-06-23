@@ -1,0 +1,57 @@
+# ════════════════════════════════════════════════════════════════
+# /lib/systemd/system/seadesktop-backend.service
+#
+# Unit systemd pour SeaDesktop backend Seastar.
+#
+# Activation : systemctl enable --now seadesktop-backend
+# Logs       : journalctl -u seadesktop-backend -f
+# Restart    : systemctl restart seadesktop-backend
+#
+# La config par defaut est /etc/seadesktop/default.yaml. Pour
+# faire tourner plusieurs services, copie cette unit en
+# /etc/systemd/system/seadesktop-backend@.service avec un
+# parametre %i, et lance avec
+#     systemctl start seadesktop-backend@api
+# (la config attendue est alors /etc/seadesktop/api.yaml).
+# ════════════════════════════════════════════════════════════════
+
+[Unit]
+Description=SeaDesktop backend (Seastar HTTP server)
+Documentation=https://github.com/fredf21/SeaDesktop
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=seadesktop
+Group=seadesktop
+WorkingDirectory=/var/lib/seadesktop
+ExecStart=/usr/bin/seadesktop-backend
+Restart=on-failure
+RestartSec=5s
+
+# Variables d'environnement. Doivent etre definies dans
+# /etc/seadesktop/seadesktop.env (chmod 600, root:seadesktop).
+EnvironmentFile=-/etc/seadesktop/seadesktop.env
+
+# Securite : confinement du processus
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/seadesktop /var/log/seadesktop
+
+# Capabilities Seastar : reactor io_uring + CPU pinning
+AmbientCapabilities=CAP_IPC_LOCK CAP_SYS_NICE
+CapabilityBoundingSet=CAP_IPC_LOCK CAP_SYS_NICE
+
+# Limites
+LimitNOFILE=65536
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,73 @@
+#!/bin/sh
+# ════════════════════════════════════════════════════════════════
+# postinst — Script post-installation pour seadesktop-backend.
+#
+# Appele automatiquement par dpkg/apt apres l'install des fichiers.
+# Cree :
+#   - Le user systeme `seadesktop` qui execute le service
+#   - Les dossiers /var/lib/seadesktop, /var/log/seadesktop avec
+#     les permissions correctes
+#   - Reload systemd pour qu'il voie la nouvelle unit
+# Ne fait PAS demarrer le service automatiquement : c'est a
+# l'admin de configurer /etc/seadesktop/default.yaml puis lancer.
+# ════════════════════════════════════════════════════════════════
+
+set -e
+
+case "$1" in
+    configure)
+        # Cree le user systeme s'il n'existe pas
+        if ! getent passwd seadesktop >/dev/null; then
+            adduser --system --group --no-create-home \
+                --home /var/lib/seadesktop \
+                --shell /usr/sbin/nologin \
+                --quiet seadesktop
+        fi
+
+        # Cree les dossiers data et logs
+        mkdir -p /var/lib/seadesktop
+        chown seadesktop:seadesktop /var/lib/seadesktop
+        chmod 750 /var/lib/seadesktop
+
+        mkdir -p /var/log/seadesktop
+        chown seadesktop:seadesktop /var/log/seadesktop
+        chmod 750 /var/log/seadesktop
+
+        mkdir -p /etc/seadesktop
+        chmod 755 /etc/seadesktop
+
+        # Reload systemd pour voir la nouvelle unit
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload || true
+        fi
+
+        echo ""
+        echo "SeaDesktop backend installe."
+        echo ""
+        echo "Prochaines etapes :"
+        echo "  1. Cree /etc/seadesktop/default.yaml depuis le template :"
+        echo "     sudo cp /usr/share/seadesktop/default.yaml.example /etc/seadesktop/default.yaml"
+        echo "     sudo vim /etc/seadesktop/default.yaml"
+        echo ""
+        echo "  2. Cree /etc/seadesktop/seadesktop.env avec :"
+        echo "     SEA_DESKTOP_JWT_SECRET=<un_secret_aleatoire_64_chars>"
+        echo "     sudo chmod 600 /etc/seadesktop/seadesktop.env"
+        echo "     sudo chown root:seadesktop /etc/seadesktop/seadesktop.env"
+        echo ""
+        echo "  3. Active et demarre le service :"
+        echo "     sudo systemctl enable --now seadesktop-backend"
+        echo ""
+        echo "Logs :"
+        echo "  sudo journalctl -u seadesktop-backend -f"
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

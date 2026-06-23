@@ -134,3 +134,53 @@ target_include_directories(backend_seastar PRIVATE
 )
 
 target_compile_features(backend_seastar PRIVATE cxx_std_20)
+
+# ════════════════════════════════════════════════════════════════
+# Installation rules pour le paquet .deb seadesktop-backend
+# ════════════════════════════════════════════════════════════════
+
+if(NOT PACKAGE_SEAUI_ONLY)
+    # Le binaire backend va dans /opt/seadesktop/bin/.
+    # Pas dans /usr/bin/ pour separer les .so bundlees du reste.
+    install(TARGETS backend_seastar
+        RUNTIME DESTINATION /opt/seadesktop/bin
+        COMPONENT backend
+    )
+
+    # libmariadbcpp.so : la SEULE lib custom a bundler (toutes les autres
+    # sont fournies par les paquets Ubuntu standards).
+    install(FILES
+        "${CMAKE_SOURCE_DIR}/third_party/mariadb-connector-cpp/install/lib/mariadb/libmariadbcpp.so"
+        DESTINATION /opt/seadesktop/lib
+        COMPONENT backend
+    )
+
+    # Plugins MariaDB charges dynamiquement par libmariadbcpp.so.
+    install(DIRECTORY
+        "${CMAKE_SOURCE_DIR}/third_party/mariadb-connector-cpp/install/lib/mariadb/plugin/"
+        DESTINATION /opt/seadesktop/lib/mariadb/plugin
+        COMPONENT backend
+        FILES_MATCHING PATTERN "*.so"
+    )
+
+    # Wrapper script : installe en /usr/bin/seadesktop-backend.
+    install(PROGRAMS
+        "${CMAKE_CURRENT_SOURCE_DIR}/packaging/seadesktop-backend"
+        DESTINATION /usr/bin
+        COMPONENT backend
+    )
+
+    # Systemd unit : installe en /lib/systemd/system/.
+    install(FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/packaging/seadesktop-backend.service"
+        DESTINATION /lib/systemd/system
+        COMPONENT backend
+    )
+
+    # YAML de configuration d'exemple : /usr/share/seadesktop/.
+    install(FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/packaging/default.yaml.example"
+        DESTINATION /usr/share/seadesktop
+        COMPONENT backend
+    )
+endif()

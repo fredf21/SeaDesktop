@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# ════════════════════════════════════════════════════════════════
+# seadesktop-backend — Wrapper de lancement du backend Seastar.
+#
+# Installe dans /usr/bin/seadesktop-backend par le paquet .deb.
+# Son role est de :
+#   - Set LD_LIBRARY_PATH pour trouver les libs bundlees dans
+#     /opt/seadesktop/lib/ (libmariadbcpp.so notamment).
+#   - Definir MARIADB_PLUGIN_DIR pour le connecteur MariaDB.
+#   - Pointer vers la config par defaut /etc/seadesktop/default.yaml
+#     si aucun --config n'est passe en arguments.
+#   - Forwarder tous les arguments restants au binaire.
+#
+# Utilisation directe :
+#   seadesktop-backend --config /etc/seadesktop/myproject.yaml --service_name api
+#
+# Via systemd :
+#   systemctl start seadesktop-backend
+#   (la unit pointe vers /etc/seadesktop/default.yaml)
+# ════════════════════════════════════════════════════════════════
+
+set -e
+
+SEA_PREFIX="/opt/seadesktop"
+SEA_LIB="${SEA_PREFIX}/lib"
+SEA_BIN="${SEA_PREFIX}/bin/backend_seastar"
+SEA_CONFIG_DIR="/etc/seadesktop"
+SEA_DEFAULT_CONFIG="${SEA_CONFIG_DIR}/default.yaml"
+
+# ── Verification que le binaire existe ──────────────────────────
+if [ ! -x "${SEA_BIN}" ]; then
+    echo "ERREUR : binaire backend introuvable ou non executable : ${SEA_BIN}" >&2
+    echo "Le paquet seadesktop-backend semble corrompu. Reinstalle-le :" >&2
+    echo "    sudo apt install --reinstall seadesktop-backend" >&2
+    exit 1
+fi
+
+# ── Configuration des chemins de bibliotheques bundlees ─────────
+export LD_LIBRARY_PATH="${SEA_LIB}:${LD_LIBRARY_PATH:-}"
+
+# ── MariaDB plugin directory ──────────────────────────────────
+# Le connecteur MariaDB cherche ses plugins (auth, etc.) dans
+# MARIADB_PLUGIN_DIR. On le pointe vers la version bundlee.
+export MARIADB_PLUGIN_DIR="${SEA_LIB}/mariadb/plugin"
+
+# ── Lancement ──────────────────────────────────────────────────
+# Si aucun --config dans les args, on utilise la config par defaut.
+if ! printf '%s\n' "$@" | grep -q -- '--config'; then
+    if [ -f "${SEA_DEFAULT_CONFIG}" ]; then
+        exec "${SEA_BIN}" --config "${SEA_DEFAULT_CONFIG}" "$@"
+    else
+        echo "ERREUR : aucune config specifiee et ${SEA_DEFAULT_CONFIG} n'existe pas." >&2
+        echo "Soit cree la config par defaut, soit passe --config <fichier>." >&2
+        exit 1
+    fi
+fi
+
+exec "${SEA_BIN}" "$@"

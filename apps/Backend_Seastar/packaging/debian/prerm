@@ -1,0 +1,37 @@
+#!/bin/sh
+# ════════════════════════════════════════════════════════════════
+# prerm — Script pre-suppression pour seadesktop-backend.
+#
+# Appele par dpkg/apt AVANT la suppression des fichiers du paquet.
+# Stop proprement le service si actif, et le desactive.
+#
+# Lors d'un upgrade, le service est redémarré par le postinst de
+# la nouvelle version (pas par ce script).
+# ════════════════════════════════════════════════════════════════
+
+set -e
+
+case "$1" in
+    remove|upgrade|deconfigure)
+        if [ -d /run/systemd/system ]; then
+            # Stop le service si actif
+            if systemctl is-active --quiet seadesktop-backend; then
+                systemctl stop seadesktop-backend || true
+            fi
+            # Sur remove (pas upgrade), desactive aussi le service
+            if [ "$1" = "remove" ]; then
+                systemctl disable seadesktop-backend || true
+            fi
+        fi
+        ;;
+
+    failed-upgrade)
+        ;;
+
+    *)
+        echo "prerm called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

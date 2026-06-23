@@ -1,0 +1,156 @@
+# ════════════════════════════════════════════════════════════════
+# default.yaml.example — Configuration backend SeaDesktop
+#
+# Template installe par le paquet seadesktop-backend dans :
+#   /usr/share/seadesktop/default.yaml.example
+#
+# Pour utiliser :
+#   sudo cp /usr/share/seadesktop/default.yaml.example /etc/seadesktop/default.yaml
+#   sudo vim /etc/seadesktop/default.yaml
+#
+# Ce fichier definit un service backend simple avec :
+#   - Authentification JWT activee (entite User)
+#   - Une entite metier "Note" avec CRUD complet et controle d'acces
+#     simple (chaque user voit/edite ses propres notes)
+#   - Logging vers stdout + fichier
+#   - Base MySQL locale
+#
+# Documentation complete :
+#   https://github.com/fredf21/SeaDesktop/blob/main/docs/seadesktop_user_guide.md
+#
+# Variables d'environnement requises (a definir dans
+# /etc/seadesktop/seadesktop.env) :
+#   SEA_DESKTOP_JWT_SECRET=<chaine aleatoire 64 chars min>
+# ════════════════════════════════════════════════════════════════
+
+project:
+  name: SeaDesktopDemo
+
+services:
+  - name: ApiService
+    port: 8080
+
+    # ── Base de donnees ─────────────────────────────────────────
+    database:
+      type: mysql
+      host: 127.0.0.1
+      port: 3306
+      database_name: seadesktop_demo
+      username: seadesktop
+      password: change_me_in_production
+      migrations: conservative
+
+    # ── Stockage des fichiers uploades ─────────────────────────
+    storage:
+      backend: filesystem
+      root_path: /var/lib/seadesktop/uploads
+      file_mode: "0640"
+      directory_mode: "0750"
+
+    # ── Securite : JWT + Authorization ─────────────────────────
+    security:
+      authentication:
+        secret: ${SEA_DESKTOP_JWT_SECRET}
+        algorithm: HS256
+        access_token_ttl_minutes: 60
+        refresh_token_ttl_days: 30
+        token_delivery: body
+      authorization:
+        enabled: true
+        default_policy: allow
+        admin_role: admin
+        declared_roles: [admin, manager, user]
+
+    # ── Logging ────────────────────────────────────────────────
+    logging:
+      level: info
+      sinks:
+        - type: stdout
+          format: pattern
+          pattern: "[%Y-%m-%d %H:%M:%S.%e] [%n] [%l] %v"
+        - type: file
+          path: /var/log/seadesktop/api.log
+          format: pattern
+          pattern: "[%Y-%m-%d %H:%M:%S.%e] [%n] [%l] %v"
+          rotation:
+            max_size_mb: 50
+            max_files: 5
+
+    # ── Entites du domaine ─────────────────────────────────────
+    entities:
+
+      # User : entite d'authentification.
+      # is_auth_source: true → expose /auth/register, /auth/login, etc.
+      - name: User
+        is_auth_source: true
+        options:
+          enable_crud: true
+        fields:
+          - name: id
+            type: uuid
+            required: true
+            unique: true
+          - name: email
+            type: email
+            required: true
+            unique: true
+          - name: password
+            type: password
+            required: true
+          - name: role
+            type: string
+            required: true
+            default: user
+          - name: created_at
+            type: timestamp
+            required: true
+            default: now
+
+      # Note : entite metier d'exemple avec ownership.
+      # Chaque user voit/edite uniquement ses propres notes.
+      - name: Note
+        options:
+          enable_crud: true
+        access_control:
+          owner_field: user_id
+          rules:
+            list:
+              allow_roles: [admin, manager, user]
+              own_resource: true
+            get_by_id:
+              allow_roles: [admin, manager, user]
+              own_resource: true
+            create:
+              allow_roles: [admin, manager, user]
+            update:
+              allow_roles: [admin, manager, user]
+              own_resource: true
+            delete:
+              allow_roles: [admin, manager, user]
+              own_resource: true
+        fields:
+          - name: id
+            type: uuid
+            required: true
+            unique: true
+          - name: user_id
+            type: uuid
+            required: true
+            references:
+              entity: User
+              field: id
+              on_delete: cascade
+          - name: title
+            type: string
+            required: true
+            max_length: 200
+          - name: content
+            type: text
+          - name: created_at
+            type: timestamp
+            required: true
+            default: now
+          - name: updated_at
+            type: timestamp
+            required: true
+            default: now
