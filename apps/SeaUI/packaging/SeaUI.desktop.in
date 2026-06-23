@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=SeaUI
+GenericName=SeaDesktop project manager
+Comment=Manage SeaDesktop backend services and projects
+Exec=@CMAKE_INSTALL_PREFIX@/bin/SeaUI
+Icon=seaui
+Terminal=false
+Categories=Development;
+StartupWMClass=SeaUI
+StartupNotify=true
+Keywords=seadesktop;backend;yaml;

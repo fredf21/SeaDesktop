@@ -13,7 +13,16 @@
 #include <filesystem>
 #include <stdexcept>
 #include <utility>
-
+// QtFuture::makeReadyValueFuture a ete introduit en Qt 6.6.
+// Avant, on utilise QtFuture::makeReadyFuture (meme semantique).
+#if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)
+namespace QtFuture {
+template <typename T>
+inline auto makeReadyValueFuture(T&& value) {
+    return makeReadyFuture(std::forward<T>(value));
+}
+}
+#endif
 namespace {
 
 /**

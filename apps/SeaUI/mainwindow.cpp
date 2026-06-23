@@ -42,7 +42,9 @@
 #include <QTextStream>
 #include <QStringConverter>
 #include "localprojectrepository.h"
-
+#include <QToolBar>
+#include <QAction>
+#include <QLabel>
 namespace {
 
 /**
@@ -210,6 +212,33 @@ MainWindow::MainWindow(TranslationManager* translationManager, std::unique_ptr<I
     , _translationManager(translationManager)
 {
     ui->setupUi(this);
+    // ── Icône de l'application ────────────────────────────────────
+    // setWindowIcon est utilisé par Windows, KDE, XFCE et la plupart
+    // des environnements desktop pour afficher l'icône dans la barre
+    // de titre et dans Alt+Tab. Sur GNOME/Wayland, la barre de titre
+    // masque ce icon par design : la QToolBar ci-dessous garantit que
+    // le logo est tout de meme visible dans la fenetre.
+    const QIcon appIcon(":/icons/seaui.png");
+    setWindowIcon(appIcon);
+
+    // ── Barre logo en haut a gauche (visible sur toutes les plateformes) ─
+    auto* logoToolBar = new QToolBar(tr("Logo"), this);
+    logoToolBar->setObjectName(QStringLiteral("LogoToolBar"));
+    logoToolBar->setMovable(false);
+    logoToolBar->setFloatable(false);
+    logoToolBar->setIconSize(QSize(32, 32));
+
+    auto* logoLabel = new QLabel(this);
+    logoLabel->setPixmap(appIcon.pixmap(32, 32));
+    logoLabel->setContentsMargins(8, 4, 12, 4);  // padding visuel
+    logoToolBar->addWidget(logoLabel);
+
+    auto* titleLabel = new QLabel(QStringLiteral("SeaDesktop"), this);
+    titleLabel->setStyleSheet(QStringLiteral(
+        "font-size: 14px; font-weight: bold; padding-right: 12px;"));
+    logoToolBar->addWidget(titleLabel);
+
+    addToolBar(Qt::TopToolBarArea, logoToolBar);
     showMaximized();
     setWindowTitle(tr("SeaDesktop"));
     _projectRepository = std::move(repository);

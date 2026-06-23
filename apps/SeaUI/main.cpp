@@ -9,6 +9,7 @@
 #include <qdialog.h>
 #include <qdir.h>
 #include <qstandardpaths.h>
+#include <QIcon>
 
 namespace {
 
@@ -57,14 +58,20 @@ std::unique_ptr<IProjectRepository> buildRepository(
 } // namespace anonyme
 int main(int argc, char *argv[])
 {
+
+
     QApplication a(argc, argv);
 
+    a.setWindowIcon(QIcon(":/icons/seaui.png"));
     // Identite de l'application : indispensable pour que QSettings
     // dispose d'un emplacement de stockage stable (la preference de
     // langue y est persistee par TranslationManager).
     QApplication::setOrganizationName(QStringLiteral("SeaDesktop"));
     QApplication::setApplicationName(QStringLiteral("SeaUI"));
-
+    // Permet a GNOME/Wayland (et autres) de faire le lien entre le
+    // processus et le fichier SeaUI.desktop installe par les regles
+    // CMake install() en bas.
+    QGuiApplication::setDesktopFileName(QStringLiteral("SeaUI"));
     // Initialisation de l'internationalisation.
     //
     // loadPersistedLanguage() doit etre appele AVANT la construction de
