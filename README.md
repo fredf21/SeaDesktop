@@ -606,5 +606,5 @@ See [COMMERCIAL-LICENSE.md](./COMMERCIAL-LICENSE.md) for details.
 ---
 
 <p align="center">
-  <strong>SeaDesktop v0.2.0</strong> — From YAML to a complete product in minutes.
+  <strong>SeaDesktop v1.0.0</strong> — From YAML to a complete product in minutes.
 </p>
