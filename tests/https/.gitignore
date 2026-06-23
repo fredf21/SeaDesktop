@@ -1,0 +1,6 @@
+# Certificats auto-signes generes par generate_certs.sh.
+# Ne JAMAIS versionner :
+#   - la cle privee (key.pem) est sensible meme si auto-signee
+#   - le certificat (cert.pem) est specifique a la machine et
+#     reproductible via generate_certs.sh
+*.pem

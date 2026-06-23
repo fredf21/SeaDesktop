@@ -95,13 +95,17 @@ if(BUILD_INTEGRATION_TESTS)
     # Choisi parce qu'il n'impose aucun runtime — on garde la main sur
     # le main() pour y lancer seastar::app_template nous-mêmes.
     include(FetchContent)
+
     FetchContent_Declare(
         doctest
         GIT_REPOSITORY https://github.com/doctest/doctest.git
         GIT_TAG        v2.4.11
         GIT_SHALLOW    TRUE
     )
+
+    set(CMAKE_SKIP_INSTALL_RULES ON)
     FetchContent_MakeAvailable(doctest)
+    set(CMAKE_SKIP_INSTALL_RULES OFF)
 
     add_executable(sea_integration_tests
         # ── Point d'entrée + harnais ──────────────────────────

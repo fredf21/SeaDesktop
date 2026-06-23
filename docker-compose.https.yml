@@ -1,0 +1,72 @@
+# ════════════════════════════════════════════════════════════════
+# docker-compose.https.yml
+#
+# Override de docker-compose.yml qui ajoute un reverse proxy nginx
+# avec HTTPS (cert auto-signe genere par tests/https/generate_certs.sh).
+#
+# Le but est de valider que SeaUI en mode Remote peut bien se
+# connecter a un backend SeaDesktop exposé en HTTPS — cas typique
+# d'un deploiement production avec Let's Encrypt + nginx en frontal.
+#
+# USAGE :
+#   # 1. Generer le cert auto-signe (une seule fois) :
+#   openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+#     -keyout tests/https/key.pem -out tests/https/cert.pem \
+#     -subj "/CN=localhost" \
+#     -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+#
+#   # 2. Demarrer la stack HTTPS :
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.https.yml \
+#     up -d
+#
+#   # 3. Tester :
+#   curl -k https://localhost/health
+#     → {"status":"RUNNING"}
+#
+#   # 4. Dans SeaUI : Manage Profiles -> + Add Remote
+#   #    Name      : "HTTPS test"
+#   #    Base URL  : https://localhost
+#   #    Connect avec email/password admin habituels.
+#
+# NOTE SUR LE CERTIFICAT AUTO-SIGNE :
+#   curl avec -k accepte le cert sans verifier. SeaUI utilise
+#   QNetworkAccessManager qui REFUSE par defaut les certs non
+#   signes par une CA reconnue.
+#
+#   Pour faire confiance au cert dans Qt, deux options :
+#     a. Importer cert.pem dans le truststore systeme Ubuntu :
+#        sudo cp tests/https/cert.pem /usr/local/share/ca-certificates/seadesktop-test.crt
+#        sudo update-ca-certificates
+#     b. Configurer SeaUI pour ignorer les erreurs SSL (option a
+#        ajouter en v1.1, non disponible en v1.0).
+#
+#   En production avec un cert Let's Encrypt valide, aucune
+#   manipulation supplementaire n'est necessaire.
+# ════════════════════════════════════════════════════════════════
+
+services:
+
+  # Reverse proxy nginx, expose 80 et 443 sur l'hote.
+  nginx-https:
+    image: nginx:1.27-alpine
+    container_name: seadesktop_nginx_https
+    restart: unless-stopped
+    depends_on:
+      - service_a
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./tests/https/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./tests/https/cert.pem:/etc/nginx/certs/cert.pem:ro
+      - ./tests/https/key.pem:/etc/nginx/certs/key.pem:ro
+    networks:
+      - seadesktop_net
+
+  # Le service_a defini dans docker-compose.yml est repris tel
+  # quel. On ne change rien a sa config — nginx redirige vers son
+  # port 8080 interne. Le mapping de port hote 8080:8080 du base
+  # compose reste actif (utile pour comparer les deux acces : HTTP
+  # direct sur 8080, HTTPS via nginx sur 443).
