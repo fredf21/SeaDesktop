@@ -40,7 +40,56 @@ restarts only the service that received the call.
 
 ---
 
-## 2. Prerequisites
+## 2. Platform support
+
+The Docker-based deployment is the **recommended setup on macOS and Windows**, where Seastar (the backend's reactor framework) does not have native support.
+
+| Platform | Native backend | Native SeaUI | Recommended workflow |
+|---|---|---|---|
+| **Linux (x86_64)** | ✅ Yes | ✅ Yes | Either native build or Docker. Local mode in SeaUI works. |
+| **macOS** | ❌ No (Seastar requires Linux) | ✅ Yes | Backend in Docker Desktop, SeaUI native, **Remote mode required**. |
+| **Windows** | ❌ No (Seastar requires Linux) | ✅ Yes | Backend in Docker Desktop with WSL2 backend, SeaUI native, **Remote mode required**. |
+
+### Why is Seastar Linux-only?
+
+Seastar relies on Linux-specific syscalls and kernel features that are not available on other platforms:
+- `io_uring` for async I/O (Linux 5.1+)
+- Fine-grained CPU pinning and NUMA awareness
+- Low-level `epoll` and `eventfd` integration
+- Direct hugepage allocation
+
+The Seastar maintainers have explicitly chosen to focus on Linux to keep the performance characteristics that make the framework attractive. Porting to macOS or Windows would require rewriting large portions of the I/O layer.
+
+### macOS workflow
+
+1. Install **Docker Desktop for Mac**.
+2. Clone the SeaDesktop repository.
+3. Follow section 3 below (Quick start) — `docker compose up -d` works identically on macOS.
+4. Build SeaUI natively for macOS using Qt Creator.
+5. In SeaUI, create a Remote profile pointing to `http://localhost:8080`. Docker Desktop forwards the port from the Linux VM to the host.
+
+The Local mode in SeaUI is **not usable on macOS** because it requires the `backend_seastar` binary on the local filesystem, which cannot be built natively. The Add/Edit/Import operations in SeaUI work on the YAML files served by the remote backend instead.
+
+### Windows workflow
+
+1. Install **Docker Desktop for Windows** with the **WSL2 backend** enabled (recommended over the legacy Hyper-V backend for performance).
+2. Clone the SeaDesktop repository inside the WSL2 filesystem (faster than from `/mnt/c/`).
+3. Follow section 3 below (Quick start) from a WSL2 terminal.
+4. Build SeaUI natively for Windows using Qt Creator.
+5. In SeaUI, create a Remote profile pointing to `http://localhost:8080`.
+
+The same constraint applies as on macOS: Local mode is not usable, only Remote.
+
+### Linux workflow
+
+Linux users have the full choice between native and Docker workflows:
+
+- **Native** — build `backend_seastar` directly with CMake, run it on the host. SeaUI in Local mode reads/writes the YAML files on disk. Best for development and small setups.
+- **Docker** — follow section 3 below. Useful for multi-service deployments, production, or matching the macOS/Windows workflow when developing cross-platform tooling.
+
+---
+
+## 3. Prerequisites
 
 You need:
 
@@ -57,11 +106,11 @@ You need:
 
 ---
 
-## 3. Quick start
+## 4. Quick start
 
 The following sequence brings up the full stack from a fresh clone.
 
-### 3.1 Clone and prepare the environment
+### 4.1 Clone and prepare the environment
 
 ```bash
 git clone https://github.com/yourorg/SeaDesktop.git
@@ -71,7 +120,7 @@ cd SeaDesktop
 cp .env.example .env
 ```
 
-### 3.2 Fill in the .env file
+### 4.2 Fill in the .env file
 
 Open `.env` in your editor and set:
 
@@ -86,7 +135,7 @@ MYSQL_ROOT_PASSWORD=your-strong-mysql-password
 SEA_DESKTOP_CONFIGS_HOST_DIR=./configs
 ```
 
-### 3.3 Build the image
+### 4.3 Build the image
 
 ```bash
 docker compose build service_a
@@ -97,7 +146,7 @@ on a typical machine. Be patient and watch the `[N/total]` progress
 counter. Subsequent builds, after a source code change, take 2-5
 minutes since Seastar stays in the Docker layer cache.
 
-### 3.4 Start the stack
+### 4.4 Start the stack
 
 ```bash
 docker compose up -d
@@ -121,7 +170,7 @@ curl http://localhost:8082/health
 
 Each should return `{"status":"RUNNING"}`.
 
-### 3.5 First time setup: create an administrator
+### 4.5 First time setup: create an administrator
 
 The backend services start with no users. Before you can administer
 them via SeaUI (Remote mode) or `/admin/*` endpoints, create an
@@ -179,9 +228,9 @@ dialog (Remote profile) or by calling `/auth/login` directly.
 
 ---
 
-## 4. Configuration
+## 5. Configuration
 
-### 4.1 Environment variables
+### 5.1 Environment variables
 
 The `.env` file feeds the following variables to `docker-compose.yml`:
 
@@ -191,7 +240,7 @@ The `.env` file feeds the following variables to `docker-compose.yml`:
 | `MYSQL_ROOT_PASSWORD` | (none) | Root password for the MySQL container. |
 | `SEA_DESKTOP_CONFIGS_HOST_DIR` | `./configs` | Path on the host to the folder containing the YAML projects. Mounted read-write into every backend container at `/app/configs`. |
 
-### 4.2 The configs volume
+### 5.2 The configs volume
 
 Every backend container mounts the same configs folder at
 `/app/configs`. This is what makes the `/admin/projects/*` endpoints
@@ -209,14 +258,14 @@ SEA_DESKTOP_CONFIGS_HOST_DIR=/var/lib/seadesktop/configs
 This way, removing and recreating the containers does not affect the
 project files.
 
-### 4.3 Ports
+### 5.3 Ports
 
 In the example `docker-compose.yml`, the three services bind to host
 ports 8080, 8081 and 8082. To change this, edit the `ports:` section
 of each service. The container always listens on port 8080
 internally; only the host mapping changes.
 
-### 4.4 The MariaDB plugin path
+### 5.4 The MariaDB plugin path
 
 The `mariadb-connector-cpp` library shipped with SeaDesktop has a
 hard-coded plugin directory baked in at build time. The
@@ -227,9 +276,9 @@ remove this variable.
 
 ---
 
-## 5. Multi-service architecture
+## 6. Multi-service architecture
 
-### 5.1 Adding a service
+### 6.1 Adding a service
 
 The example `docker-compose.yml` has three services (`service_a`,
 `service_b`, `service_c`). To add a fourth, duplicate one of the
@@ -266,7 +315,7 @@ blocks and adapt:
 
 Then `docker compose up -d service_d`.
 
-### 5.2 Why are all services on internal port 8080?
+### 6.2 Why are all services on internal port 8080?
 
 Inside each container, the backend always listens on 8080. The
 `ports:` mapping rewrites the host-side port (8080, 8081, 8082, …).
@@ -274,13 +323,13 @@ This keeps the internal configuration uniform: the same image and
 the same YAML can run as any service simply by passing different
 `--config` and `--service_name` arguments.
 
-### 5.3 Restart semantics
+### 6.3 Restart semantics
 
 The `/admin/restart` endpoint restarts **only the container that
 received the request**. To restart another service, send the request
 to that service's URL.
 
-### 5.4 Limitation: new projects do not auto-deploy
+### 6.4 Limitation: new projects do not auto-deploy
 
 Creating a new YAML project via SeaUI (or `POST /admin/projects/...`)
 writes the file to the shared volume but does **not** start a new
@@ -295,14 +344,14 @@ planned.
 
 ---
 
-## 6. Production deployment
+## 7. Production deployment
 
 For production, use `docker-compose.prod.yml` as an override of the
 base `docker-compose.yml`. It replaces the `.env`-based secrets with
 Docker secrets, which are stored encrypted (in Swarm) or as
 plain-text files with strict permissions (in single-node Compose).
 
-### 6.1 Create the secret files
+### 7.1 Create the secret files
 
 ```bash
 mkdir -p secrets
@@ -317,7 +366,7 @@ echo 'your-strong-password' > secrets/mysql_password.txt
 chmod 600 secrets/*.txt
 ```
 
-### 6.2 Bring up the stack with the production override
+### 7.2 Bring up the stack with the production override
 
 ```bash
 docker compose \
@@ -333,14 +382,14 @@ The override:
 - reads `SEA_DESKTOP_JWT_SECRET` and `MYSQL_PASSWORD` from files
   mounted under `/run/secrets/` instead of environment variables.
 
-### 6.3 Reverse proxy and HTTPS
+### 7.3 Reverse proxy and HTTPS
 
 The Docker image exposes plain HTTP. For HTTPS, put a reverse proxy
 (nginx, Caddy, Traefik) in front of the services. The proxy
 terminates TLS, then forwards to the backend containers over the
 internal Docker network.
 
-A minimal nginx example:
+**Production setup with Let's Encrypt:**
 
 ```nginx
 server {
@@ -351,7 +400,7 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/api.example.com/privkey.pem;
 
     location / {
-        proxy_pass http://localhost:8080;
+        proxy_pass http://service_a:8080;
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
@@ -362,13 +411,62 @@ server {
 
 When using a reverse proxy, configure your Remote profile in SeaUI
 with the HTTPS URL (`https://api.example.com`) rather than the
-internal HTTP port.
+internal HTTP port. SeaUI uses Qt's built-in HTTPS support, which
+validates the server certificate against the system truststore —
+nothing to configure on the client side when the certificate is
+signed by a recognized CA.
+
+#### Testing HTTPS locally with a self-signed certificate
+
+For development and staging, the repository includes a ready-to-use
+test setup under `tests/https/` and a Docker Compose override
+`docker-compose.https.yml` at the root.
+
+```bash
+# 1. Generate a self-signed certificate (one-time)
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+    -keyout tests/https/key.pem -out tests/https/cert.pem \
+    -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+
+# 2. Start the stack with the HTTPS override
+docker compose \
+    -f docker-compose.yml \
+    -f docker-compose.https.yml \
+    up -d --wait
+
+# 3. Test: -k accepts the self-signed cert
+curl -k https://localhost/health
+# → {"status":"RUNNING"}
+```
+
+To make Qt (and therefore SeaUI) trust the self-signed certificate
+without modifying the application code, add it to the system
+truststore:
+
+```bash
+# Ubuntu / Debian
+sudo cp tests/https/cert.pem /usr/local/share/ca-certificates/seadesktop-test.crt
+sudo update-ca-certificates
+```
+
+After this, restart SeaUI and create a Remote profile with the URL
+`https://localhost`. The connection should succeed without any
+certificate warning.
+
+> **Why the truststore step is needed.** Qt's `QNetworkAccessManager`
+> validates server certificates against the system truststore. A
+> self-signed certificate not in the truststore is rejected with a
+> clear error message ("SSL handshake failed: self-signed
+> certificate"). Production certificates issued by Let's Encrypt or
+> any other recognized CA work out of the box, with no client-side
+> configuration.
 
 ---
 
-## 7. Maintenance
+## 8. Maintenance
 
-### 7.1 Viewing logs
+### 8.1 Viewing logs
 
 For all containers:
 ```bash
@@ -383,7 +481,7 @@ docker compose logs -f service_a
 The backend also writes structured logs to `/app/logs` inside the
 container, which is mounted from `./logs/service_X` on the host.
 
-### 7.2 Restarting a service
+### 8.2 Restarting a service
 
 To restart a single service:
 
@@ -395,7 +493,7 @@ To trigger a restart from a remote SeaUI client without SSH access,
 use the `/admin/restart` endpoint (see `admin.md`). SeaUI's Restart
 button in Remote mode calls this endpoint automatically.
 
-### 7.3 Updating
+### 8.3 Updating
 
 To pick up a new version of the backend:
 
@@ -408,7 +506,7 @@ docker compose up -d
 Compose detects the new image and recreates the containers without
 losing the MySQL data or the configs volume.
 
-### 7.4 Backup
+### 8.4 Backup
 
 Two things to back up:
 
@@ -418,7 +516,7 @@ Two things to back up:
 - **The configs folder** — whatever path `SEA_DESKTOP_CONFIGS_HOST_DIR`
   points to. Plain file backup, since the YAMLs are text.
 
-### 7.5 Cleanup
+### 8.5 Cleanup
 
 To stop everything without losing data:
 ```bash
@@ -432,9 +530,9 @@ docker compose down -v
 
 ---
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
-### 8.1 The build runs out of memory
+### 9.1 The build runs out of memory
 
 If the Seastar build phase ends with `Killed signal terminated
 program cc1plus` and `cannot allocate memory`, lower the parallelism
@@ -449,7 +547,7 @@ RUN cd /opt/seastar \
 
 Lower the `-j 2` to `-j 1` (slower but uses less RAM).
 
-### 8.2 The container exits immediately
+### 9.2 The container exits immediately
 
 Run `docker compose logs service_a` to see the cause. The most
 common reasons:
@@ -468,7 +566,7 @@ common reasons:
   list. Fix the `command:` in `docker-compose.yml` or rename the
   service in the YAML.
 
-### 8.3 `/auth/login` returns 404
+### 9.3 `/auth/login` returns 404
 
 The `/auth/*` routes are registered only if the YAML declares at
 least one entity with `is_auth_source: true`. Without it, the
@@ -476,14 +574,14 @@ backend can still verify JWTs (for protected endpoints) but does
 not expose any way to obtain one. Add the marker to the User entity,
 restart the service.
 
-### 8.4 SeaUI Remote login fails with "Login response missing access_token"
+### 9.4 SeaUI Remote login fails with "Login response missing access_token"
 
 The backend is configured with `token_delivery: cookie`. SeaUI does
 not support cookie-based authentication in v1.0. Change the YAML
 to `token_delivery: body` or `token_delivery: both`, restart the
 service.
 
-### 8.5 Cannot list projects: "Admin role required"
+### 9.5 Cannot list projects: "Admin role required"
 
 The user you logged in with does not have the administrator role.
 Either re-register a user with `"role": "admin"`, or update an
@@ -497,7 +595,7 @@ docker compose exec mysql mysql -uroot -p<password> <database> -e \
 The table name follows your YAML's entity name with case adjusted
 by your MySQL configuration (usually lowercased: `user`).
 
-### 8.6 The host user owns the bind-mounted files
+### 9.6 The host user owns the bind-mounted files
 
 Inside the container, the backend runs as UID 1000 (`seadesktop`).
 On the host, files written by the backend (logs, generated YAML
@@ -512,12 +610,12 @@ To align UIDs, either:
 
 ---
 
-## 9. Implementation notes
+## 10. Implementation notes
 
 This section is for contributors who want to understand the build
 choices. Regular users do not need to read it.
 
-### 9.1 Multi-stage Dockerfile
+### 10.1 Multi-stage Dockerfile
 
 The Dockerfile has three logical stages:
 
@@ -532,14 +630,14 @@ based on tag `seastar-25.05.0`). To upgrade Seastar, change the
 `SEASTAR_COMMIT` ARG at the top of the Dockerfile and rebuild with
 `--no-cache` on the seastar stage.
 
-### 9.2 Why `--without-tests --without-demos --without-apps`?
+### 10.2 Why `--without-tests --without-demos --without-apps`?
 
 Without these flags, Seastar's build compiles ~400 test executables.
 This adds 20+ minutes of CPU time and is the main cause of OOM
 failures on smaller machines. SeaDesktop does not use Seastar's
 tests, so we skip them.
 
-### 9.3 Why `-j 2`?
+### 10.3 Why `-j 2`?
 
 The default for `ninja` (which is what `make -j` becomes) is to use
 all available cores. Each parallel C++ compilation can consume
@@ -547,7 +645,7 @@ all available cores. Each parallel C++ compilation can consume
 `cc1plus` instances easily exhaust memory. The hardcoded `-j 2`
 trades build speed for reliability across a wide range of hardware.
 
-### 9.4 The `BUILD_SEAUI` CMake flag
+### 10.4 The `BUILD_SEAUI` CMake flag
 
 The root `CMakeLists.txt` declares
 `option(BUILD_SEAUI "Build the SeaUI desktop application" ON)`.
@@ -556,7 +654,7 @@ has no use for Qt6 and saving ~500 MB of dependencies is worth it.
 The flag defaults to `ON` for local development builds, which need
 SeaUI.
 
-### 9.5 The mariadb-connector-cpp plugin path
+### 10.5 The mariadb-connector-cpp plugin path
 
 The `libmariadbcpp.so` shipped under `third_party/` is built from
 source by the local developer and embeds a hard-coded plugin

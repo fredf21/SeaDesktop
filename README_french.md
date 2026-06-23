@@ -3,7 +3,7 @@
 [![Commercial License Available](https://img.shields.io/badge/Commercial-Available-green.svg)](COMMERCIAL-LICENSE.md)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/23)
 [![Seastar](https://img.shields.io/badge/Seastar-shared--nothing-orange.svg)](https://seastar.io/)
-[![Version](https://img.shields.io/badge/version-0.2.0-brightgreen.svg)](./Release_Notes.md)
+[![Version](https://img.shields.io/badge/version-1.0.0-brightgreen.svg)](./Release_Notes.md)
 
 > **Une plateforme low-code C++ qui transforme un fichier YAML en serveur ultra rapide API REST + GUI desktop, avec sécurité intégrée.**
 
@@ -288,6 +288,28 @@ Quatre nouveaux documents de référence, basés exclusivement sur le code sourc
 | [`pagination.md`](./docs_french/pagination.md) | Pagination : 3 modes (page/offset/cursor), exemples |
 | [`logging.md`](./docs_french/logging.md) | Logging : niveaux, modules, sinks, rotation, async, /admin/logs |
 | [`FILE_FEATURE_USER_GUIDE.md`](./docs_french/FILE_FEATURE_USER_GUIDE.md) | Stockage de fichiers : déclaration, upload, download, partage |
+
+---
+
+## 💻 Support des plateformes
+
+SeaDesktop a deux composants — un backend basé sur Seastar et un client desktop Qt (SeaUI) — avec des contraintes de plateforme différentes.
+
+| Composant | Linux (x86_64) | macOS | Windows |
+|---|---|---|---|
+| `backend_seastar` natif | ✅ Supporté | ❌ Seastar nécessite Linux | ❌ Seastar nécessite Linux |
+| `backend_seastar` via Docker | ✅ | ✅ Docker Desktop | ✅ Docker Desktop / WSL2 |
+| SeaUI (application desktop Qt 6) | ✅ Natif | ✅ Natif | ✅ Natif |
+
+### Configuration recommandée par plateforme
+
+- **Linux** — Backend natif et SeaUI natif. Les modes Local et Remote sont tous deux disponibles. Docker est optionnel mais utile pour les déploiements multi-services.
+- **macOS** — Backend dans Docker Desktop, SeaUI natif. **Le mode Remote est requis** : le mode Local a besoin du binaire `backend_seastar` que Seastar ne supporte pas en dehors de Linux. Connectez SeaUI à `http://localhost:8080` (Docker redirige le port vers la VM Linux).
+- **Windows** — Idem macOS : backend dans Docker Desktop (typiquement avec le backend WSL2), SeaUI natif, **mode Remote requis**.
+
+Pourquoi Seastar est Linux-only : Seastar s'appuie sur des appels système spécifiques à Linux (`io_uring`, `epoll`, pinning fin du CPU) qui ne sont pas disponibles nativement sur macOS ou Windows. L'approche Docker exécute le backend dans une VM Linux, de manière transparente pour l'utilisateur.
+
+Voir [`docs_french/docker_deployment_fr.md`](./docs_french/docker_deployment_fr.md) pour la configuration Docker complète et [`docs_french/SEAUI_GUIDE_fr.md`](./docs_french/SEAUI_GUIDE_fr.md) pour le workflow en mode Remote.
 
 ---
 
