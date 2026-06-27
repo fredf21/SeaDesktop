@@ -1,6 +1,7 @@
 #include "connectiondialog.h"
 
 #include "auth_client.h"
+#include "localsetupdialog.h"
 #include "profilemanagerdialog.h"
 
 #include <QComboBox>
@@ -14,6 +15,7 @@
 #include <QVBoxLayout>
 
 #include <exception>
+#include <qdir.h>
 
 ConnectionDialog::ConnectionDialog(QWidget* parent)
     : QDialog(parent)
@@ -153,8 +155,36 @@ void ConnectionDialog::onConnectClicked()
         return;
     }
 
-    // Local : succes immediat.
+    // Local : succes immediat, sauf premier lancement ou on demande
+    // a l'utilisateur ou mettre le dossier configs.
     if (p->type == Profile::Type::Local) {
+        if (LocalSetupDialog::isFirstLaunch()) {
+            LocalSetupDialog setupDialog(this);
+            if (setupDialog.exec() != QDialog::Accepted) {
+                return;  // L'utilisateur a annule : on reste dans
+                // ConnectionDialog (il peut changer de profil).
+            }
+
+            // Si l'utilisateur a coche "copier l'exemple", copier
+            // BlogDemo.yaml depuis les ressources Qt vers le dossier
+            // choisi. La ressource est bundlee via seaui_examples.qrc.
+            if (setupDialog.copyExample()) {
+                const QString src  = QStringLiteral(":/examples/BlogDemo.yaml");
+                const QString dest = setupDialog.configsDir()
+                                     + "/BlogDemo.yaml";
+                QFile srcFile(src);
+                if (srcFile.exists() && !QFile::exists(dest)) {
+                    QFile::copy(src, dest);
+                    // QFile::copy laisse les fichiers de qrc en
+                    // lecture seule : on remet les droits standards.
+                    QFile destFile(dest);
+                    destFile.setPermissions(
+                        QFile::ReadOwner | QFile::WriteOwner
+                        | QFile::ReadGroup | QFile::ReadOther);
+                }
+            }
+        }
+
         _activeProfile = *p;
         _token.clear();
         ProfileStore::saveActiveProfileName(_activeProfile.name);

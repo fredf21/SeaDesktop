@@ -8,6 +8,7 @@
 #include <QApplication>
 #include <qdialog.h>
 #include <qdir.h>
+#include <qsettings.h>
 #include <qstandardpaths.h>
 #include <QIcon>
 
@@ -20,14 +21,23 @@ namespace {
  *
  * Priorité :
  *   1. Variable d'environnement SEA_DESKTOP_CONFIGS_DIR
- *   2. Dossier 'configs' à côté du repo source (mode dev)
- *   3. AppDataLocation/configs (mode release / install système)
+ *   2. Cle QSettings [local]/configsDir (choisie par l'utilisateur
+ *      au premier lancement via LocalSetupDialog)
+ *   3. Dossier 'configs' à côté du repo source (mode dev)
+ *   4. AppDataLocation/configs (fallback ultime)
  */
 QString resolveConfigsDir()
 {
     const QString envDir = qEnvironmentVariable("SEA_DESKTOP_CONFIGS_DIR");
     if (!envDir.isEmpty()) {
         return envDir;
+    }
+
+    // Cle persistee par LocalSetupDialog.
+    QSettings settings;
+    const QString persistedDir = settings.value("local/configsDir").toString();
+    if (!persistedDir.isEmpty()) {
+        return persistedDir;
     }
 
     // Mode dev : ../configs depuis le binaire compilé.
@@ -37,7 +47,7 @@ QString resolveConfigsDir()
         return QDir(devDir).absolutePath();
     }
 
-    // Mode release.
+    // Mode release fallback.
     return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
            + "/configs";
 }

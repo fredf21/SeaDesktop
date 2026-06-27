@@ -45,6 +45,7 @@
 #include <QToolBar>
 #include <QAction>
 #include <QLabel>
+#include <QSettings>
 namespace {
 
 /**
@@ -59,13 +60,24 @@ namespace {
  */
 [[nodiscard]] QString appConfigsDir()
 {
-#ifdef QT_DEBUG
-    return QStringLiteral("/home/frederic/QtProjects/SeaDesktop/configs");
-#else
-    const QString base =
-        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    return base + "/configs";
-#endif
+    // Priorite identique a resolveConfigsDir() de main.cpp :
+    //   1. SEA_DESKTOP_CONFIGS_DIR
+    //   2. QSettings [local]/configsDir (choisi par LocalSetupDialog
+    //      au premier lancement)
+    //   3. AppDataLocation/configs (fallback)
+    const QString envDir = qEnvironmentVariable("SEA_DESKTOP_CONFIGS_DIR");
+    if (!envDir.isEmpty()) {
+        return envDir;
+    }
+
+    QSettings settings;
+    const QString persistedDir = settings.value("local/configsDir").toString();
+    if (!persistedDir.isEmpty()) {
+        return persistedDir;
+    }
+
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+           + "/configs";
 }
 
 /**
@@ -75,13 +87,15 @@ namespace {
  */
 [[nodiscard]] QString appLogsDir()
 {
-#ifdef QT_DEBUG
-    return QStringLiteral("/home/frederic/QtProjects/SeaDesktop/logs");
-#else
-    const QString base =
-        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    return base + "/logs";
-#endif
+    // Possibilite de redirection via variable d'environnement
+    // (utile pour les tests / packaging custom).
+    const QString envDir = qEnvironmentVariable("SEA_DESKTOP_LOGS_DIR");
+    if (!envDir.isEmpty()) {
+        return envDir;
+    }
+
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+           + "/logs";
 }
 
 } // namespace

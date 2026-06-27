@@ -30,6 +30,7 @@ qt_add_executable(SeaUI
     profilemanagerdialog.h profilemanagerdialog.cpp
     connectiondialog.h connectiondialog.cpp
     remotelogsviewer.h remotelogsviewer.cpp
+    localsetupdialog.h localsetupdialog.cpp
 
 )
 # Embarque l'icone Windows dans le .exe via le fichier .rc.
@@ -58,6 +59,10 @@ qt_add_resources(SeaUI "icons"
     PREFIX "/"
     FILES
         icons/seaui.png
+)
+qt_add_resources(SeaUI "examples"
+    PREFIX "/"
+    FILES examples/BlogDemo.yaml
 )
 # qt_add_translations(TARGETS ...) est nouveau (Qt 6.7+).
 # Pour la compatibilite avec Qt 6.4 d'Ubuntu 24.04 (utilise pour

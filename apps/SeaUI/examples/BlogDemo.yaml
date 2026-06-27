@@ -1,0 +1,120 @@
+project:
+  name: BlogDemo
+
+services:
+  - name: BlogService
+    port: 8080
+
+    database:
+      type: mysql
+      host: "${MYSQL_HOST:-127.0.0.1}"
+      port: 3306
+      database_name: "${MYSQL_DATABASE:-blogdemo}"
+      username: "${MYSQL_USER:-root}"
+      password: "${MYSQL_PASSWORD:-root}"
+      
+      migrations:
+       enabled: true
+       mode: modified
+       create_database_if_missing: true
+       dry_run: false
+       seeds:
+          enabled: true
+          mode: once
+          on_error: continue
+    entities:
+      # ──────────────────────────────────────────────────────────────
+      # AUTEUR
+      # Un auteur écrit plusieurs articles (relation has_many)
+      # ──────────────────────────────────────────────────────────────
+      - name: Author
+        options:
+          timestamps: true
+          soft_delete: true
+          enable_crud: true
+          public_routes: true
+        fields:
+          - name: id
+            type: uuid
+            required: true
+            unique: true
+          - name: name
+            type: string
+            required: true
+          - name: email
+            type: email
+            required: true
+            unique: true
+
+        relations:
+          - name: articles
+            kind: has_many
+            target_entity: Article
+            fk_column: author_id
+            on_delete: cascade
+
+
+      # ──────────────────────────────────────────────────────────────
+      # ARTICLE
+      # Appartient à un auteur, et peut avoir plusieurs tags
+      # ──────────────────────────────────────────────────────────────
+      - name: Article
+        options:
+          enable_crud: true
+          public_routes: true
+        fields:
+          - name: id
+            type: uuid
+            required: true
+            unique: true
+          - name: title
+            type: string
+            required: true
+            max_length: 200
+          - name: content
+            type: string
+            required: true
+          - name: author_id
+            type: uuid
+            required: true
+
+        relations:
+          - name: author
+            kind: belongs_to
+            target_entity: Author
+            fk_column: author_id
+            on_delete: cascade
+
+          - name: tags
+            kind: many_to_many
+            target_entity: Tag
+            pivot_table: article_tags
+            source_fk_column: article_id
+            target_fk_column: tag_id
+
+
+      # ──────────────────────────────────────────────────────────────
+      # TAG
+      # Un tag peut être associé à plusieurs articles
+      # ──────────────────────────────────────────────────────────────
+      - name: Tag
+        options:
+          enable_crud: true
+          public_routes: true
+        fields:
+          - name: id
+            type: uuid
+            required: true
+            unique: true
+          - name: name
+            type: string
+            required: true
+            unique: true
+
+        relations:
+          - name: articles
+            kind: many_to_many
+            target_entity: Article
+            pivot_table: article_tags
+            source_fk_column: tag_id
+            target_fk_column: article_id
