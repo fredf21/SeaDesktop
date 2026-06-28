@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "connectiondialog.h"
+#include "entitydatadialog.h"
 #include "httpprojectrepository.h"
 #include "remotelogsviewer.h"
 #include "routelistitemdelegate.h"
@@ -1012,6 +1013,7 @@ void MainWindow::on_swaggerServiceButton_clicked()
     dialog->setLayout(layout);
     dialog->show();
 }
+
 /**
  * @brief Construit le chemin de collection d'une entité.
  *
@@ -1159,167 +1161,41 @@ void MainWindow::updateAuthUi()
         );
 }
 
-
-/**
- * @brief Affiche un tableau JSON dans une boîte de dialogue Qt.
- *
- * Chaque objet du tableau devient une ligne, et l’union de toutes les clés
- * devient les colonnes.
- *
- * @param array Tableau JSON retourné par l'API.
- * @param title Titre de la fenêtre.
- */
-void MainWindow::showJsonArrayInTable(const QJsonArray& array, const QString& title)
-{
-    auto* dialog = new QDialog(this);
-    dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->setWindowTitle(title);
-    dialog->resize(1000, 600);
-
-    auto* layout = new QVBoxLayout(dialog);
-    auto* table = new QTableWidget(dialog);
-
-    layout->addWidget(table);
-    dialog->setLayout(layout);
-
-    if (array.isEmpty()) {
-        table->setRowCount(0);
-        table->setColumnCount(1);
-        table->setHorizontalHeaderLabels(QStringList() << tr("Info"));
-        table->setRowCount(1);
-        table->setItem(0, 0, new QTableWidgetItem(tr("No data.")));
-        table->horizontalHeader()->setStretchLastSection(true);
-        dialog->show();
-        return;
-    }
-
-    QStringList headers;
-    for (const auto& value : array) {
-        if (!value.isObject()) {
-            continue;
-        }
-
-        const auto obj = value.toObject();
-        for (auto it = obj.begin(); it != obj.end(); ++it) {
-            if (!headers.contains(it.key())) {
-                headers.append(it.key());
-            }
-        }
-    }
-
-    table->setColumnCount(headers.size());
-    table->setHorizontalHeaderLabels(headers);
-    table->setRowCount(array.size());
-
-    for (int row = 0; row < array.size(); ++row) {
-        const auto value = array[row];
-        if (!value.isObject()) {
-            table->setItem(row, 0, new QTableWidgetItem(QString::fromUtf8(QJsonDocument(value.toObject()).toJson(QJsonDocument::Compact))));
-            continue;
-        }
-
-        const auto obj = value.toObject();
-
-        for (int col = 0; col < headers.size(); ++col) {
-            const QString key = headers[col];
-            QString cellText;
-
-            if (obj.contains(key)) {
-                const auto jsonValue = obj.value(key);
-
-                if (jsonValue.isString()) {
-                    cellText = jsonValue.toString();
-                } else if (jsonValue.isDouble()) {
-                    cellText = QString::number(jsonValue.toDouble());
-                } else if (jsonValue.isBool()) {
-                    cellText = jsonValue.toBool() ? "true" : "false";
-                } else if (jsonValue.isNull()) {
-                    cellText = "null";
-                } else if (jsonValue.isArray()) {
-                    cellText = QString::fromUtf8(QJsonDocument(jsonValue.toArray()).toJson(QJsonDocument::Compact));
-                } else if (jsonValue.isObject()) {
-                    cellText = QString::fromUtf8(QJsonDocument(jsonValue.toObject()).toJson(QJsonDocument::Compact));
-                }
-            }
-
-            table->setItem(row, col, new QTableWidgetItem(cellText));
-        }
-    }
-
-    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    table->setSelectionBehavior(QAbstractItemView::SelectRows);
-    table->setSelectionMode(QAbstractItemView::SingleSelection);
-    table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-    table->horizontalHeader()->setStretchLastSection(true);
-
-    dialog->show();
-}
 void MainWindow::on_openEntityDataButton_clicked()
 {
     if (_currentServiceRow < 0) {
         QMessageBox::warning(this, tr("Open Data"), tr("No service selected."));
         return;
     }
-
     if (_currentEntityRow < 0) {
         QMessageBox::warning(this, tr("Open Data"), tr("No entity selected."));
         return;
     }
 
     const auto& service = _serviceModel->serviceAt(_currentServiceRow);
-    const auto& entity = _entityModel->entityAt(_currentEntityRow);
+    const auto& entity  = _entityModel->entityAt(_currentEntityRow);
 
-    const QString entityName = QString::fromStdString(entity->name);
-    const QString path = entityCollectionPath(entityName);
-    const QString url = QString("http://127.0.0.1:%1%2")
-                            .arg(static_cast<int>(service->port))
-                            .arg(path);
-
-    QNetworkRequest request{QUrl(url)};
-
-    if (!_authToken.isEmpty()) {
-        request.setRawHeader("Authorization", "Bearer " + _authToken.toUtf8());
+    if (entity == nullptr) {
+        QMessageBox::warning(this, tr("Open Data"), tr("Invalid entity."));
+        return;
     }
 
-    auto* reply = _networkManager->get(request);
+    const QString entityName     = QString::fromStdString(entity->name);
+    const QString collectionPath = entityCollectionPath(entityName);
+    const QString baseUrl = QString("http://127.0.0.1:%1")
+                                .arg(static_cast<int>(service->port));
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, entityName, url]() {
-        reply->deleteLater();
-
-        if (reply->error() != QNetworkReply::NoError) {
-            QMessageBox::critical(
-                this,
-                tr("Open Data"),
-                tr("Unable to retrieve data.\nURL: %1\nError: %2")
-                    .arg(url, reply->errorString())
-                );
-            return;
-        }
-
-        const QByteArray payload = reply->readAll();
-        QJsonParseError parseError;
-        const QJsonDocument doc = QJsonDocument::fromJson(payload, &parseError);
-
-        if (parseError.error != QJsonParseError::NoError) {
-            QMessageBox::critical(
-                this,
-                tr("Open Data"),
-                tr("Invalid JSON response.\nError: %1").arg(parseError.errorString())
-                );
-            return;
-        }
-
-        if (!doc.isArray()) {
-            QMessageBox::warning(
-                this,
-                tr("Open Data"),
-                tr("The response is not a JSON array.")
-                );
-            return;
-        }
-
-        showJsonArrayInTable(doc.array(), tr("Data - %1").arg(entityName));
-    });
+    // Nouveau dialog : lazy rendering + pagination conditionnelle.
+    // - Si entity.pagination est defini : utilise OFFSET / CURSOR / PAGE
+    //   (priorite OFFSET > CURSOR > PAGE) avec infinite scroll
+    // - Sinon : fetch tout en une fois + lazy rendering du QTableView
+    //   (pas de freeze UI), bandeau d'avertissement si > 1000 lignes
+    auto* dialog = new EntityDataDialog(*entity,
+                                        baseUrl,
+                                        collectionPath,
+                                        _authToken,
+                                        this);
+    dialog->show();
 }
 
 /**
@@ -3361,6 +3237,11 @@ void MainWindow::on_actionSwitch_Connection_triggered()
 
     // 6. Recharger la liste des projets via le nouveau repository.
     loadProjects();
+}
+
+QString MainWindow::yamlPathForProject(const QString &projectName) const
+{
+ return appConfigsDir() + "/" + projectName + ".yaml";
 }
 /**
  * @brief Met a jour l'etat (enabled/disabled) du menu Services Actions

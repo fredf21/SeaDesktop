@@ -31,6 +31,8 @@ qt_add_executable(SeaUI
     connectiondialog.h connectiondialog.cpp
     remotelogsviewer.h remotelogsviewer.cpp
     localsetupdialog.h localsetupdialog.cpp
+    entitydatatablemodel.h entitydatatablemodel.cpp
+    entitydatadialog.h entitydatadialog.cpp
 
 )
 # Embarque l'icone Windows dans le .exe via le fichier .rc.

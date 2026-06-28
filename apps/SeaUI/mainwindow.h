@@ -172,13 +172,8 @@ private:
     int _currentServiceRow = -1;
     int _currentEntityRow = -1;
     QMap<QString, QProcess*> _processes; // serviceName → process
-    const QString _configsPath = "/home/frederic/QtProjects/SeaDesktop/configs/";
-
-    QString yamlPathForProject(const QString& projectName) const {
-        return _configsPath + projectName + ".yaml";
-    }
+    [[nodiscard]] QString yamlPathForProject(const QString& projectName) const;
     QNetworkAccessManager* _networkManager = nullptr;
-    void showJsonArrayInTable(const QJsonArray& array, const QString& title);
     QString entityCollectionPath(const QString& entityName) const;
     QString _authToken;
     QString _refreshToken;
