@@ -90,7 +90,7 @@ set(CPACK_PACKAGING_INSTALL_PREFIX "/")
 if(PACKAGE_SEAUI_ONLY)
     # ── Configuration .deb SeaUI ──────────────────────────────
     set(CPACK_PACKAGE_NAME "seaui")
-    set(CPACK_PACKAGE_VERSION "1.0.0")
+    set(CPACK_PACKAGE_VERSION "1.0.1")
     set(CPACK_PACKAGE_VENDOR "SeaDesktop")
     set(CPACK_PACKAGE_CONTACT "Tooko Ky Tanguy Frederic <fredtanguy.ca@gmail.com>")
     set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
@@ -126,7 +126,7 @@ libqt6webenginecore6-bin (>= 6.4.0)"
 else()
     # ── Configuration .deb backend (defaut) ─────────────────────
     set(CPACK_PACKAGE_NAME "seadesktop-backend")
-    set(CPACK_PACKAGE_VERSION "1.0.0")
+    set(CPACK_PACKAGE_VERSION "1.0.1")
     set(CPACK_PACKAGE_VENDOR "SeaDesktop")
     set(CPACK_PACKAGE_CONTACT "Tooko Ky Tanguy Frederic <fredtanguy.ca@gmail.com>")
     set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
