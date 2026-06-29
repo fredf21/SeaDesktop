@@ -25,6 +25,7 @@
 #include "http/handlers/auth_handlers/logout_handler.h"
 #include "http/handlers/auth_handlers/refresh_handler.h"
 #include "http/handlers/admin_handlers/logs_handler.h"
+#include "http/handlers/misc_handlers/admin_guard_handler.h"
 #include "http/handlers/misc_handlers/readiness_handler.h"
 #include "http/routing/paginated_match_rule.h"
 #include "http/routing/pagination_routes.h"
@@ -96,11 +97,12 @@ int main(int argc, char** argv)
 
     app.add_options()
         ("config",
-         bpo::value<std::string>()->default_value("config/project.yaml"),
-         "Chemin du fichier YAML")
+         bpo::value<std::string>()->required(),
+         "Chemin du fichier YAML projet (requis)")
         ("service_name",
-         bpo::value<std::string>()->default_value("CCNBService"),
-         "Nom du service a demarrer");
+         bpo::value<std::string>(),
+         "Nom du service a demarrer. Si non specifie, le premier "
+         "service declare dans le YAML est utilise.");
 
     return app.run(argc, argv, [&app]() -> seastar::future<> {
         const auto& cfg = app.configuration();
@@ -111,36 +113,50 @@ int main(int argc, char** argv)
         const std::string configs_dir =
             sea::http::handlers::admin::resolve_configs_dir(config_path);
 
-        const std::string service_name =
-            cfg["service_name"].as<std::string>();
-
+        // service_name optionnel : si non fourni, le premier service
+        // du YAML sera utilise.
+        std::string service_name;
+        if (cfg.count("service_name")) {
+            service_name = cfg["service_name"].as<std::string>();
+        }
         // ─────────────────────────────────────────────────────
         // 1. Charger le projet YAML
         // ─────────────────────────────────────────────────────
         sea::application::ImportYamlSchemaUseCase importer;
         const auto project = importer.execute(config_path);
-
         if (project.services.empty()) {
             throw std::runtime_error("Aucun service defini dans le projet.");
         }
-
         // ─────────────────────────────────────────────────────
-        // 2. Sélectionner le service à démarrer
+        // 2. Selectionner le service a demarrer
         // ─────────────────────────────────────────────────────
         const sea::domain::Service* selected_service = nullptr;
-
-        for (const auto& s : project.services) {
-            if (s.name == service_name) {
-                selected_service = &s;
-                break;
+        if (service_name.empty()) {
+            // Aucun service specifie : prendre le premier du YAML.
+            selected_service = &project.services.front();
+            service_name = selected_service->name;
+            std::cerr << "[BOOT] Aucun --service_name fourni, demarrage "
+                      << "du premier service du YAML: " << service_name
+                      << std::endl;
+        } else {
+            for (const auto& s : project.services) {
+                if (s.name == service_name) {
+                    selected_service = &s;
+                    break;
+                }
             }
         }
-
         if (selected_service == nullptr) {
+            std::cerr << "[BOOT] Service introuvable: " << service_name
+                      << ". Services disponibles dans le YAML : ";
+            for (const auto& s : project.services) {
+                std::cerr << s.name << " ";
+            }
+            std::cerr << std::endl;
             throw std::runtime_error("Service introuvable: " + service_name);
         }
-
         auto service = *selected_service;
+
         // ─────────────────────────────────────────────────────
         // 2bis. Initialisation du logging (Etape 2.3 Sujet 2)
         // ─────────────────────────────────────────────────────
@@ -874,64 +890,130 @@ int main(int argc, char** argv)
 
                 using namespace sea::http::routing;
 
+                // Si auth activee, les routes OpenAPI/Swagger sont protegees par
+                // admin role (ProtectedHandler + AdminGuardHandler). En mode dev
+                // (auth=none), elles restent publiques pour faciliter l'exploration.
+                const std::string admin_role_name =
+                    service.access_control.admin_role();
                 // ─────────────────────────────────────────────
                 // Routes publiques système
                 // ─────────────────────────────────────────────
-                r.add(
-                    seastar::httpd::operation_type::GET,
-                    seastar::httpd::url("/health"),
-                    wrap_with_middlewares(
-                        std::make_unique<sea::http::handlers::misc::HealthHandler>(),
-                        false,
-                        mw_context
-                        ).release()
-                    );
+                {
+                    auto health_handler =
+                        std::make_unique<sea::http::handlers::misc::HealthHandler>();
+
+                    std::unique_ptr<seastar::httpd::handler_base> final_handler =
+                        auth_enabled
+                            ? std::unique_ptr<seastar::httpd::handler_base>(
+                                  std::make_unique<sea::http::handlers::misc::AdminGuardHandler>(
+                                      std::move(health_handler), admin_role_name))
+                            : std::move(health_handler);
+
+                    r.add(
+                        seastar::httpd::operation_type::GET,
+                        seastar::httpd::url("/health"),
+                        wrap_with_middlewares(
+                            std::move(final_handler),
+                            auth_enabled,
+                            mw_context
+                            ).release()
+                        );
+                }
 
                 // /health/ready : verifie les dependances (DB, storage).
                 // file_storage peut etre nullptr si le schema ne declare
                 // aucun champ File ; ReadinessHandler le gere.
-                r.add(
-                    seastar::httpd::operation_type::GET,
-                    seastar::httpd::url("/health/ready"),
-                    wrap_with_middlewares(
+                // /health reste public (industrie standard, LB friendly)
+
+                {
+                    auto ready_handler =
                         std::make_unique<sea::http::handlers::misc::ReadinessHandler>(
                             crud_engine->get_repository(),
                             file_storage
-                            ),
-                        false,
-                        mw_context
-                        ).release()
-                    );
+                            );
 
-                r.add(
-                    seastar::httpd::operation_type::GET,
-                    seastar::httpd::url("/openapi.json"),
-                    wrap_with_middlewares(
-                        std::make_unique<sea::http::handlers::misc::OpenApiHandler>(
-                            openapi_json
-                            ),
-                        false,
-                        mw_context
-                        ).release()
-                    );
+                    std::unique_ptr<seastar::httpd::handler_base> final_handler =
+                        auth_enabled
+                            ? std::unique_ptr<seastar::httpd::handler_base>(
+                                  std::make_unique<sea::http::handlers::misc::AdminGuardHandler>(
+                                      std::move(ready_handler), admin_role_name))
+                            : std::move(ready_handler);
 
-                r.add(
-                    seastar::httpd::operation_type::GET,
-                    seastar::httpd::url("/docs"),
-                    wrap_with_middlewares(
-                        std::make_unique<sea::http::handlers::misc::SwaggerUiHandler>(),
-                        false,
-                        mw_context
-                        ).release()
-                    );
+                    r.add(
+                        seastar::httpd::operation_type::GET,
+                        seastar::httpd::url("/health/ready"),
+                        wrap_with_middlewares(
+                            std::move(final_handler),
+                            auth_enabled,
+                            mw_context
+                            ).release()
+                        );
+                }
+
+                {
+                    auto openapi_handler =
+                        std::make_unique<sea::http::handlers::misc::OpenApiHandler>(openapi_json);
+
+                    // Si auth activee : wrapper dans AdminGuardHandler pour 403 si
+                    // pas admin. Sinon : passer le handler tel quel.
+                    std::unique_ptr<seastar::httpd::handler_base> final_handler =
+                        auth_enabled
+                            ? std::unique_ptr<seastar::httpd::handler_base>(
+                                  std::make_unique<sea::http::handlers::misc::AdminGuardHandler>(
+                                      std::move(openapi_handler), admin_role_name))
+                            : std::move(openapi_handler);
+
+                    r.add(
+                        seastar::httpd::operation_type::GET,
+                        seastar::httpd::url("/openapi.json"),
+                        wrap_with_middlewares(
+                            std::move(final_handler),
+                            auth_enabled,  // requires_auth si protege
+                            mw_context
+                            ).release()
+                        );
+                }
+
+                {
+                    auto swagger_handler =
+                        std::make_unique<sea::http::handlers::misc::SwaggerUiHandler>();
+
+                    std::unique_ptr<seastar::httpd::handler_base> final_handler =
+                        auth_enabled
+                            ? std::unique_ptr<seastar::httpd::handler_base>(
+                                  std::make_unique<sea::http::handlers::misc::AdminGuardHandler>(
+                                      std::move(swagger_handler), admin_role_name))
+                            : std::move(swagger_handler);
+
+                    r.add(
+                        seastar::httpd::operation_type::GET,
+                        seastar::httpd::url("/docs"),
+                        wrap_with_middlewares(
+                            std::move(final_handler),
+                            auth_enabled,
+                            mw_context
+                            ).release()
+                        );
+                }
+
                 {
                     auto register_asset_route = [&](const std::string& path) {
+                        auto assets_handler =
+                            std::make_unique<sea::http::handlers::misc::SwaggerAssetsHandler>();
+
+                        std::unique_ptr<seastar::httpd::handler_base> final_handler =
+                            auth_enabled
+                                ? std::unique_ptr<seastar::httpd::handler_base>(
+                                      std::make_unique<sea::http::handlers::misc::AdminGuardHandler>(
+                                          std::move(assets_handler), admin_role_name))
+                                : std::move(assets_handler);
+
                         r.add(
                             seastar::httpd::operation_type::GET,
                             seastar::httpd::url(path),
                             wrap_with_middlewares(
-                                std::make_unique<sea::http::handlers::misc::SwaggerAssetsHandler>(),
-                                false,  // pas d'auth
+                                std::move(final_handler),
+                                auth_enabled,
                                 mw_context
                                 ).release()
                             );

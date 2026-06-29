@@ -108,6 +108,7 @@ add_executable(backend_seastar
     src/http/handlers/admin_handlers/create_project_handler.h src/http/handlers/admin_handlers/create_project_handler.cpp
     src/http/handlers/admin_handlers/delete_project_handler.h src/http/handlers/admin_handlers/delete_project_handler.cpp
     src/http/handlers/admin_handlers/restart_handler.h src/http/handlers/admin_handlers/restart_handler.cpp
+    src/http/handlers/misc_handlers/admin_guard_handler.h src/http/handlers/misc_handlers/admin_guard_handler.cpp
 
 
 
