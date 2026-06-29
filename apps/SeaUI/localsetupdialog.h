@@ -6,6 +6,7 @@ class QCheckBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QSpinBox;
 
 /**
  * @brief Dialog de configuration au premier lancement en mode Local.
@@ -15,15 +16,26 @@ class QPushButton;
  *   - Le chemin du dossier ou SeaUI stockera les fichiers YAML
  *     (defaut : ~/.local/share/SeaDesktop/SeaUI/configs/)
  *   - Si on copie un projet d'exemple (BlogDemo.yaml) pour demarrer
+ *   - Les credentials MySQL (host, port, user, password) que le
+ *     backend utilisera quand SeaUI le lance localement
+ *   - Le secret JWT (auto-genere, bouton Regenerate disponible)
  *
- * Le chemin choisi est sauvegarde dans QSettings sous la cle
- * [local]/configsDir et lu par resolveConfigsDir() dans main.cpp.
+ * A la validation, les credentials sont sauvegardes dans :
+ *   <configsDir>/seadesktop.env  (permissions 0600)
+ *
+ * Format du fichier (compatible avec docker-compose .env et avec
+ * std::getenv() utilise par le parser YAML du backend) :
+ *
+ *   MYSQL_HOST=127.0.0.1
+ *   MYSQL_PORT=3306
+ *   MYSQL_USER=root
+ *   MYSQL_PASSWORD=...
+ *   SEA_DESKTOP_JWT_SECRET=...
+ *
+ * Le chemin du dossier configs est persiste dans QSettings sous la
+ * cle [local]/configsDir et lu par resolveConfigsDir().
  *
  * Detection du premier lancement : la cle QSettings n'existe pas.
- *
- * L'utilisateur peut a tout moment changer ce dossier en supprimant
- * la cle dans ~/.config/SeaDesktop/SeaUI.conf (manuellement).
- * Pour v1.0, on n'expose pas de menu Preferences ; v1.1 le fera.
  */
 class LocalSetupDialog : public QDialog
 {
@@ -31,39 +43,38 @@ class LocalSetupDialog : public QDialog
 public:
     explicit LocalSetupDialog(QWidget* parent = nullptr);
 
-    /**
-     * @brief Chemin choisi par l'utilisateur (absolute path).
-     */
     [[nodiscard]] QString configsDir() const { return _chosenDir; }
-
-    /**
-     * @brief True si l'utilisateur veut copier le YAML d'exemple.
-     */
     [[nodiscard]] bool copyExample() const { return _copyExample; }
 
-    /**
-     * @brief Helper statique : true si le premier lancement Local n'a
-     *        pas encore eu lieu (cle [local]/configsDir absente).
-     */
     [[nodiscard]] static bool isFirstLaunch();
-
-    /**
-     * @brief Helper statique : lit le configsDir persiste, vide si
-     *        absent.
-     */
     [[nodiscard]] static QString persistedConfigsDir();
 
 private slots:
     void onBrowseClicked();
     void onContinueClicked();
+    void onRegenerateJwtClicked();
+    void onTogglePasswordVisibility();
 
 private:
+    [[nodiscard]] static QString generateJwtSecret();
+    [[nodiscard]] bool writeEnvFile(const QString& configsDir) const;
+
     QString    _chosenDir;
     bool       _copyExample = true;
 
     QLineEdit* _pathEdit;
     QCheckBox* _exampleCheck;
     QPushButton* _browseButton;
+
+    QLineEdit* _mysqlHostEdit;
+    QSpinBox*  _mysqlPortSpin;
+    QLineEdit* _mysqlUserEdit;
+    QLineEdit* _mysqlPasswordEdit;
+    QPushButton* _togglePasswordButton;
+
+    QLineEdit* _jwtSecretEdit;
+    QPushButton* _regenerateJwtButton;
+
     QPushButton* _continueButton;
     QPushButton* _cancelButton;
 };

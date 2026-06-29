@@ -47,6 +47,7 @@
 #include <QAction>
 #include <QLabel>
 #include <QSettings>
+#include "envfileloader.h"
 namespace {
 
 /**
@@ -594,17 +595,68 @@ void MainWindow::startServiceProcess(const QString& projectName,
 
     const QString logsDir = appLogsDir();
     QDir().mkpath(logsDir);
-
     const QString logPath = logsDir + "/" + processKey + ".log";
-    const QString backendPath = "../Backend_Seastar/backend_seastar";
+
+    // ── Resolution du binaire backend ───────────────────────────
+    // Trois sources possibles, dans cet ordre de priorite :
+    //   1. Variable d'env SEA_DESKTOP_BACKEND_BIN (override pour tests)
+    //   2. /usr/bin/seadesktop-backend (wrapper du paquet .deb qui
+    //      definit LD_LIBRARY_PATH et MARIADB_PLUGIN_DIR pour pointer
+    //      vers les libs bundlees dans /opt/seadesktop/lib/)
+    //   3. ../Backend_Seastar/backend_seastar (mode dev, relatif au
+    //      binaire SeaUI dans son build directory)
+    QString backendPath;
+    const QString envBackend = qEnvironmentVariable("SEA_DESKTOP_BACKEND_BIN");
+    if (!envBackend.isEmpty() && QFile::exists(envBackend)) {
+        backendPath = envBackend;
+    } else if (QFile::exists(QStringLiteral("/usr/bin/seadesktop-backend"))) {
+        backendPath = QStringLiteral("/usr/bin/seadesktop-backend");
+    } else {
+        // Mode dev : resolution relative au binaire SeaUI courant pour
+        // que le chemin marche peu importe d'ou SeaUI est lance.
+        const QString devCandidate = QDir(QCoreApplication::applicationDirPath())
+                                         .absoluteFilePath("../Backend_Seastar/backend_seastar");
+        backendPath = devCandidate;
+    }
+
+    qDebug().noquote() << "[" + processKey + "] Launching backend:" << backendPath;
 
     auto* process = new QProcess(this);
+
+    // ── Environnement explicite pour le QProcess ────────────────
+    // Strategie en deux temps :
+    //   1. On part de l'environnement de SeaUI (utile si l'utilisateur
+    //      a deja exporte MYSQL_PASSWORD, etc. dans son shell)
+    //   2. On surcharge avec le contenu de <parent>/environment/seadesktop.env
+    //      cree par LocalSetupDialog. Cela permet que SeaUI lance depuis
+    //      le menu Applications GNOME (sans heritage de ~/.profile)
+    //      fournisse quand meme les bons MYSQL_USER, MYSQL_PASSWORD,
+    //      SEA_DESKTOP_JWT_SECRET, etc. au backend.
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+
+    const QString envFilePath =
+        EnvFileLoader::envFilePathFor(appConfigsDir());
+    const QMap<QString, QString> envVars =
+        EnvFileLoader::load(envFilePath);
+
+    if (envVars.isEmpty()) {
+        qDebug().noquote() << "[" + processKey + "] No .env loaded from"
+                           << envFilePath
+                           << "(file missing or empty)";
+    } else {
+        qDebug().noquote() << "[" + processKey + "] Loaded" << envVars.size()
+        << "env vars from" << envFilePath;
+        for (auto it = envVars.constBegin(); it != envVars.constEnd(); ++it) {
+            env.insert(it.key(), it.value());
+        }
+    }
+
+    process->setProcessEnvironment(env);
 
     connect(process, &QProcess::readyReadStandardOutput, this, [process, processKey]() {
         qDebug().noquote() << "[" + processKey + "][OUT]"
                            << QString::fromLocal8Bit(process->readAllStandardOutput());
     });
-
     connect(process, &QProcess::readyReadStandardError, this, [process, processKey]() {
         qDebug().noquote() << "[" + processKey + "][ERR]"
                            << QString::fromLocal8Bit(process->readAllStandardError());
@@ -620,7 +672,6 @@ void MainWindow::startServiceProcess(const QString& projectName,
     process->start(backendPath, args);
     _processes[processKey] = process;
 }
-
 /**
  * @brief Arrete le processus backend d'un service donne.
  *
