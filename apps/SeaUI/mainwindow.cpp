@@ -234,8 +234,12 @@ MainWindow::MainWindow(TranslationManager* translationManager, std::unique_ptr<I
     // de titre et dans Alt+Tab. Sur GNOME/Wayland, la barre de titre
     // masque ce icon par design : la QToolBar ci-dessous garantit que
     // le logo est tout de meme visible dans la fenetre.
-    const QIcon appIcon(":/icons/seaui.png");
-    setWindowIcon(appIcon);
+    const QIcon appIcon = QIcon::fromTheme(
+        QStringLiteral("seaui"),
+        QIcon(QStringLiteral(":/icons/seaui.png"))
+        );
+
+    setWindowIcon(appIcon);    setWindowIcon(appIcon);
 
     // ── Barre logo en haut a gauche (visible sur toutes les plateformes) ─
     auto* logoToolBar = new QToolBar(tr("Logo"), this);
@@ -255,7 +259,7 @@ MainWindow::MainWindow(TranslationManager* translationManager, std::unique_ptr<I
     logoToolBar->addWidget(titleLabel);
 
     addToolBar(Qt::TopToolBarArea, logoToolBar);
-    showMaximized();
+
     setWindowTitle(tr("SeaDesktop"));
     _projectRepository = std::move(repository);
     _activeProfile = std::move(activeProfile);

@@ -71,8 +71,12 @@ int main(int argc, char *argv[])
 
 
     QApplication a(argc, argv);
+    const QIcon appIcon = QIcon::fromTheme(
+        QStringLiteral("seaui"),
+        QIcon(QStringLiteral(":/icons/seaui.png"))
+        );
 
-    a.setWindowIcon(QIcon(":/icons/seaui.png"));
+    a.setWindowIcon(appIcon);
     // Identite de l'application : indispensable pour que QSettings
     // dispose d'un emplacement de stockage stable (la preference de
     // langue y est persistee par TranslationManager).
@@ -104,7 +108,7 @@ int main(int argc, char *argv[])
                  std::move(repository),
                  connDialog.activeProfile(),
                  connDialog.token());
-    w.show();
+    w.showMaximized();
 
     return a.exec();
 }
