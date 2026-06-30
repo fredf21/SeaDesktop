@@ -207,7 +207,19 @@ bool routeMatchesEntity(const sea::application::RouteDefinition& route, const QS
 
     return false;
 }
+/**
+ * Charger le .env avant les projets
+*/
+void loadEnvIntoSeaUIProcess()
+{
+    const QString envFilePath = EnvFileLoader::envFilePathFor(appConfigsDir());
 
+    const QMap<QString, QString> envVars = EnvFileLoader::load(envFilePath);
+
+    for (auto it = envVars.constBegin(); it != envVars.constEnd(); ++it) {
+        qputenv(it.key().toUtf8(), it.value().toUtf8());
+    }
+}
 } // namespace
 
 /**
@@ -239,7 +251,7 @@ MainWindow::MainWindow(TranslationManager* translationManager, std::unique_ptr<I
         QIcon(QStringLiteral(":/icons/seaui.png"))
         );
 
-    setWindowIcon(appIcon);    setWindowIcon(appIcon);
+    setWindowIcon(appIcon);
 
     // ── Barre logo en haut a gauche (visible sur toutes les plateformes) ─
     auto* logoToolBar = new QToolBar(tr("Logo"), this);
@@ -302,10 +314,14 @@ MainWindow::MainWindow(TranslationManager* translationManager, std::unique_ptr<I
 
     updateAuthUi();
 
-    loadProjects();
-
     const QString configsDir = appConfigsDir();
     QDir().mkpath(configsDir);
+
+    // Important : charger le .env AVANT le parsing des YAML.
+    loadEnvIntoSeaUIProcess();
+
+    loadProjects();
+
 
     _watcher = new QFileSystemWatcher(this);
     _watcher->addPath(configsDir);
