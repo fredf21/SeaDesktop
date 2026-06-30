@@ -58,6 +58,13 @@ sudo chown root:seadesktop /etc/seadesktop/seadesktop.env
 # 3. Enable and start the service
 sudo systemctl enable --now seadesktop-backend
 ```
+**Note**: the steps above (steps 1-3) are for running the backend
+as a system service via systemd. If you only want to use SeaUI in
+Local mode to manage backends interactively, you can skip these
+steps — SeaUI's **first-time setup** (see §1.4) creates the necessary
+configuration automatically in your user directory and launches the
+backend on demand through `QProcess`. Use systemd only for unattended,
+always-on deployments.
 
 Verify the service is running:
 
@@ -138,8 +145,103 @@ SeaDesktop** dialog with two profile options:
   a backend URL (e.g. `http://localhost:8080` for local Docker,
   `https://api.example.com` for production).
 
+#### First-time Local setup
+
+When you select **Local** for the first time, SeaUI opens the
+**Welcome to SeaUI** dialog with three configuration sections:
+
+**1. Configuration folder**
+
+Choose where SeaUI will store your YAML project files. The default
+is `~/.local/share/SeaDesktop/SeaUI/configs/`, but you can pick any
+folder — for example, a Git-versioned directory shared with your
+team. Use the **Browse** button to navigate visually.
+
+A checkbox lets you copy an example project (`BlogDemo.yaml`) into
+the folder to get started. Recommended on first install.
+
+**2. MySQL credentials**
+
+The backend needs MySQL credentials to start. Fill in:
+- **Host** (default: `127.0.0.1`)
+- **Port** (default: `3306`)
+- **User** (default: `root`)
+- **Password** (use **Show/Hide** to toggle visibility)
+
+If your MySQL root user has no password, leave the password empty.
+
+**3. JWT secret**
+
+A cryptographically secure 256-bit JWT secret is auto-generated for
+you. Use **Regenerate** to replace it if needed. This secret signs
+authentication tokens for projects that use auth.
+
+#### Files created on the filesystem
+
+When you click **Continue**, SeaUI creates this structure:
+<parent>/
+├── configs/                   # Your YAML project files
+│   └── BlogDemo.yaml          # (if you kept the example checked)
+└── environment/               # Secrets (never version this)
+└── seadesktop.env         # MySQL + JWT (permissions 0600)
+
+The separation between `configs/` and `environment/` lets you
+safely version `configs/` in Git while keeping credentials local.
+
+The `seadesktop.env` file has format:
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=...
+SEA_DESKTOP_JWT_SECRET=...
+
+SeaUI loads this file every time it starts a backend service and
+injects the variables into the backend process environment. This
+means the backend can resolve `${MYSQL_PASSWORD:-root}` references
+in your YAML projects regardless of how SeaUI was launched (terminal,
+GNOME menu, etc.).
+
+#### Reconfiguring later
+
+To change credentials or move the configs folder after the first
+launch, edit `~/.config/SeaDesktop/SeaUI.conf` and update the
+`[local]/configsDir` key, or edit `<parent>/environment/seadesktop.env`
+directly. A dedicated Preferences dialog is planned for a later
+release.
+
 For full SeaUI usage details, see
 [`SEAUI_GUIDE.md`](./SEAUI_GUIDE.md).
+
+---
+### 1.5 System routes security
+
+SeaDesktop exposes five system routes that behave differently
+depending on whether authentication is enabled in your YAML:
+
+| Route | When `auth=none` | When `auth=jwt` |
+|---|---|---|
+| `GET /health` | Public | Admin role required |
+| `GET /health/ready` | Public | Admin role required |
+| `GET /openapi.json` | Public | Admin role required |
+| `GET /docs` (Swagger UI) | Public | Admin role required |
+| `GET /assets/swagger-ui/*` | Public | Admin role required |
+
+In **development mode** (no auth, typical for local exploration),
+these routes are open so you can navigate the OpenAPI spec and try
+endpoints in Swagger UI without authentication.
+
+In **production mode** (auth enabled), these routes return 401
+without a valid JWT and 403 if the JWT does not carry the admin role
+configured in `authorization.admin_role`.
+
+**Important for load-balancers**: if your YAML has `auth=jwt`, the
+LB health checks must include a valid admin JWT in the
+`Authorization` header. Alternatively, expose `/health` on a
+separate internal port not protected by auth.
+
+The rate limiting middleware (configured via
+`service.security.rate_limits` in your YAML) is applied to **all**
+routes including system routes.
 
 ---
 

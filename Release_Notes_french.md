@@ -1,5 +1,343 @@
 # SeaDesktop Release Notes
 
+## v1.0.1 - Configuration au premier lancement Local, viseur de données paresseux, durcissement des routes système (2026-06-29)
+
+🎯 **Version qualité de vie et sécurité.** Simplifie l'expérience
+du premier lancement en mode Local grâce à un dialog de
+configuration guidée, remplace le viseur de données d'entité par
+un tableau à rendu paresseux performant qui passe à l'échelle
+sur des centaines de milliers de lignes, et durcit cinq routes
+système quand l'authentification est activée.
+
+Cette version corrige aussi plusieurs aspérités historiques du
+mode Local : chemins de debug en dur, emplacements de configuration
+non découvrables, gestion des variables d'environnement, et la
+ligne Exec du fichier `.desktop` qui empêchait SeaUI d'apparaître
+dans le menu Activités de GNOME après installation.
+
+---
+
+### ✨ Ajouts
+
+#### LocalSetupDialog : configuration guidée au premier lancement
+
+Quand l'utilisateur sélectionne le profil **Local (intégré)** pour
+la première fois, SeaUI ouvre maintenant un dialog **Bienvenue
+dans SeaUI** qui parcourt trois sections de configuration :
+
+**1. Dossier de configuration**
+
+L'utilisateur choisit où SeaUI stockera les fichiers YAML de projet.
+La valeur par défaut est `~/.local/share/SeaDesktop/SeaUI/configs/`,
+mais le bouton Parcourir permet de choisir n'importe quel dossier —
+un répertoire versionné par Git, un sous-dossier de Documents,
+n'importe quel emplacement accessible en écriture. Le chemin choisi
+est persisté dans QSettings sous `[local]/configsDir` et lu par
+`appConfigsDir()` / `resolveConfigsDir()` à chaque lancement
+ultérieur.
+
+Une case à cocher permet de copier un projet d'exemple
+(`BlogDemo.yaml`) dans le dossier configs pour démarrer rapidement.
+Le YAML d'exemple est embarqué dans le binaire via le nouveau
+fichier de ressources Qt `seaui_examples.qrc`.
+
+**2. Identifiants MySQL**
+
+L'utilisateur saisit l'hôte, le port, le nom d'utilisateur et le
+mot de passe que le backend utilisera pour se connecter à MySQL.
+Le champ mot de passe a un bouton Afficher/Masquer.
+
+**3. Secret JWT**
+
+Un secret cryptographique de 256 bits est généré automatiquement
+via `QRandomGenerator::system()` (qui utilise le CSPRNG de l'OS
+sous Linux). Un bouton Régénérer permet de le remplacer si
+nécessaire.
+
+Au clic sur Continuer, SeaUI crée deux dossiers au même niveau
+hiérarchique :
+
+```
+<parent>/
+├── configs/                   # Fichiers YAML (versionnables)
+└── environment/               # Secrets (jamais versionnés)
+    └── seadesktop.env         # MySQL + JWT (permissions 0600)
+```
+
+Cette séparation permet à l'utilisateur de partager `configs/`
+via Git en toute sécurité tout en gardant les identifiants en
+local. Le fichier `seadesktop.env` suit le même format
+`CLE=VALEUR` que le `.env` docker-compose à la racine du projet,
+rendant les mêmes identifiants réutilisables entre les deux modes
+de déploiement.
+
+#### EnvFileLoader et injection d'environnement dans QProcess
+
+La nouvelle classe helper `EnvFileLoader` parse les fichiers
+`.env` (gère `CLE=VALEUR`, valeurs entre guillemets, commentaires,
+lignes vides) dans un `QMap<QString, QString>`. Le chemin est
+calculé automatiquement depuis le dossier configs :
+
+```cpp
+EnvFileLoader::envFilePathFor(configsDir);
+// retourne <parent>/environment/seadesktop.env
+```
+
+`MainWindow::startServiceProcess` charge désormais ce fichier
+avant de lancer le `QProcess` backend et fusionne les variables
+dans l'environnement du processus. Cela résout un problème de
+longue date : SeaUI lancé depuis le menu Activités GNOME n'hérite
+pas de `~/.profile`, donc les références `${MYSQL_PASSWORD}` dans
+le YAML retombaient sur les défauts et le backend échouait à se
+connecter. Avec le `.env` chargé explicitement, le backend voit
+les bons identifiants quelle que soit la manière dont SeaUI a
+été lancé.
+
+#### EntityDataDialog : rendu paresseux avec pagination conditionnelle
+
+Le bouton **Ouvrir les données** sur chaque entité dans SeaUI
+ouvre maintenant un nouveau dialog qui passe à l'échelle de
+manière fluide sur les grandes tables. Au lieu du précédent
+QTableWidget (qui créait un QTableWidgetItem par cellule et
+gelait l'UI au-delà de quelques milliers de lignes), le nouveau
+dialog utilise un `QTableView` avec un `EntityDataTableModel`
+personnalisé étendant `QAbstractTableModel`.
+
+Le modèle stocke le `QJsonArray` brut et expose les cellules via
+`data()` à la demande. Qt ne rend que les cellules visibles dans
+le viewport à chaque instant, donc l'UI reste réactive même avec
+100 000 lignes. Le goulot d'étranglement passe du rendu au
+transfert réseau.
+
+Le dialog détecte aussi si l'entité a une pagination définie dans
+le YAML et adapte sa stratégie de fetch en conséquence, avec
+priorité **OFFSET > CURSOR > PAGE** :
+
+| Mode YAML | Endpoint | Comportement |
+|---|---|---|
+| `pagination.offset` | `GET /entities/offset?offset=N&limit=M` | Scroll infini, total exact connu via le champ `total` |
+| `pagination.cursor` | `GET /entities/cursor?after=<token>&limit=M` | Scroll infini, total inconnu par design |
+| `pagination.page` | `GET /entities/page?page=N&page_size=M` | Scroll infini (pages concaténées) |
+| pas de bloc `pagination` | `GET /entities` | Fetch unique, rendu paresseux du résultat |
+
+Dans tous les modes paginés, la taille de batch utilise par défaut
+les `default_limit` / `default_page_size` du YAML (repli sur 100).
+Le tri par défaut du YAML est respecté quand le mode le supporte.
+La détection de scroll déclenche `fetchMore()` quand l'utilisateur
+dépasse 85 % de la barre de défilement, donc le batch suivant
+arrive avant qu'il atteigne le bas. Un drapeau `_isFetching`
+empêche les requêtes parallèles.
+
+Quand l'entité n'a pas de bloc `pagination` et que le serveur
+retourne plus de 1000 lignes, le dialog affiche un bandeau
+d'avertissement orangé suggérant d'activer la pagination dans le
+YAML pour de meilleures performances.
+
+#### AdminGuardHandler : routes système réservées aux admins quand auth activée
+
+Le nouveau handler backend `AdminGuardHandler` wrappe n'importe
+quel handler interne et rejette les requêtes qui ne portent pas
+le rôle admin :
+
+- 401 Unauthorized : pas d'en-tête `X-User-Role` (non authentifié)
+- 403 Forbidden : `X-User-Role` différent du rôle configuré dans
+  `authorization.admin_role`
+- Sinon : délègue au handler interne
+
+Dans `main.cpp`, cinq routes système sont maintenant
+conditionnellement wrappées dans `AdminGuardHandler` quand
+`auth_enabled` est vrai :
+
+| Route | Quand `auth=none` | Quand `auth=jwt` |
+|---|---|---|
+| `GET /health` | Publique | Rôle admin requis |
+| `GET /health/ready` | Publique | Rôle admin requis |
+| `GET /openapi.json` | Publique | Rôle admin requis |
+| `GET /docs` (Swagger UI) | Publique | Rôle admin requis |
+| `GET /assets/swagger-ui/*` | Publique | Rôle admin requis |
+
+En mode développement (auth désactivée), les cinq routes restent
+accessibles publiquement pour l'exploration sans authentification.
+En mode production, elles deviennent réservées aux administrateurs
+— empêchant les visiteurs non authentifiés d'énumérer la surface
+de l'API via Swagger UI ou `/openapi.json`. La transition est
+automatique depuis la configuration YAML : il suffit d'activer
+`security.authentication.type: jwt` pour les verrouiller.
+
+Considération importante pour les déploiements avec load-balancer :
+quand l'auth est activée, les health checks doivent inclure un
+JWT admin valide dans l'en-tête `Authorization`, ou le LB doit
+joindre le backend via un port interne séparé qui n'est pas
+admin-protégé.
+
+Le middleware de rate limiting (configurable via
+`service.security.rate_limits` dans le YAML) s'applique
+indépendamment à toutes les routes y compris les routes système.
+
+---
+
+### 🔧 Modifications
+
+#### Backend : suppression du nom de service par défaut `CCNBService` codé en dur
+
+Le `main.cpp` du backend mettait par défaut `--service_name` à
+`CCNBService` (un nom hérité d'un ancien projet). Quand le backend
+était lancé sans arguments, il échouait avec "Service introuvable:
+CCNBService" au lieu de tomber sur un défaut raisonnable.
+
+`--service_name` est maintenant optionnel. S'il n'est pas fourni,
+le backend sélectionne le premier service déclaré dans le YAML.
+Le log de boot affiche quel service a été sélectionné
+automatiquement :
+
+```
+[BOOT] Aucun --service_name fourni, demarrage du premier service du YAML: BlogService
+```
+
+`--config` est maintenant déclaré comme `required()` dans le
+schéma `boost::program_options`, donc l'oublier produit un message
+d'erreur clair au démarrage au lieu de retomber sur un chemin
+`config/project.yaml` qui n'existe pas.
+
+#### SeaUI : résolution du binaire backend
+
+`startServiceProcess` résout maintenant le binaire backend dans
+cet ordre de priorité :
+
+1. Variable d'environnement `SEA_DESKTOP_BACKEND_BIN` (surcharge
+   pour tests et déploiements custom)
+2. `/usr/bin/seadesktop-backend` (le wrapper installé par le
+   `.deb` qui définit `LD_LIBRARY_PATH=/opt/seadesktop/lib` pour
+   que le `libmariadbcpp.so` bundlé soit trouvé)
+3. `../Backend_Seastar/backend_seastar` relatif au binaire SeaUI
+   (mode dev)
+
+La logique précédente ne vérifiait que le troisième chemin, donc
+le backend ne démarrait pas quand SeaUI était lancé depuis le
+`.deb` installé (le binaire était trouvé mais ses libs bundlées
+manquaient).
+
+#### SeaUI : chemins config et logs unifiés
+
+`appConfigsDir()` et `appLogsDir()` dans `mainwindow.cpp` ne
+branchent plus sur `QT_DEBUG`. Les deux fonctions utilisent
+maintenant le même ordre de priorité entre les builds Debug et
+Release :
+
+1. Variables d'env `SEA_DESKTOP_CONFIGS_DIR` / `SEA_DESKTOP_LOGS_DIR`
+2. QSettings `[local]/configsDir` (choisi via LocalSetupDialog)
+3. `QStandardPaths::AppDataLocation + "/configs"` (repli)
+
+Cela supprime les chemins codés en dur
+`/home/frederic/QtProjects/SeaDesktop/configs` et `/logs` qui
+étaient embarqués dans `mainwindow.cpp` pour les builds Debug et
+causaient de la confusion quand d'autres développeurs clonaient
+le repo. La méthode `yamlPathForProject` a été déplacée du header
+vers l'implémentation pour éviter d'exposer `appConfigsDir` en
+dehors de l'unité de traduction.
+
+#### SeaUI : ligne Exec du `.desktop` utilise le nom de commande nu
+
+`apps/SeaUI/packaging/SeaUI.desktop.in` contenait précédemment
+`Exec=@CMAKE_INSTALL_PREFIX@/bin/SeaUI`. Après résolution du
+placeholder par CMake, le fichier pointait vers l'emplacement où
+`CMAKE_INSTALL_PREFIX` avait été défini pendant la configuration
+— souvent `/usr/local/bin/SeaUI` alors que le `.deb` installe en
+fait le binaire dans `/usr/bin/SeaUI`. Le menu Activités
+n'affichait soit rien, soit échouait silencieusement au clic sur
+l'entrée.
+
+La ligne est maintenant `Exec=SeaUI`. La résolution PATH trouve
+correctement `/usr/bin/SeaUI`, miroir du pattern utilisé par
+toute application Linux majeure packagée via `.deb`.
+
+---
+
+### 🐛 Corrigés
+
+#### Icône SeaUI disparaît après fermeture de LocalSetupDialog
+
+L'icône SeaUI disparaissait de la barre des tâches GNOME entre
+le moment où LocalSetupDialog se fermait et le moment où
+MainWindow s'ouvrait. Corrigé en s'assurant que WM_CLASS et le
+nom du fichier `.desktop` sont propagés de manière cohérente à
+travers QApplication, le dialog et la fenêtre principale.
+
+---
+
+### 📁 Nouveaux fichiers
+
+```
+apps/SeaUI/localsetupdialog.{h,cpp}                  # Dialog de bienvenue
+apps/SeaUI/envfileloader.{h,cpp}                     # Parsing du .env
+apps/SeaUI/entitydatatablemodel.{h,cpp}              # QAbstractTableModel paresseux
+apps/SeaUI/entitydatadialog.{h,cpp}                  # Nouveau viseur de données
+apps/SeaUI/seaui_examples.qrc                        # BlogDemo.yaml bundle
+apps/SeaUI/examples/BlogDemo.yaml                    # Projet d'exemple (bundle)
+apps/Backend_Seastar/src/http/handlers/misc_handlers/admin_guard_handler.{h,cpp}
+```
+
+### 📁 Fichiers modifiés
+
+```
+apps/SeaUI/main.cpp                                  # resolveConfigsDir + setDesktopFileName
+apps/SeaUI/mainwindow.{h,cpp}                        # appConfigsDir unifie, injection .env,
+                                                     # resolution binaire backend, EntityDataDialog
+apps/SeaUI/connectiondialog.cpp                      # LocalSetupDialog declenche au premier Local
+apps/SeaUI/packaging/SeaUI.desktop.in                # Exec=SeaUI (basé sur PATH)
+apps/SeaUI/CMakeLists.txt                            # Nouvelles sources + seaui_examples.qrc
+apps/Backend_Seastar/src/main.cpp                    # CCNBService retire, AdminGuardHandler sur 5 routes
+apps/Backend_Seastar/CMakeLists.txt                  # admin_guard_handler.cpp ajoute
+```
+
+---
+
+### 🔄 Migration depuis v1.0.0
+
+Pour les utilisateurs existants :
+
+- **Mode Local** : au prochain lancement, SeaUI détectera que
+  `[local]/configsDir` est absent de QSettings (sauf si vous avez
+  personnalisé le chemin précédemment) et ouvrira le nouveau
+  LocalSetupDialog. Les fichiers YAML existants dans
+  `~/.local/share/SeaDesktop/SeaUI/configs/` sont préservés ; vous
+  pouvez conserver ce dossier par défaut ou pointer vers un
+  nouveau.
+- **`seadesktop.env` existant** dans `/etc/seadesktop/` reste
+  inchangé. Le nouveau `seadesktop.env` côté SeaUI vit dans
+  `<parent>/environment/`, un emplacement séparé utilisé
+  uniquement quand SeaUI lance un backend via QProcess.
+- **Service par défaut backend** : tout script de démarrage ou
+  surcharge systemd qui dépendait du `CCNBService` par défaut
+  doit maintenant passer un `--service_name` explicite, ou
+  l'omettre pour utiliser le premier service du YAML.
+- **Déploiements de production avec authentification** : avec
+  `auth=jwt`, les endpoints `/health` deviennent réservés aux
+  admins. Mettez à jour les configurations de load-balancer pour
+  inclure un JWT admin valide ou joindre le backend via un port
+  interne qui contourne le guard admin.
+
+Pour les nouveaux utilisateurs :
+- Installez les `.deb` v1.0.1 comme décrit dans
+  `docs_french/installation_fr.md` §1.1.
+- Lancez SeaUI depuis le menu Activités et suivez le
+  LocalSetupDialog en trois étapes au premier démarrage.
+
+---
+
+### 📈 Statistiques
+
+- **4 nouveaux commits** depuis v1.0.0
+- **~1 800 nouvelles lignes** entre source et tests
+- **~400 lignes modifiées**
+- **3 nouveaux dialogs/widgets SeaUI** (LocalSetupDialog,
+  EntityDataDialog, EntityDataTableModel)
+- **1 nouveau middleware backend** (AdminGuardHandler)
+- **5 routes système** maintenant conditionnellement
+  admin-protégées
+
+---
+
 ## v1.0.0 - Version production-ready (2026-06-23)
 
 🎯 **Première version production-ready.** Amène la plateforme à la

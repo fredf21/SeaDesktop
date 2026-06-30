@@ -16,9 +16,10 @@ This guide explains how to use SeaUI.
 SeaUI can talk to your projects in two different ways:
 
 - **Local mode** — SeaUI reads and writes the YAML project files directly
-  on your computer's disk, in the `configs/` folder. It also starts and
-  stops the services on your machine as background processes. This is the
-  classic mode and is best for development work on a single machine.
+  on your computer's disk, in a configuration folder you choose at first
+  launch. It also starts and stops the services on your machine as
+  background processes. This is the classic mode and is best for
+  development work on a single machine.
 
 - **Remote mode** — SeaUI talks to a SeaDesktop backend running on another
   machine (typically in a Docker container) over HTTP. It reads, modifies
@@ -84,8 +85,48 @@ asking which profile to use.
 ### 2.1 Connecting in Local mode
 
 Select the **Local (built-in)** profile in the dropdown and click
-**Connect**. The main window opens with your local projects loaded. No
-authentication is needed.
+**Connect**.
+
+#### First-time Local setup
+
+The very first time you select Local, SeaUI opens a **Welcome to SeaUI**
+dialog that walks you through three configuration sections:
+
+**1. Configuration folder**
+
+Choose where SeaUI will store your YAML project files. The default is
+`~/.local/share/SeaDesktop/SeaUI/configs/`, but the Browse button lets you
+pick any folder — for example a Git-versioned directory shared with your
+team. A checkbox lets you copy an example project (`BlogDemo.yaml`) into
+the folder so you have something to look at right away. Recommended on
+first install.
+
+**2. MySQL credentials**
+
+Enter the host, port, user and password the backend will use to connect
+to MySQL. The password field has a Show/Hide toggle to help you check
+what you typed. If your MySQL root user has no password, leave the field
+empty.
+
+**3. JWT secret**
+
+A secure secret is generated for you automatically. You can replace it
+by clicking Regenerate if needed. This secret is used to sign
+authentication tokens for projects that require sign-in.
+
+When you click **Continue**, SeaUI saves your credentials in a secure
+file next to your configuration folder (in a sibling `environment/`
+folder, readable only by you) and opens the main window. From now on,
+choosing **Local** at startup goes straight to the main window — the
+Welcome dialog is shown only once.
+
+#### Changing your settings later
+
+If you need to change the configuration folder or update your MySQL
+credentials later, edit the file `~/.config/SeaDesktop/SeaUI.conf`
+(for the folder location) or the `seadesktop.env` file inside the
+`environment/` folder (for credentials). A dedicated Preferences
+dialog is planned for a future release.
 
 ### 2.2 Connecting in Remote mode
 
@@ -205,9 +246,10 @@ for you.
 A project of a name that already exists will not be overwritten.
 
 > **Before you start the service:** the service is configured to read its
-> security key from an environment variable named `SEA_DESKTOP_JWT_SECRET`.
-> Make sure this variable is defined in your environment, otherwise the
-> service will not start.
+> security key and database credentials from a secure file that SeaUI
+> created for you during the Welcome dialog at first launch. If you changed
+> these credentials in your YAML manually, make sure they match what is in
+> your `seadesktop.env` file, otherwise the service will not start.
 
 ### 5.2 Rename a project
 
@@ -339,7 +381,25 @@ and password. If they are correct, the sign-in status changes to
 ### 9.2 View an entity's data
 
 With a service running and an entity selected, click **Open Data**. SeaUI
-fetches the entity's records and shows them in a table.
+opens a data viewer that displays your records in a table.
+
+The viewer is built for performance. Even when an entity holds tens of
+thousands of rows, the table remains responsive while you scroll — only
+the rows visible on screen are drawn at any moment. You can scroll
+through the whole table without freezes, and column widths are adjusted
+automatically to fit your data while keeping a reasonable maximum size.
+
+A small banner at the top of the viewer tells you how many rows are
+shown. If your entity uses pagination (configured in its YAML), the
+viewer takes advantage of it: rows are fetched in batches as you scroll
+near the bottom, so you do not download everything at once. The banner
+tells you which pagination mode is active and how many rows have been
+loaded so far. When the table has no pagination configured and contains
+more than a thousand rows, an amber notice suggests enabling pagination
+in the YAML for better performance.
+
+When the viewer reaches the end of the collection, "End of collection"
+is appended to the banner.
 
 ### 9.3 Open the Swagger documentation
 
@@ -398,7 +458,39 @@ open SeaUI.
 
 ---
 
-## 12. Known limitations in Remote mode
+## 12. System routes and authentication
+
+When you enable authentication on a service (by setting the
+authentication type to `jwt` in the YAML), a few backend routes that
+were previously open to anyone become administrator-only:
+
+- the health and readiness endpoints
+- the OpenAPI specification
+- the Swagger documentation page and its assets
+
+In day-to-day development with authentication disabled, these routes
+stay open so you can browse Swagger and inspect the API freely. As
+soon as you turn authentication on for production, they automatically
+require an administrator account, hiding your API surface from
+unauthenticated visitors.
+
+This is worth knowing in two situations:
+
+- **Sharing Swagger with non-administrators.** Once authentication is
+  enabled, regular users will no longer be able to open the Swagger
+  page. If your team needs to share the API documentation, export the
+  OpenAPI spec from a development environment instead.
+
+- **Load balancers and health checks.** If you put your backend behind
+  a load balancer, the load balancer's health checks normally hit
+  `/health` without any credentials. When authentication is enabled
+  this will fail. Either configure the load balancer with an
+  administrator token, or expose `/health` through a separate internal
+  channel that bypasses authentication.
+
+---
+
+## 13. Known limitations in Remote mode
 
 Remote mode is new in v1.0 and a few limitations are intentionally accepted
 for this release:

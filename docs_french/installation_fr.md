@@ -32,10 +32,10 @@ différentes.
 
 ```bash
 # Téléchargement depuis GitHub Releases
-wget https://github.com/fredf21/SeaDesktop/releases/download/v1.0.0/seadesktop-backend-1.0.0-Linux.deb
+wget https://github.com/fredf21/SeaDesktop/releases/download/v1.0.1/seadesktop-backend-1.0.1-Linux.deb
 
 # Installation (résout les dépendances automatiquement)
-sudo apt install ./seadesktop-backend-1.0.0-Linux.deb
+sudo apt install ./seadesktop-backend-1.0.1-Linux.deb
 ```
 
 Le paquet installe :
@@ -66,6 +66,15 @@ sudo chown root:seadesktop /etc/seadesktop/seadesktop.env
 sudo systemctl enable --now seadesktop-backend
 ```
 
+**Note** : les étapes ci-dessus (étapes 1 à 3) servent à exécuter
+le backend comme un service système via systemd. Si vous voulez
+seulement utiliser SeaUI en mode Local pour gérer les backends de
+façon interactive, vous pouvez sauter ces étapes — la
+**configuration au premier lancement** de SeaUI (voir §1.4) crée
+automatiquement la configuration nécessaire dans votre dossier
+utilisateur et lance le backend à la demande via `QProcess`.
+Utilisez systemd uniquement pour les déploiements non surveillés
+qui doivent rester en marche en permanence.
 Vérifier que le service tourne :
 
 ```bash
@@ -79,10 +88,10 @@ curl http://localhost:8080/health
 
 ```bash
 # Téléchargement
-wget https://github.com/fredf21/SeaDesktop/releases/download/v1.0.0/seaui-1.0.0-Linux.deb
+wget https://github.com/fredf21/SeaDesktop/releases/download/v1.0.1/seaui-1.0.1-Linux.deb
 
 # Installation (résout les dépendances Qt6 via apt)
-sudo apt install ./seaui-1.0.0-Linux.deb
+sudo apt install ./seaui-1.0.1-Linux.deb
 ```
 
 Le paquet installe :
@@ -138,22 +147,130 @@ SeaUI s'y connecte via le mode Remote sur `http://localhost:8080`.
 
 ### 1.4 Premier lancement - choisir son mode
 
-Au premier ouverture de SeaUI, une boîte de dialogue **Connexion à
-SeaDesktop** apparaît avec deux options de profil :
+Quand SeaUI s'ouvre pour la première fois, un dialog **Se
+connecter à SeaDesktop** apparaît avec deux options de profil :
 
-- **Local (intégré)** - utilisable uniquement sur Linux avec le `.deb`
-  installé. SeaUI lit/écrit les fichiers YAML sur le système de
-  fichiers et gère les services backend via des processus natifs.
-- **Distant** - se connecte à un backend déployé via HTTP/HTTPS. Sur
-  macOS et Windows, c'est le seul mode disponible (le backend tourne
-  dans Docker). Cliquer sur **Gérer les profils, puis + Ajouter
-  Distant** pour enregistrer une URL de backend (par exemple
-  `http://localhost:8080` pour Docker local,
+- **Local (intégré)** - utilisable uniquement sous Linux avec le
+  `.deb` installé. SeaUI lit et écrit les fichiers YAML sur votre
+  système de fichiers et gère les services backend via des
+  processus natifs.
+- **Distant** - se connecte à un backend déployé via HTTP/HTTPS.
+  Sous macOS et Windows c'est le seul mode disponible (le backend
+  tourne dans Docker). Cliquez sur **Gérer les profils**, puis sur
+  **+ Ajouter Distant** pour enregistrer une URL de backend (par
+  exemple `http://localhost:8080` pour Docker local,
   `https://api.example.com` pour la production).
+
+#### Configuration au premier lancement Local
+
+Quand vous sélectionnez **Local** pour la première fois, SeaUI
+ouvre le dialog **Bienvenue dans SeaUI** qui parcourt trois
+sections de configuration :
+
+**1. Dossier de configuration**
+
+L'utilisateur choisit où SeaUI stockera ses fichiers YAML de
+projet. La valeur par défaut est
+`~/.local/share/SeaDesktop/SeaUI/configs/`, mais vous pouvez
+choisir n'importe quel dossier — par exemple un répertoire
+versionné par Git partagé avec votre équipe. Le bouton
+**Parcourir** permet de naviguer visuellement.
+
+Une case à cocher permet de copier un projet d'exemple
+(`BlogDemo.yaml`) dans le dossier pour démarrer rapidement.
+Recommandé à la première installation.
+
+**2. Identifiants MySQL**
+
+Le backend a besoin d'identifiants MySQL pour démarrer. Remplir :
+- **Hôte** (par défaut : `127.0.0.1`)
+- **Port** (par défaut : `3306`)
+- **Utilisateur** (par défaut : `root`)
+- **Mot de passe** (utilisez **Afficher/Masquer** pour basculer
+  la visibilité)
+
+Si votre utilisateur root MySQL n'a pas de mot de passe, laissez
+le champ vide.
+
+**3. Secret JWT**
+
+Un secret JWT cryptographique de 256 bits est généré
+automatiquement. Utilisez **Régénérer** pour le remplacer si
+nécessaire. Ce secret signe les tokens d'authentification pour
+les projets qui utilisent l'authentification.
+
+#### Fichiers créés sur le système de fichiers
+
+Quand vous cliquez sur **Continuer**, SeaUI crée cette structure :
+
+<parent>/
+├── configs/                   # Vos fichiers YAML de projet
+│   └── BlogDemo.yaml          # (si la case d'exemple est cochee)
+└── environment/               # Secrets (a ne jamais versionner)
+└── seadesktop.env         # MySQL + JWT (permissions 0600)
+
+La séparation entre `configs/` et `environment/` vous permet de
+versionner `configs/` en toute sécurité dans Git tout en gardant
+les identifiants en local.
+
+Le fichier `seadesktop.env` a le format suivant :
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=...
+SEA_DESKTOP_JWT_SECRET=...
+
+SeaUI charge ce fichier à chaque démarrage d'un service backend
+et injecte les variables dans l'environnement du processus
+backend. Cela signifie que le backend peut résoudre les
+références `${MYSQL_PASSWORD:-root}` dans vos projets YAML
+indépendamment de la manière dont SeaUI a été lancé (terminal,
+menu GNOME, etc.).
+
+#### Reconfiguration ultérieure
+
+Pour changer les identifiants ou déplacer le dossier configs
+après le premier lancement, modifiez
+`~/.config/SeaDesktop/SeaUI.conf` et mettez à jour la clé
+`[local]/configsDir`, ou modifiez directement
+`<parent>/environment/seadesktop.env`. Un dialog de Préférences
+dédié est prévu pour une version ultérieure.
 
 Pour les détails complets d'utilisation de SeaUI, voir
 [`SEAUI_GUIDE_fr.md`](./SEAUI_GUIDE_fr.md).
 
+### 1.5 Sécurité des routes système
+
+SeaDesktop expose cinq routes système qui se comportent
+différemment selon que l'authentification est activée ou non dans
+votre YAML :
+
+| Route | Quand `auth=none` | Quand `auth=jwt` |
+|---|---|---|
+| `GET /health` | Publique | Rôle admin requis |
+| `GET /health/ready` | Publique | Rôle admin requis |
+| `GET /openapi.json` | Publique | Rôle admin requis |
+| `GET /docs` (Swagger UI) | Publique | Rôle admin requis |
+| `GET /assets/swagger-ui/*` | Publique | Rôle admin requis |
+
+En **mode développement** (sans authentification, typique pour
+l'exploration locale), ces routes sont ouvertes pour que vous
+puissiez naviguer la spec OpenAPI et tester les endpoints dans
+Swagger UI sans authentification.
+
+En **mode production** (authentification activée), ces routes
+renvoient 401 sans JWT valide et 403 si le JWT ne porte pas le
+rôle admin configuré dans `authorization.admin_role`.
+
+**Important pour les load-balancers** : si votre YAML a
+`auth=jwt`, les health checks du LB doivent inclure un JWT admin
+valide dans l'en-tête `Authorization`. Alternativement, exposez
+`/health` sur un port interne séparé non protégé par
+l'authentification.
+
+Le middleware de rate limiting (configuré via
+`service.security.rate_limits` dans votre YAML) s'applique à
+**toutes** les routes y compris les routes système.
 ---
 
 ## 2. Composants et plateformes
@@ -282,7 +399,7 @@ cmake --build build/debian-backend -j
 # Génération du .deb
 cd build/debian-backend
 cpack -G DEB
-# Produit seadesktop-backend-1.0.0-Linux.deb (~5,7 Mo)
+# Produit seadesktop-backend-1.0.1-Linux.deb (~5,7 Mo)
 ```
 
 Layout du paquet :
@@ -313,7 +430,7 @@ cmake --build build/debian-seaui -j
 # Génération du .deb
 cd build/debian-seaui
 cpack -G DEB
-# Produit seaui-1.0.0-Linux.deb (~2,3 Mo)
+# Produit seaui-1.0.1-Linux.deb (~2,3 Mo)
 ```
 
 Layout du paquet :

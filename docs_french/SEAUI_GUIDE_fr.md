@@ -17,10 +17,11 @@ Ce guide explique comment utiliser SeaUI.
 SeaUI peut dialoguer avec vos projets de deux façons différentes :
 
 - **Mode Local** — SeaUI lit et écrit les fichiers YAML de projet
-  directement sur le disque de votre ordinateur, dans le dossier
-  `configs/`. Il démarre et arrête également les services sur votre
-  machine sous forme de processus en arrière-plan. C'est le mode
-  classique, idéal pour le développement sur une seule machine.
+  directement sur le disque de votre ordinateur, dans un dossier de
+  configuration que vous choisissez au premier lancement. Il démarre
+  et arrête également les services sur votre machine sous forme de
+  processus en arrière-plan. C'est le mode classique, idéal pour le
+  développement sur une seule machine.
 
 - **Mode Remote** — SeaUI dialogue avec un backend SeaDesktop qui
   s'exécute sur une autre machine (typiquement dans un conteneur Docker)
@@ -90,8 +91,53 @@ s'affiche pour vous demander quel profil utiliser.
 ### 2.1 Se connecter en mode Local
 
 Sélectionnez le profil **Local (built-in)** dans la liste déroulante et
-cliquez sur **Connect**. La fenêtre principale s'ouvre avec vos projets
-locaux chargés. Aucune authentification n'est nécessaire.
+cliquez sur **Connect**.
+
+#### Configuration au tout premier lancement Local
+
+La toute première fois que vous sélectionnez Local, SeaUI ouvre un
+dialogue **Bienvenue dans SeaUI** qui vous guide à travers trois sections
+de configuration :
+
+**1. Dossier de configuration**
+
+Choisissez où SeaUI stockera vos fichiers YAML de projet. La valeur
+par défaut est `~/.local/share/SeaDesktop/SeaUI/configs/`, mais le
+bouton Parcourir vous permet de choisir n'importe quel dossier — par
+exemple un répertoire versionné par Git partagé avec votre équipe. Une
+case à cocher permet de copier un projet d'exemple (`BlogDemo.yaml`)
+dans le dossier afin que vous ayez tout de suite quelque chose à
+regarder. Recommandé à la première installation.
+
+**2. Identifiants MySQL**
+
+Saisissez l'hôte, le port, l'utilisateur et le mot de passe que le
+backend utilisera pour se connecter à MySQL. Le champ mot de passe a
+un bouton Afficher/Masquer pour vérifier votre saisie. Si votre
+utilisateur root MySQL n'a pas de mot de passe, laissez le champ vide.
+
+**3. Secret JWT**
+
+Un secret est généré automatiquement pour vous. Vous pouvez le
+remplacer en cliquant sur Régénérer si nécessaire. Ce secret sert à
+signer les jetons d'authentification des projets qui exigent une
+connexion.
+
+Au clic sur **Continuer**, SeaUI enregistre vos identifiants dans un
+fichier sécurisé à côté de votre dossier de configuration (dans un
+dossier voisin `environment/`, lisible uniquement par vous) et ouvre
+la fenêtre principale. À partir de maintenant, choisir **Local** au
+démarrage va directement à la fenêtre principale — le dialogue de
+bienvenue ne s'affiche qu'une seule fois.
+
+#### Modifier vos paramètres plus tard
+
+Si vous devez changer le dossier de configuration ou mettre à jour
+vos identifiants MySQL plus tard, modifiez le fichier
+`~/.config/SeaDesktop/SeaUI.conf` (pour l'emplacement du dossier) ou
+le fichier `seadesktop.env` dans le dossier `environment/` (pour les
+identifiants). Un dialogue de Préférences dédié est prévu pour une
+version ultérieure.
 
 ### 2.2 Se connecter en mode Remote
 
@@ -221,10 +267,13 @@ sécurité et la journalisation sont déjà mises en place pour vous.
 
 Un projet dont le nom existe déjà ne sera pas écrasé.
 
-> **Avant de démarrer le service :** le service est configuré pour lire sa
-> clé de sécurité depuis une variable d'environnement nommée
-> `SEA_DESKTOP_JWT_SECRET`. Assurez-vous que cette variable est définie dans
-> votre environnement, sans quoi le service ne démarrera pas.
+> **Avant de démarrer le service :** le service est configuré pour lire
+> sa clé de sécurité et ses identifiants de base de données depuis un
+> fichier sécurisé que SeaUI a créé pour vous lors du dialogue de
+> bienvenue au premier lancement. Si vous avez modifié ces identifiants
+> dans votre YAML manuellement, assurez-vous qu'ils correspondent à ce
+> qui se trouve dans votre fichier `seadesktop.env`, sans quoi le
+> service ne démarrera pas.
 
 ### 5.2 Renommer un projet
 
@@ -364,9 +413,29 @@ pour vous déconnecter.
 
 ### 9.2 Consulter les données d'une entité
 
-Avec un service en cours d'exécution et une entité sélectionnée, cliquez sur
-**Open Data**. SeaUI récupère les enregistrements de l'entité et les affiche
-dans un tableau.
+Avec un service en cours d'exécution et une entité sélectionnée, cliquez
+sur **Open Data**. SeaUI ouvre un visualiseur de données qui affiche vos
+enregistrements dans un tableau.
+
+Le visualiseur est conçu pour la performance. Même lorsqu'une entité
+contient des dizaines de milliers de lignes, le tableau reste réactif
+pendant que vous défilez — seules les lignes visibles à l'écran sont
+dessinées à chaque instant. Vous pouvez parcourir tout le tableau sans
+gel, et les largeurs de colonnes sont ajustées automatiquement pour
+s'adapter à vos données tout en restant raisonnables.
+
+Un petit bandeau en haut du visualiseur indique combien de lignes sont
+affichées. Si votre entité utilise la pagination (configurée dans son
+YAML), le visualiseur en tire parti : les lignes sont récupérées par
+paquets au fur et à mesure que vous approchez du bas, vous n'avez donc
+pas à tout télécharger d'un coup. Le bandeau indique quel mode de
+pagination est actif et combien de lignes ont été chargées jusqu'à
+présent. Quand le tableau n'a pas de pagination configurée et contient
+plus de mille lignes, un avis orangé suggère d'activer la pagination
+dans le YAML pour de meilleures performances.
+
+Quand le visualiseur atteint la fin de la collection, "End of
+collection" est ajouté au bandeau.
 
 ### 9.3 Ouvrir la documentation Swagger
 
@@ -429,7 +498,41 @@ prochaine ouverture de SeaUI.
 
 ---
 
-## 12. Limitations connues en mode Remote
+## 12. Routes système et authentification
+
+Quand vous activez l'authentification sur un service (en réglant le
+type d'authentification à `jwt` dans le YAML), quelques routes backend
+qui étaient auparavant ouvertes à tous deviennent réservées aux
+administrateurs :
+
+- les endpoints de santé et de readiness (`/health` et `/health/ready`)
+- la spécification OpenAPI
+- la page de documentation Swagger et ses ressources
+
+En développement quotidien, avec l'authentification désactivée, ces
+routes restent ouvertes pour que vous puissiez parcourir Swagger et
+inspecter l'API librement. Dès que vous activez l'authentification pour
+la production, elles exigent automatiquement un compte administrateur,
+masquant la surface de votre API aux visiteurs non authentifiés.
+
+C'est utile à savoir dans deux situations :
+
+- **Partager Swagger avec des non-administrateurs.** Une fois
+  l'authentification activée, les utilisateurs ordinaires ne pourront
+  plus ouvrir la page Swagger. Si votre équipe doit partager la
+  documentation API, exportez plutôt la spec OpenAPI depuis un
+  environnement de développement.
+
+- **Load balancers et health checks.** Si vous placez votre backend
+  derrière un load balancer, les health checks de ce dernier appellent
+  normalement `/health` sans identifiants. Quand l'authentification
+  est activée, cela échouera. Configurez le load balancer avec un
+  token administrateur, ou exposez `/health` via un canal interne
+  séparé qui contourne l'authentification.
+
+---
+
+## 13. Limitations connues en mode Remote
 
 Le mode Remote est nouveau en v1.0 et quelques limitations sont
 volontairement acceptées pour cette release :
