@@ -37,6 +37,8 @@
 #include <QFileDialog>
 #include <QFile>
 #include <QFileInfo>
+#include <QElapsedTimer>
+#include <QSet>
 #include <QStandardPaths>
 #include <QCoreApplication>
 #include <QEvent>
@@ -228,7 +230,7 @@ void loadEnvIntoSeaUIProcess()
  * @param parent Parent Qt.
  */
 MainWindow::MainWindow(TranslationManager* translationManager, std::unique_ptr<IProjectRepository> repository,
-                        Profile activeProfile, QString token, QWidget *parent)
+                       Profile activeProfile, QString token, QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
     , _projectModel(new ProjectListModel(this))
@@ -559,8 +561,27 @@ void MainWindow::loadProjects()
     _projectRepository->listProjects()
     .then(this, [this](const IProjectRepository::ListResult& result) {
 
-        for (const QString& err : std::as_const(result.errors)) {
-            qWarning() << "Erreur fichier:" << err;
+        // Erreurs de parsing YAML : un message par fichier invalide.
+        // Ces fichiers n'apparaissent pas dans la liste des projets ; sans
+        // cette alerte, l'utilisateur ne saurait pas pourquoi son fichier
+        // n'est pas affiche.
+        if (!result.errors.isEmpty()) {
+            for (const QString& err : std::as_const(result.errors)) {
+                qWarning().noquote() << "YAML parse error:" << err;
+            }
+
+            QMessageBox box(this);
+            box.setIcon(QMessageBox::Warning);
+            box.setWindowTitle(tr("Invalid YAML file"));
+            box.setText(tr("%n configuration file(s) could not be loaded and "
+                           "will not appear in the project list.",
+                           "", static_cast<int>(result.errors.size())));
+            box.setInformativeText(
+                tr("Fix the reported errors; the file will then load "
+                   "automatically."));
+            box.setDetailedText(result.errors.join('\n'));
+            box.setStandardButtons(QMessageBox::Ok);
+            box.exec();
         }
 
         _projectModel->setProjects(result.projects);
@@ -673,17 +694,55 @@ void MainWindow::startServiceProcess(const QString& projectName,
 
     process->setProcessEnvironment(env);
 
-    connect(process, &QProcess::readyReadStandardOutput, this, [process, processKey]() {
-        qDebug().noquote() << "[" + processKey + "][OUT]"
-                           << QString::fromLocal8Bit(process->readAllStandardOutput());
-    });
-    connect(process, &QProcess::readyReadStandardError, this, [process, processKey]() {
-        qDebug().noquote() << "[" + processKey + "][ERR]"
-                           << QString::fromLocal8Bit(process->readAllStandardError());
-    });
-
+    // NOTE : la sortie standard et la sortie d'erreur sont redirigees vers
+    // un fichier (setStandardOutputFile/setStandardErrorFile ci-dessous).
+    // Une fois ces redirections en place, les signaux readyReadStandard*
+    // ne se declenchent plus : Qt ecrit directement dans le fichier sans
+    // passer par les pipes internes. On lit donc le motif d'erreur depuis
+    // le fichier log dans reportBackendStartupFailure().
     process->setStandardOutputFile(logPath, QIODevice::Append);
     process->setStandardErrorFile(logPath, QIODevice::Append);
+
+    // Horodatage du demarrage : sert a distinguer un echec de boot
+    // (mort < 5 s, typiquement MySQL qui refuse la connexion) d'un arret
+    // ou crash tardif (qui releve du polling /health).
+    auto* startClock = new QElapsedTimer;
+    startClock->start();
+
+    // ── Echec de lancement du binaire (introuvable, permissions, etc.) ──
+    connect(process, &QProcess::errorOccurred, this,
+            [this, serviceName, logPath](QProcess::ProcessError error) {
+                if (error == QProcess::FailedToStart) {
+                    reportBackendStartupFailure(serviceName, logPath);
+                }
+            });
+
+    // ── Terminaison du process ──────────────────────────────────────
+    connect(process, &QProcess::finished, this,
+            [this, processKey, serviceName, logPath, startClock]
+            (int exitCode, QProcess::ExitStatus exitStatus) {
+                const qint64 uptimeMs = startClock->elapsed();
+                delete startClock;
+
+                // Arret volontaire (stop/restart) → jamais d'alerte.
+                if (_intentionalStops.remove(processKey)) {
+                    return;
+                }
+
+                const bool crashed = (exitStatus == QProcess::CrashExit);
+                const bool badExit = (exitCode != 0);
+
+                // Echec de boot : mort rapide (< 5 s) avec code/etat d'erreur.
+                // C'est le cas d'une connexion MySQL refusee au demarrage
+                // (identifiants invalides, base inexistante, variable
+                // d'environnement non resolue, serveur injoignable).
+                if ((crashed || badExit) && uptimeMs < 5000) {
+                    reportBackendStartupFailure(serviceName, logPath);
+                }
+                // Au-dela de 5 s, un echec releve d'un probleme runtime :
+                // le polling /health (ServiceStatusCheck) prend le relais
+                // et bascule l'etat a STOPPED via onServiceUnreachable().
+            });
 
     QStringList args;
     args << "--config" << yamlPath
@@ -714,6 +773,9 @@ void MainWindow::stopServiceProcess(const QString& projectName,
     }
 
     if (process->state() != QProcess::NotRunning) {
+        // Marque cet arret comme volontaire : le handler finished() ne
+        // doit pas l'interpreter comme un echec de demarrage.
+        _intentionalStops.insert(processKey);
         process->terminate();
         if (!process->waitForFinished(3000)) {
             process->kill();
@@ -723,6 +785,83 @@ void MainWindow::stopServiceProcess(const QString& projectName,
 
     _processes.remove(processKey);
     process->deleteLater();
+}
+
+/**
+ * @brief Lit les dernieres lignes d'un fichier log backend.
+ *
+ * Fenetre glissante : ne conserve que les `maxLines` dernieres lignes,
+ * suffisantes pour exposer le motif d'erreur d'un echec de demarrage
+ * sans charger un fichier potentiellement volumineux.
+ */
+QString MainWindow::readLogTail(const QString& logPath, int maxLines) const
+{
+    QFile file(logPath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return QString();
+    }
+
+    QStringList lines;
+    QTextStream in(&file);
+    while (!in.atEnd()) {
+        lines.append(in.readLine());
+        if (lines.size() > maxLines) {
+            lines.removeFirst();
+        }
+    }
+    return lines.join('\n');
+}
+
+/**
+ * @brief Diagnostique un echec de demarrage backend et alerte l'utilisateur.
+ *
+ * Lit la fin du log, detecte les motifs d'erreur connus (connexion MySQL
+ * refusee, base inexistante, variable d'environnement non resolue, serveur
+ * injoignable) et affiche une QMessageBox::critical avec un message clair,
+ * plus le contenu brut du log en detail repliable. Si aucun motif connu
+ * n'est reconnu, le message reste generique mais le log brut demeure
+ * accessible, garantissant que l'erreur reelle est toujours consultable.
+ */
+void MainWindow::reportBackendStartupFailure(const QString& serviceName,
+                                             const QString& logPath)
+{
+    const QString tail = readLogTail(logPath);
+
+    QString reason = "Nothing captured";
+    if (tail.contains("Access denied for user", Qt::CaseInsensitive)) {
+        reason = tr("MySQL connection refused: invalid username or password. "
+                    "Check MYSQL_USER and MYSQL_PASSWORD in your environment "
+                    "configuration.");
+    } else if (tail.contains("Unknown database", Qt::CaseInsensitive)) {
+        reason = tr("The configured MySQL database does not exist. "
+                    "Check the 'database_name' value in your YAML file.");
+    } else if (tail.contains("Can't connect", Qt::CaseInsensitive) ||
+               tail.contains("Connection refused", Qt::CaseInsensitive) ||
+               tail.contains("connect to server", Qt::CaseInsensitive)) {
+        reason = tr("Cannot reach the MySQL server. Check that the database "
+                    "is running and that 'host' and 'port' are correct.");
+    } else if (tail.contains(QStringLiteral("${"))) {
+        reason = tr("An environment variable was not resolved "
+                    "(for example ${MYSQL_PASSWORD}). Check your environment "
+                    "configuration file.");
+    } else {
+        reason = tr("The service '%1' failed to start. See the details below "
+                    "for the backend error.").arg(serviceName);
+    }
+
+    qWarning().noquote()
+        << "[backend startup failure]" << serviceName << ":" << reason;
+
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Critical);
+    box.setWindowTitle(tr("Service startup failed"));
+    box.setText(tr("Service '%1' could not start.").arg(serviceName));
+    box.setInformativeText(reason);
+    if (!tail.isEmpty()) {
+        box.setDetailedText(tail);
+    }
+    box.setStandardButtons(QMessageBox::Ok);
+    box.exec();
 }
 
 /**
@@ -3312,7 +3451,7 @@ void MainWindow::on_actionSwitch_Connection_triggered()
 
 QString MainWindow::yamlPathForProject(const QString &projectName) const
 {
- return appConfigsDir() + "/" + projectName + ".yaml";
+    return appConfigsDir() + "/" + projectName + ".yaml";
 }
 /**
  * @brief Met a jour l'etat (enabled/disabled) du menu Services Actions

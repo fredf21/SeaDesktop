@@ -172,6 +172,7 @@ private:
     int _currentServiceRow = -1;
     int _currentEntityRow = -1;
     QMap<QString, QProcess*> _processes; // serviceName → process
+    QSet<QString> _intentionalStops;     // processKeys arrêtés volontairement (stop/restart)
     [[nodiscard]] QString yamlPathForProject(const QString& projectName) const;
     QNetworkAccessManager* _networkManager = nullptr;
     QString entityCollectionPath(const QString& entityName) const;
@@ -436,6 +437,27 @@ private:
                             const QString& serviceName,
                             int port);
 
+    /**
+     * @brief Lit les dernières lignes d'un fichier log backend.
+     * @param logPath   Chemin du fichier log.
+     * @param maxLines  Nombre maximum de lignes à retourner (depuis la fin).
+     * @return Les dernières lignes concaténées (vide si fichier illisible).
+     */
+    QString readLogTail(const QString& logPath, int maxLines = 40) const;
+
+    /**
+     * @brief Diagnostique un échec de démarrage backend et alerte l'utilisateur.
+     *
+     * Lit la fin du log, détecte les motifs d'erreur connus (connexion
+     * MySQL refusée, base inexistante, variable d'environnement non
+     * résolue, etc.) et affiche une QMessageBox::critical avec un message
+     * clair plus le détail brut repliable.
+     *
+     * @param serviceName Nom du service concerné.
+     * @param logPath     Chemin du log backend à analyser.
+     */
+    void reportBackendStartupFailure(const QString& serviceName,
+                                     const QString& logPath);
     /**
      * @brief Applique une action a tous les services de tous les projets.
      *

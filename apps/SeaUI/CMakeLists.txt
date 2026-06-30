@@ -89,6 +89,13 @@ target_link_libraries(SeaUI
         Qt6::WebEngineWidgets
 )
 
+# En Release, supprime les qDebug()/qInfo() à la compilation (code vide,
+# zéro coût runtime). Les qWarning()/qCritical() restent actifs pour
+# conserver la traçabilité des erreurs (échec démarrage backend, parsing
+# YAML, etc.). En Debug, toutes les traces restent disponibles.
+target_compile_definitions(SeaUI PRIVATE
+    $<$<CONFIG:Release>:QT_NO_DEBUG_OUTPUT QT_NO_INFO_OUTPUT>
+)
 # ════════════════════════════════════════════════════════════════
 # Option : skip toutes les install rules SeaUI quand on packagee
 # UNIQUEMENT le backend (.deb backend-only).
