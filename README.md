@@ -3,7 +3,7 @@
 [![Commercial License Available](https://img.shields.io/badge/Commercial-Available-green.svg)](COMMERCIAL-LICENSE.md)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/23)
 [![Seastar](https://img.shields.io/badge/Seastar-shared--nothing-orange.svg)](https://seastar.io/)
-[![Version](https://img.shields.io/badge/version-1.0.0-brightgreen.svg)](./Release_Notes.md)
+[![Version](https://img.shields.io/badge/version-1.0.1-brightgreen.svg)](./Release_Notes.md)
 
 > **A low-code C++ platform that turns a YAML file into an ultra-fast REST API server + desktop GUI, with built-in security.**
 
@@ -137,6 +137,59 @@ GET  /openapi.json                                      OpenAPI 3.0 specificatio
 GET  /docs                                              Swagger UI interface
 GET  /health                                            Healthcheck
 ```
+
+---
+## 🆕 What's New in v1.0.1
+
+### 🚀 First-time Local setup with guided dialog
+
+When SeaUI is launched for the first time in Local mode, a **Welcome
+to SeaUI** dialog now walks the user through three configuration
+sections in one step:
+
+- **Configuration folder** — pick where YAML project files will live (with optional copy of an example BlogDemo project)
+- **MySQL credentials** — host, port, user, password (with show/hide)
+- **JWT secret** — auto-generated 256-bit secret with Regenerate button
+
+Credentials are stored in a `seadesktop.env` file inside a sibling
+`environment/` folder, separate from `configs/`. The split makes it
+safe to version `configs/` in Git while keeping secrets local.
+
+### 📊 High-performance entity data viewer
+
+The **Open Data** action on each entity now opens a lazy-rendering
+data viewer that scales to tens of thousands of rows. Only the rows
+visible on screen are drawn; scrolling stays smooth on large tables.
+The viewer also detects pagination configured in the YAML and adapts
+its fetch strategy: OFFSET (with exact totals), CURSOR (token-based),
+or PAGE (page-based concatenation), with infinite scroll triggering
+the next batch at 85% of the scrollbar.
+
+### 🔒 System routes hardening when auth is enabled
+
+Five system routes (`/health`, `/health/ready`, `/openapi.json`,
+`/docs`, `/assets/swagger-ui/*`) now become **administrator-only**
+when authentication is enabled on the service. In development mode
+(auth disabled) they stay public for unauthenticated exploration.
+This prevents anonymous visitors from enumerating the API surface
+via Swagger UI in production.
+
+### 🛠 Quality-of-life backend changes
+
+- The hardcoded `CCNBService` default service name is removed.
+  `--service_name` is now optional; the backend selects the first
+  service declared in the YAML.
+- `--config` is now `required()` for a clear error message when
+  missing.
+- SeaUI resolves the backend binary in three priority levels
+  (env override → `/usr/bin/seadesktop-backend` for `.deb` mode →
+  dev relative path).
+- `seadesktop.env` variables are injected into both SeaUI's own
+  process (so YAML parsing finds them) and the backend's
+  QProcessEnvironment.
+
+See [`Release_Notes.md`](./Release_Notes.md) for the complete v1.0.1
+changelog and migration notes.
 
 ---
 
@@ -504,6 +557,15 @@ export SEA_DESKTOP_JWT_SECRET="your-jwt-secret-32-characters-minimum"
 - Full bilingual documentation (EN + FR) of every feature
 - Bootstrap admin procedure documented
 
+### ✅ v1.0.1 - First-time Local setup, lazy data viewer & system routes hardening (Current)
+- LocalSetupDialog at first Local launch (configs folder + MySQL + JWT)
+- EnvFileLoader: `.env` injected into both SeaUI process and backend QProcess
+- EntityDataDialog: lazy rendering with conditional pagination (OFFSET > CURSOR > PAGE > None)
+- AdminGuardHandler: 5 system routes admin-only when auth is enabled
+- Backend `CCNBService` hardcoded default removed; `--service_name` now optional
+- Backend binary resolution in 3 priority levels (env, `.deb` wrapper, dev relative)
+- Documentation updated (Release Notes, installation, SEAUI guide) in EN and FR
+
 ### 🌟 v1.1.0
 - WebSocket for real-time notifications
 - OAuth2 providers (Google, GitHub)
@@ -606,5 +668,5 @@ See [COMMERCIAL-LICENSE.md](./COMMERCIAL-LICENSE.md) for details.
 ---
 
 <p align="center">
-  <strong>SeaDesktop v1.0.0</strong> — From YAML to a complete product in minutes.
+  <strong>SeaDesktop v1.0.1</strong> — From YAML to a complete product in minutes.
 </p>

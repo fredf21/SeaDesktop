@@ -3,7 +3,7 @@
 [![Commercial License Available](https://img.shields.io/badge/Commercial-Available-green.svg)](COMMERCIAL-LICENSE.md)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/23)
 [![Seastar](https://img.shields.io/badge/Seastar-shared--nothing-orange.svg)](https://seastar.io/)
-[![Version](https://img.shields.io/badge/version-1.0.0-brightgreen.svg)](./Release_Notes.md)
+[![Version](https://img.shields.io/badge/version-1.0.1-brightgreen.svg)](./Release_Notes.md)
 
 > **Une plateforme low-code C++ qui transforme un fichier YAML en serveur ultra rapide API REST + GUI desktop, avec sécurité intégrée.**
 
@@ -137,6 +137,64 @@ GET  /openapi.json                                      Specification OpenAPI 3.
 GET  /docs                                              Interface Swagger UI
 GET  /health                                            Healthcheck
 ```
+
+---
+
+## 🆕 Nouveautés v1.0.1
+
+### 🚀 Configuration guidée au premier lancement Local
+
+Quand SeaUI est lancé pour la première fois en mode Local, un dialog
+**Bienvenue dans SeaUI** guide maintenant l'utilisateur à travers
+trois sections de configuration en une étape :
+
+- **Dossier de configuration** — choix d'où vivront les fichiers YAML de projet (avec option de copier un projet d'exemple BlogDemo)
+- **Identifiants MySQL** — hôte, port, utilisateur, mot de passe (avec afficher/masquer)
+- **Secret JWT** — secret 256 bits auto-généré avec bouton Régénérer
+
+Les identifiants sont stockés dans un fichier `seadesktop.env` dans
+un dossier voisin `environment/`, séparé de `configs/`. Cette
+séparation rend sûr le versionnage de `configs/` dans Git tout en
+gardant les secrets en local.
+
+### 📊 Visualiseur de données d'entité haute performance
+
+L'action **Open Data** sur chaque entité ouvre maintenant un
+visualiseur de données à rendu paresseux qui passe à l'échelle
+sur des dizaines de milliers de lignes. Seules les lignes visibles
+à l'écran sont dessinées ; le scroll reste fluide sur les grandes
+tables. Le visualiseur détecte aussi la pagination configurée dans
+le YAML et adapte sa stratégie de fetch : OFFSET (avec totaux exacts),
+CURSOR (basé sur token), ou PAGE (concaténation de pages), avec un
+scroll infini déclenchant le batch suivant à 85 % de la barre de
+défilement.
+
+### 🔒 Durcissement des routes système quand l'auth est activée
+
+Cinq routes système (`/health`, `/health/ready`, `/openapi.json`,
+`/docs`, `/assets/swagger-ui/*`) deviennent maintenant **réservées
+aux administrateurs** quand l'authentification est activée sur le
+service. En mode développement (auth désactivée), elles restent
+publiques pour l'exploration sans authentification. Cela empêche
+les visiteurs anonymes d'énumérer la surface de l'API via Swagger
+UI en production.
+
+### 🛠 Améliorations qualité de vie côté backend
+
+- Le nom de service par défaut codé en dur `CCNBService` est supprimé.
+  `--service_name` est maintenant optionnel ; le backend sélectionne
+  le premier service déclaré dans le YAML.
+- `--config` est maintenant `required()` pour un message d'erreur
+  clair en cas d'oubli.
+- SeaUI résout le binaire backend en trois niveaux de priorité
+  (env override → `/usr/bin/seadesktop-backend` en mode `.deb` →
+  chemin relatif dev).
+- Les variables du `seadesktop.env` sont injectées à la fois dans le
+  processus SeaUI lui-même (pour que le parsing YAML les trouve) et
+  dans le QProcessEnvironment du backend.
+
+Voir [`Release_Notes_french.md`](./Release_Notes_french.md) pour le
+changelog v1.0.1 complet et les notes de migration.
 
 ---
 
@@ -504,6 +562,15 @@ export SEA_DESKTOP_JWT_SECRET="votre-secret-jwt-32-caracteres-minimum"
 - Documentation bilingue complète (EN + FR) de chaque fonctionnalité
 - Procédure de bootstrap admin documentée
 
+### ✅ v1.0.1 - Configuration au premier lancement Local, viseur paresseux et durcissement routes système (actuel)
+- LocalSetupDialog au premier lancement Local (dossier configs + MySQL + JWT)
+- EnvFileLoader : `.env` injecté à la fois dans le processus SeaUI et le QProcess backend
+- EntityDataDialog : rendu paresseux avec pagination conditionnelle (OFFSET > CURSOR > PAGE > None)
+- AdminGuardHandler : 5 routes système admin-only quand l'auth est activée
+- Suppression du `CCNBService` codé en dur ; `--service_name` maintenant optionnel
+- Résolution du binaire backend en 3 niveaux de priorité (env, wrapper `.deb`, relatif dev)
+- Documentation mise à jour (Release Notes, installation, guide SEAUI) en EN et FR
+
 ### 🌟 v1.1.0
 - WebSocket pour notifications temps réel
 - OAuth2 providers (Google, GitHub)
@@ -606,5 +673,5 @@ See [COMMERCIAL-LICENSE.md](./COMMERCIAL-LICENSE.md) for details.
 ---
 
 <p align="center">
-  <strong>SeaDesktop v1.0.0</strong> — Du YAML à un produit complet, en quelques minutes.
+  <strong>SeaDesktop v1.0.1</strong> — Du YAML à un produit complet, en quelques minutes.
 </p>

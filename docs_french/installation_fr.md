@@ -120,7 +120,7 @@ Remote** (connexion à un backend déployé via HTTP/HTTPS).
 Lorsque disponible, installer ainsi :
 
 ```
-Télécharger SeaUI-1.0.0.dmg, l'ouvrir, glisser SeaUI.app dans
+Télécharger SeaUI-1.0.1.dmg, l'ouvrir, glisser SeaUI.app dans
 Applications.
 ```
 
@@ -138,7 +138,7 @@ le mode Remote sur `http://localhost:8080`.
 Lorsque disponible, installer ainsi :
 
 ```
-Double-cliquer sur SeaUI-1.0.0-win64.exe et suivre l'assistant
+Double-cliquer sur SeaUI-1.0.1-win64.exe et suivre l'assistant
 d'installation.
 ```
 
@@ -566,18 +566,18 @@ Utiliser `create-dmg` (installation via `brew install create-dmg`) :
 
 ```bash
 create-dmg \
-    --volname "SeaUI 1.0.0" \
+    --volname "SeaUI 1.0.1" \
     --window-pos 200 120 \
     --window-size 600 400 \
     --icon-size 100 \
     --icon "SeaUI.app" 175 190 \
     --hide-extension "SeaUI.app" \
     --app-drop-link 425 190 \
-    "SeaUI-1.0.0.dmg" \
+    "SeaUI-1.0.1.dmg" \
     build/release/apps/SeaUI/SeaUI.app
 ```
 
-Le résultat, `SeaUI-1.0.0.dmg`, est le fichier à distribuer aux
+Le résultat, `SeaUI-1.0.1.dmg`, est le fichier à distribuer aux
 utilisateurs. À la première ouverture, ils voient une boîte de
 dialogue glisser-vers-Applications.
 
@@ -660,7 +660,7 @@ cd build\release
 cpack -G NSIS
 ```
 
-Cela produit `SeaUI-1.0.0-win64.exe`, un installeur qui :
+Cela produit `SeaUI-1.0.1-win64.exe`, un installeur qui :
 
 - Permet à l'utilisateur de choisir le dossier d'installation (par
   défaut `C:\Program Files\SeaUI`)
@@ -681,7 +681,7 @@ de signature de code d'une autorité de certification reconnue
 
 ```cmd
 signtool sign /fd SHA256 /a /tr http://timestamp.digicert.com /td SHA256 ^
-    SeaUI-1.0.0-win64.exe
+    SeaUI-1.0.1-win64.exe
 ```
 
 Le flag `/a` choisit le premier certificat de signature valide du

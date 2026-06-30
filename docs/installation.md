@@ -29,10 +29,10 @@ or independently on different machines.
 
 ```bash
 # Download from GitHub Releases
-wget https://github.com/fredf21/SeaDesktop/releases/download/v1.0.0/seadesktop-backend-1.0.0-Linux.deb
+wget https://github.com/fredf21/SeaDesktop/releases/download/v1.0.1/seadesktop-backend-1.0.1-Linux.deb
 
 # Install (pulls dependencies automatically)
-sudo apt install ./seadesktop-backend-1.0.0-Linux.deb
+sudo apt install ./seadesktop-backend-1.0.1-Linux.deb
 ```
 
 The package installs:
@@ -79,10 +79,10 @@ curl http://localhost:8080/health
 
 ```bash
 # Download
-wget https://github.com/fredf21/SeaDesktop/releases/download/v1.0.0/seaui-1.0.0-Linux.deb
+wget https://github.com/fredf21/SeaDesktop/releases/download/v1.0.1/seaui-1.0.1-Linux.deb
 
 # Install (pulls Qt6 dependencies from apt)
-sudo apt install ./seaui-1.0.0-Linux.deb
+sudo apt install ./seaui-1.0.1-Linux.deb
 ```
 
 The package installs:
@@ -109,7 +109,7 @@ deployed backend over HTTP/HTTPS).
 When available, install with:
 
 ```
-Download SeaUI-1.0.0.dmg, open it, drag SeaUI.app to Applications.
+Download SeaUI-1.0.1.dmg, open it, drag SeaUI.app to Applications.
 ```
 
 The backend on macOS runs in **Docker Desktop** (Seastar requires
@@ -125,7 +125,7 @@ Docker setup. SeaUI then connects to the backend via Remote mode at
 When available, install with:
 
 ```
-Double-click SeaUI-1.0.0-win64.exe and follow the installer wizard.
+Double-click SeaUI-1.0.1-win64.exe and follow the installer wizard.
 ```
 
 The backend on Windows runs in **Docker Desktop with WSL2**. SeaUI
@@ -366,7 +366,7 @@ cmake --build build/debian-backend -j
 # Generate .deb
 cd build/debian-backend
 cpack -G DEB
-# Produces seadesktop-backend-1.0.0-Linux.deb (~5.7 MB)
+# Produces seadesktop-backend-1.0.1-Linux.deb (~5.7 MB)
 ```
 
 The package layout:
@@ -396,7 +396,7 @@ cmake --build build/debian-seaui -j
 # Generate .deb
 cd build/debian-seaui
 cpack -G DEB
-# Produces seaui-1.0.0-Linux.deb (~2.3 MB)
+# Produces seaui-1.0.1-Linux.deb (~2.3 MB)
 ```
 
 The package layout:
@@ -531,18 +531,18 @@ Use `create-dmg` (install via `brew install create-dmg`):
 
 ```bash
 create-dmg \
-    --volname "SeaUI 1.0.0" \
+    --volname "SeaUI 1.0.1" \
     --window-pos 200 120 \
     --window-size 600 400 \
     --icon-size 100 \
     --icon "SeaUI.app" 175 190 \
     --hide-extension "SeaUI.app" \
     --app-drop-link 425 190 \
-    "SeaUI-1.0.0.dmg" \
+    "SeaUI-1.0.1.dmg" \
     build/release/apps/SeaUI/SeaUI.app
 ```
 
-The result, `SeaUI-1.0.0.dmg`, is the file you distribute to users.
+The result, `SeaUI-1.0.1.dmg`, is the file you distribute to users.
 On first open, they see a drag-to-Applications dialog.
 
 ---
@@ -621,7 +621,7 @@ cd build\release
 cpack -G NSIS
 ```
 
-This produces `SeaUI-1.0.0-win64.exe`, an installer that:
+This produces `SeaUI-1.0.1-win64.exe`, an installer that:
 
 - Lets the user pick an install directory (default
   `C:\Program Files\SeaUI`)
@@ -640,7 +640,7 @@ certificate from a trusted CA (DigiCert, Sectigo, etc.):
 
 ```cmd
 signtool sign /fd SHA256 /a /tr http://timestamp.digicert.com /td SHA256 ^
-    SeaUI-1.0.0-win64.exe
+    SeaUI-1.0.1-win64.exe
 ```
 
 The `/a` flag picks the first valid signing certificate from your
